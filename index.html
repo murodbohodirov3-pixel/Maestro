@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Барбершоп — учёт</title>
+<!-- SDK Telegram: даёт тему, кнопки, данные пользователя. Если открыть в обычном браузере — просто не подключится, всё будет работать. -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+/* ============================================================
+   ПАЛИТРА И ТОКЕНЫ
+   Светлая/тёмная тема. Акцент — латунь (классический барбершоп),
+   фирменный элемент — тонкая «барберская» полоса.
+   ============================================================ */
+:root{
+  --bg:#F3F0EB; --surface:#FFFFFF; --surface-2:#FAF8F5;
+  --ink:#181613; --muted:#7A736B; --line:#E7E2DA;
+  --brass:#A9742E; --brass-soft:#F0E4D0;
+  --cash:#1F7A4D; --card:#2563C9; --qr:#7A3FB0; --fine:#C0392B;
+  --shadow:0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05);
+  --radius:16px;
+}
+html.dark{
+  --bg:#15140F; --surface:#211F1A; --surface-2:#1A1915;
+  --ink:#F2EEE7; --muted:#9A9388; --line:#33302A;
+  --brass:#D9A75A; --brass-soft:#3A3326;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-size:16px; line-height:1.4;
+  padding:0 0 40px;
+}
+.wrap{max-width:540px;margin:0 auto;padding:0 16px}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+/* Барберская полоса — фирменный элемент */
+.pole{height:5px;background:repeating-linear-gradient(135deg,
+  #C5302E 0 9px,var(--surface) 9px 18px,#2B4C8C 18px 27px,var(--surface) 27px 36px)}
+
+/* ---------- Шапка ---------- */
+header{padding:18px 0 14px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand .mark{width:34px;height:34px;border-radius:9px;background:var(--brass);
+  display:grid;place-items:center;color:#fff;font-weight:800;font-size:18px}
+.brand h1{font-size:18px;margin:0;letter-spacing:-.2px;font-weight:750}
+.brand .sub{font-size:12px;color:var(--muted);margin-top:1px}
+
+/* ---------- Переключатель роли (только для прототипа) ---------- */
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:12px;padding:4px;gap:4px;margin:14px 0}
+.seg button{flex:1;border:0;background:transparent;color:var(--muted);
+  padding:9px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+
+/* ---------- Палитра тем + светлый/тёмный ---------- */
+.themebar{display:flex;align-items:center;gap:10px;margin-top:14px}
+.swatches{display:flex;gap:9px;flex:1}
+.sw{width:32px;height:32px;border-radius:50%;border:2px solid var(--line);background:var(--surface);
+  cursor:pointer;display:grid;place-items:center;padding:0}
+.sw.on{border-color:var(--ink)}
+.sw i{width:16px;height:16px;border-radius:50%;display:block}
+.dtog{width:40px;height:40px;border-radius:11px;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--ink);font-size:17px;cursor:pointer}
+
+/* ---------- Карточки ---------- */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;box-shadow:var(--shadow);margin-bottom:14px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  margin:0 0 12px;font-weight:700}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Деньги-герой */
+.hero{font-size:34px;font-weight:800;letter-spacing:-1px;line-height:1.05}
+.hero small{font-size:15px;font-weight:600;color:var(--muted);letter-spacing:0}
+
+/* ---------- Поля ввода ---------- */
+label.fld{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;font-weight:600}
+input,select{width:100%;background:var(--surface-2);border:1px solid var(--line);
+  color:var(--ink);border-radius:11px;padding:13px 12px;font-size:17px;font-family:inherit}
+input:focus,select:focus{outline:2px solid var(--brass);border-color:transparent}
+
+/* Чипы типов оплаты */
+.types{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.types button{border:1.5px solid var(--line);background:var(--surface-2);color:var(--ink);
+  padding:11px 6px;border-radius:11px;font-size:13px;font-weight:650;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:5px}
+.types button .dot{width:9px;height:9px;border-radius:50%}
+.types button.on{border-color:currentColor}
+.t-cash.on{color:var(--cash)} .t-card.on{color:var(--card)} .t-qr.on{color:var(--qr)}
+
+/* Степпер количества */
+.stepper{display:flex;align-items:center;gap:0;border:1px solid var(--line);
+  border-radius:11px;overflow:hidden;background:var(--surface-2)}
+.stepper button{width:48px;height:48px;border:0;background:transparent;font-size:22px;
+  color:var(--brass);cursor:pointer;font-weight:700}
+.stepper .val{flex:1;text-align:center;font-size:18px;font-weight:700}
+
+.btn{width:100%;border:0;background:var(--brass);color:#fff;padding:15px;border-radius:12px;
+  font-size:16px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn:active{opacity:.85}
+.btn.ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
+
+/* Список записей */
+.row{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.chip{font-size:11px;font-weight:700;padding:3px 8px;border-radius:7px;white-space:nowrap}
+.chip.cash{background:rgba(31,122,77,.12);color:var(--cash)}
+.chip.card{background:rgba(37,99,201,.12);color:var(--card)}
+.chip.qr{background:rgba(122,63,176,.12);color:var(--qr)}
+.row .amt{margin-left:auto;font-weight:700}
+.row .del{border:0;background:transparent;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 6px}
+
+/* Сетка плиток (разбивка по оплате) */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{background:var(--surface-2);border:1px solid var(--line);border-radius:13px;padding:13px}
+.tile .lbl{font-size:12px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:6px}
+.tile .v{font-size:19px;font-weight:750;margin-top:5px}
+.tile.total{grid-column:1/-1;background:var(--brass-soft);border-color:transparent}
+.tile.total .v{font-size:26px;color:var(--brass)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+/* Таблица мастеров */
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--muted);font-weight:700;padding:6px 4px;border-bottom:1px solid var(--line)}
+th:first-child{text-align:left}
+td{text-align:right;padding:11px 4px;border-bottom:1px solid var(--line)}
+td:first-child{text-align:left;font-weight:650}
+tr:last-child td{border-bottom:0}
+.payout{color:var(--cash);font-weight:750}
+.fineval{color:var(--fine)}
+tfoot td{font-weight:800;border-top:2px solid var(--line);border-bottom:0;padding-top:12px}
+
+/* Период */
+.period-custom{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+
+/* График (SVG бары) */
+.chart{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+svg{display:block}
+
+.muted-note{font-size:11px;color:var(--muted);text-align:center;margin-top:6px}
+.att{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 0;border-top:1px solid var(--line)}
+.att:first-child{border-top:0}
+.att-name{font-weight:650;min-width:96px}
+.att-time{width:auto!important;padding:8px 10px;flex:0 0 auto;font-size:15px}
+.att-status{margin-left:auto}
+.att-fine{border:1px solid var(--fine);color:var(--fine);background:transparent;border-radius:9px;
+  padding:7px 12px;font-size:13px;font-weight:650;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="pole"></div>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="mark">B</div>
+      <div>
+        <h1>Барбершоп — учёт</h1>
+        <div class="sub" id="who">прототип интерфейса</div>
+      </div>
+    </div>
+    <div class="themebar">
+      <div class="swatches" id="swatches"></div>
+      <button class="dtog" id="darkToggle" title="Светлая / тёмная">☾</button>
+    </div>
+    <!-- В готовой версии роль определится автоматически по Telegram. Сейчас — переключатель для демонстрации. -->
+    <div class="seg" id="roleSeg">
+      <button data-role="master" class="on">Мастер</button>
+      <button data-role="admin">Админ</button>
+    </div>
+  </header>
+
+  <!-- ================= ЭКРАН МАСТЕРА ================= -->
+  <section id="masterView">
+    <div class="card">
+      <h2>Кто вводит</h2>
+      <select id="masterPick"></select>
+      <div class="hint" style="margin-top:8px">В готовой версии это определится само по твоему Телеграму.</div>
+    </div>
+
+    <div class="card" id="shiftCard">
+      <h2>Смена</h2>
+      <div id="shiftState"></div>
+    </div>
+
+    <div class="card">
+      <h2>Добавить продажу</h2>
+      <label class="fld">Тип оплаты</label>
+      <div class="types" id="typePick">
+        <button class="t-cash on" data-type="cash"><span class="dot" style="background:var(--cash)"></span>Наличные</button>
+        <button class="t-card" data-type="card"><span class="dot" style="background:var(--card)"></span>Карта</button>
+        <button class="t-qr" data-type="qr"><span class="dot" style="background:var(--qr)"></span>QR Paynet</button>
+      </div>
+      <div style="height:12px"></div>
+      <label class="fld">Сумма, сум</label>
+      <input id="amt" type="number" inputmode="numeric" placeholder="например, 150000">
+      <div style="height:12px"></div>
+      <label class="fld">Сколько клиентов</label>
+      <div class="stepper">
+        <button id="clMinus">−</button>
+        <div class="val num" id="clVal">1</div>
+        <button id="clPlus">+</button>
+      </div>
+      <div style="height:14px"></div>
+      <button class="btn" id="addSale">Добавить</button>
+    </div>
+
+    <div class="card">
+      <h2>Сегодня</h2>
+      <div id="todayList"><div class="hint">Пока нет записей за сегодня.</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Моя неделя</h2>
+      <div class="hero num"><span id="mWeekPay">0</span> <small>сум к выплате</small></div>
+      <div style="display:flex;gap:18px;margin-top:12px;flex-wrap:wrap">
+        <div><div class="hint">Выручка</div><div class="num" style="font-weight:700"><span id="mWeekRev">0</span></div></div>
+        <div><div class="hint">Мой %</div><div class="num" style="font-weight:700"><span id="mPct">0</span>%</div></div>
+        <div><div class="hint">Штрафы</div><div class="num fineval" style="font-weight:700">−<span id="mFine">0</span></div></div>
+        <div><div class="hint">Клиентов</div><div class="num" style="font-weight:700"><span id="mCl">0</span></div></div>
+      </div>
+      <div class="muted-note">Неделя: <span id="mWeekRange"></span></div>
+    </div>
+  </section>
+
+  <!-- ================= ЭКРАН АДМИНА ================= -->
+  <section id="adminView" style="display:none">
+    <div class="card">
+      <h2>Период отчёта</h2>
+      <div class="seg" id="periodSeg" style="margin:0">
+        <button data-p="day">День</button>
+        <button data-p="week" class="on">Неделя</button>
+        <button data-p="month">Месяц</button>
+        <button data-p="custom">Период</button>
+      </div>
+      <div class="period-custom" id="customWrap" style="display:none">
+        <div><label class="fld">С</label><input id="dFrom" type="date"></div>
+        <div><label class="fld">По</label><input id="dTo" type="date"></div>
+      </div>
+      <div class="muted-note" id="periodLabel"></div>
+    </div>
+
+    <div class="card">
+      <h2>Приход на работу — сегодня</h2>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <label class="fld" style="margin:0">Начало смены</label>
+        <input id="shiftStart" type="time" value="09:00" style="width:auto;padding:8px 10px">
+      </div>
+      <div id="attList"></div>
+      <details style="margin-top:12px">
+        <summary class="hint" style="cursor:pointer">⚙ Адрес салона для геопроверки</summary>
+        <div class="period-custom" style="margin-top:10px">
+          <div><label class="fld">Широта</label><input id="salonLat" type="number" step="any"></div>
+          <div><label class="fld">Долгота</label><input id="salonLng" type="number" step="any"></div>
+        </div>
+        <div style="margin-top:10px"><label class="fld">Радиус, м</label><input id="salonRad" type="number"></div>
+        <button class="btn ghost" id="useMyLoc" style="margin-top:12px">Задать по моему положению</button>
+        <div class="hint" id="salonState" style="margin-top:8px"></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Поступления по типам оплаты</h2>
+      <div class="tiles">
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--cash)"></span>Наличные</div><div class="v num" id="sCash">0</div></div>
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--card)"></span>Карта</div><div class="v num" id="sCard">0</div></div>
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--qr)"></span>QR Paynet</div><div class="v num" id="sQr">0</div></div>
+        <div class="tile total"><div class="lbl">Итого</div><div class="v num" id="sTotal">0</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Выручка по дням</h2>
+      <div class="chart" id="chart"></div>
+    </div>
+
+    <div class="card">
+      <h2>Зарплата мастеров за период</h2>
+      <table>
+        <thead><tr><th>Мастер</th><th>Выручка</th><th>Кл.</th><th>Штраф</th><th>К выплате</th></tr></thead>
+        <tbody id="masterRows"></tbody>
+        <tfoot><tr><td>Итого</td><td class="num" id="fRev">0</td><td class="num" id="fCl">0</td><td class="num fineval" id="fFine">0</td><td class="num payout" id="fPay">0</td></tr></tfoot>
+      </table>
+      <div class="muted-note">Салону остаётся: <span class="num" id="salonCut">0</span> сум</div>
+    </div>
+
+    <div class="card" id="fineCard">
+      <h2>Выставить штраф</h2>
+      <label class="fld">Мастер</label>
+      <select id="fineMaster"></select>
+      <div class="period-custom" style="margin-top:10px">
+        <div><label class="fld">Дата</label><input id="fineDate" type="date"></div>
+        <div><label class="fld">Сумма, сум</label><input id="fineAmt" type="number" inputmode="numeric" placeholder="50000"></div>
+      </div>
+      <div style="height:12px"></div>
+      <button class="btn ghost" id="addFine">Добавить штраф</button>
+    </div>
+  </section>
+
+  <div class="muted-note">Демо-данные из твоего файла (30.03–28.06.26). Новые записи в прототипе хранятся только до перезагрузки — постоянное сохранение подключим на этапе базы данных.</div>
+</div>
+
+<script>
+/* ============================================================
+   ДАННЫЕ И НАСТРОЙКИ
+   ============================================================ */
+// Активные мастера и их проценты (доля мастера от выручки).
+const MASTERS = [{"name": "Жавохир", "pct": 50, "active": true}, {"name": "Иброхим", "pct": 50, "active": true}, {"name": "Жавлон", "pct": 50, "active": true}, {"name": "Жамолиддин", "pct": 45, "active": true}, {"name": "Махмуд", "pct": 45, "active": true}, {"name": "Мироншох", "pct": 40, "active": true}, {"name": "Нурбек", "pct": 50, "active": false}, {"name": "Абдуллох", "pct": 40, "active": false}, {"name": "Хожакбар", "pct": 40, "active": false}, {"name": "Сардор", "pct": 40, "active": false}];
+const PCT = {}; MASTERS.forEach(m=>PCT[m.name]=m.pct);
+const ACTIVE = MASTERS.filter(m=>m.active).map(m=>m.name);
+
+// Записи из файла: {m:мастер, d:'ГГГГ-ММ-ДД', cash, card, qr, fine, cl}
+let DATA = [{"m": "Жавохир", "d": "2026-03-30", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-03-30", "cash": 230000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-03-31", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-03-31", "cash": 0, "card": 150000, "qr": 180000, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-03-31", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Нурбек", "d": "2026-03-31", "cash": 560000, "card": 200000, "qr": 150000, "fine": 0, "cl": 5}, {"m": "Жавлон", "d": "2026-04-01", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-04-01", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-04-01", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-01", "cash": 250000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Сардор", "d": "2026-04-01", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-02", "cash": 0, "card": 100000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-04-02", "cash": 250000, "card": 130000, "qr": 0, "fine": 50000, "cl": 3}, {"m": "Иброхим", "d": "2026-04-02", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-02", "cash": 0, "card": 0, "qr": 0, "fine": 50000, "cl": 0}, {"m": "Нурбек", "d": "2026-04-02", "cash": 270000, "card": 0, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-04-03", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-03", "cash": 180000, "card": 260000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-04-03", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-04-03", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-03", "cash": 0, "card": 150000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Нурбек", "d": "2026-04-03", "cash": 200000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Сардор", "d": "2026-04-03", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-04", "cash": 350000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-04-04", "cash": 200000, "card": 0, "qr": 200000, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-04-04", "cash": 20000, "card": 0, "qr": 410000, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-04", "cash": 150000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-04-04", "cash": 50000, "card": 130000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Нурбек", "d": "2026-04-04", "cash": 400000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Сардор", "d": "2026-04-04", "cash": 320000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-05", "cash": 340000, "card": 100000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жавохир", "d": "2026-04-05", "cash": 350000, "card": 400000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Жамолиддин", "d": "2026-04-05", "cash": 100000, "card": 150000, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-05", "cash": 290000, "card": 0, "qr": 250000, "fine": 0, "cl": 4}, {"m": "Махмуд", "d": "2026-04-05", "cash": 430000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Нурбек", "d": "2026-04-05", "cash": 450000, "card": 0, "qr": 200000, "fine": 0, "cl": 4}, {"m": "Сардор", "d": "2026-04-05", "cash": 300000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-04-06", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-06", "cash": 0, "card": 180000, "qr": 200000, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-04-06", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-06", "cash": 0, "card": 0, "qr": 150000, "fine": 0, "cl": 1}, {"m": "Сардор", "d": "2026-04-06", "cash": 200000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-07", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-07", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-04-07", "cash": 70000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-04-07", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-07", "cash": 150000, "card": 440000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Нурбек", "d": "2026-04-07", "cash": 150000, "card": 0, "qr": 200000, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-08", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-08", "cash": 180000, "card": 0, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жамолиддин", "d": "2026-04-08", "cash": 70000, "card": 150000, "qr": 50000, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-08", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Сардор", "d": "2026-04-08", "cash": 0, "card": 100000, "qr": 150000, "fine": 100000, "cl": 2}, {"m": "Жавохир", "d": "2026-04-09", "cash": 0, "card": 0, "qr": 0, "fine": 50000, "cl": 0}, {"m": "Жамолиддин", "d": "2026-04-09", "cash": 450000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-09", "cash": 150000, "card": 200000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-04-09", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Нурбек", "d": "2026-04-09", "cash": 450000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-04-10", "cash": 120000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-10", "cash": 100000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Нурбек", "d": "2026-04-10", "cash": 200000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-11", "cash": 750000, "card": 0, "qr": 290000, "fine": 0, "cl": 7}, {"m": "Жамолиддин", "d": "2026-04-11", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-04-11", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-04-11", "cash": 130000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Нурбек", "d": "2026-04-11", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-12", "cash": 100000, "card": 100000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-12", "cash": 300000, "card": 300000, "qr": 180000, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-04-12", "cash": 220000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-12", "cash": 510000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-04-12", "cash": 390000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Нурбек", "d": "2026-04-12", "cash": 600000, "card": 0, "qr": 100000, "fine": 0, "cl": 4}, {"m": "Хожакбар", "d": "2026-04-12", "cash": 150000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-13", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-13", "cash": 580000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-04-13", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-13", "cash": 130000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-14", "cash": 0, "card": 0, "qr": 150000, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-04-14", "cash": 300000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-04-14", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-04-14", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-04-14", "cash": 50000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Нурбек", "d": "2026-04-14", "cash": 0, "card": 0, "qr": 530000, "fine": 0, "cl": 3}, {"m": "Хожакбар", "d": "2026-04-14", "cash": 350000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-04-15", "cash": 70000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-15", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Нурбек", "d": "2026-04-15", "cash": 200000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Хожакбар", "d": "2026-04-15", "cash": 250000, "card": 0, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-04-16", "cash": 250000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-04-16", "cash": 150000, "card": 0, "qr": 230000, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-04-16", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-16", "cash": 230000, "card": 0, "qr": 120000, "fine": 0, "cl": 2}, {"m": "Хожакбар", "d": "2026-04-16", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-17", "cash": 70000, "card": 100000, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-04-17", "cash": 220000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-17", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-17", "cash": 70000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-18", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-18", "cash": 0, "card": 50000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-18", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-19", "cash": 330000, "card": 0, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-04-19", "cash": 300000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-19", "cash": 400000, "card": 330000, "qr": 150000, "fine": 0, "cl": 5}, {"m": "Махмуд", "d": "2026-04-19", "cash": 200000, "card": 150000, "qr": 150000, "fine": 0, "cl": 4}, {"m": "Хожакбар", "d": "2026-04-19", "cash": 250000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-20", "cash": 600000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-04-20", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Хожакбар", "d": "2026-04-20", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-21", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-21", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-04-21", "cash": 230000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-21", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-04-22", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-22", "cash": 250000, "card": 50000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-04-22", "cash": 0, "card": 0, "qr": 150000, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-22", "cash": 100000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-23", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-23", "cash": 180000, "card": 0, "qr": 200000, "fine": 85000, "cl": 2}, {"m": "Иброхим", "d": "2026-04-23", "cash": 130000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-23", "cash": 210000, "card": 0, "qr": 280000, "fine": 0, "cl": 4}, {"m": "Жавлон", "d": "2026-04-24", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-24", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-04-24", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-25", "cash": 0, "card": 100000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-25", "cash": 530000, "card": 150000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Иброхим", "d": "2026-04-25", "cash": 250000, "card": 310000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Махмуд", "d": "2026-04-25", "cash": 130000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-26", "cash": 460000, "card": 0, "qr": 0, "fine": 50000, "cl": 4}, {"m": "Жавохир", "d": "2026-04-26", "cash": 550000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-04-26", "cash": 150000, "card": 330000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-04-26", "cash": 340000, "card": 550000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Жавлон", "d": "2026-04-27", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-04-27", "cash": 700000, "card": 100000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Иброхим", "d": "2026-04-27", "cash": 380000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-04-28", "cash": 450000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-04-28", "cash": 480000, "card": 120000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-04-28", "cash": 230000, "card": 180000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-04-28", "cash": 200000, "card": 130000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-04-29", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-29", "cash": 0, "card": 100000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-04-30", "cash": 150000, "card": 680000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Иброхим", "d": "2026-04-30", "cash": 330000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-04-30", "cash": 180000, "card": 330000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавлон", "d": "2026-05-01", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-05-01", "cash": 180000, "card": 120000, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-05-01", "cash": 300000, "card": 430000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жавлон", "d": "2026-05-02", "cash": 0, "card": 0, "qr": 0, "fine": 50000, "cl": 0}, {"m": "Жавохир", "d": "2026-05-02", "cash": 150000, "card": 530000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-05-02", "cash": 510000, "card": 0, "qr": 100000, "fine": 0, "cl": 4}, {"m": "Махмуд", "d": "2026-05-02", "cash": 0, "card": 280000, "qr": 130000, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-05-03", "cash": 100000, "card": 220000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-03", "cash": 0, "card": 360000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-05-03", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 0}, {"m": "Махмуд", "d": "2026-05-03", "cash": 150000, "card": 60000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-04", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-04", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-04", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-04", "cash": 150000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-04", "cash": 150000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-05", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-05", "cash": 150000, "card": 200000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-05", "cash": 310000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-05-05", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Абдуллох", "d": "2026-05-06", "cash": 80000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-06", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-06", "cash": 360000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-06", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-06", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-07", "cash": 200000, "card": 650000, "qr": 130000, "fine": 63000, "cl": 6}, {"m": "Жамолиддин", "d": "2026-05-07", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-05-07", "cash": 330000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-07", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-08", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-08", "cash": 150000, "card": 150000, "qr": 0, "fine": 30000, "cl": 2}, {"m": "Иброхим", "d": "2026-05-08", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-08", "cash": 150000, "card": 130000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-09", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-09", "cash": 300000, "card": 300000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-05-09", "cash": 100000, "card": 150000, "qr": 0, "fine": 13000, "cl": 2}, {"m": "Махмуд", "d": "2026-05-09", "cash": 0, "card": 410000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Абдуллох", "d": "2026-05-10", "cash": 180000, "card": 180000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-10", "cash": 250000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жавохир", "d": "2026-05-10", "cash": 430000, "card": 150000, "qr": 170000, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-05-10", "cash": 280000, "card": 0, "qr": 0, "fine": 43000, "cl": 2}, {"m": "Иброхим", "d": "2026-05-10", "cash": 300000, "card": 180000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-05-10", "cash": 100000, "card": 0, "qr": 100000, "fine": 0, "cl": 2}, {"m": "Абдуллох", "d": "2026-05-11", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-11", "cash": 0, "card": 100000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-11", "cash": 80000, "card": 150000, "qr": 100000, "fine": 50000, "cl": 3}, {"m": "Жамолиддин", "d": "2026-05-11", "cash": 150000, "card": 350000, "qr": 130000, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-05-11", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-11", "cash": 150000, "card": 0, "qr": 230000, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-12", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-12", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-12", "cash": 150000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-12", "cash": 230000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Абдуллох", "d": "2026-05-13", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-13", "cash": 200000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-13", "cash": 0, "card": 150000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-13", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-13", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-13", "cash": 130000, "card": 100000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-05-14", "cash": 0, "card": 350000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-14", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-05-14", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-14", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-15", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-15", "cash": 150000, "card": 100000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-15", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-16", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-16", "cash": 0, "card": 300000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-16", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-05-16", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-16", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Абдуллох", "d": "2026-05-17", "cash": 120000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-17", "cash": 150000, "card": 0, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-05-17", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-17", "cash": 150000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-17", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-17", "cash": 150000, "card": 250000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Абдуллох", "d": "2026-05-18", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-18", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-18", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-18", "cash": 230000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-19", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-19", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-05-19", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-19", "cash": 130000, "card": 0, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Абдуллох", "d": "2026-05-20", "cash": 0, "card": 0, "qr": 250000, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-20", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-20", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-05-20", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-20", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-21", "cash": 100000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-21", "cash": 250000, "card": 200000, "qr": 150000, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-05-21", "cash": 330000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-21", "cash": 390000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-05-22", "cash": 330000, "card": 180000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-22", "cash": 400000, "card": 350000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-05-22", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-22", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Абдуллох", "d": "2026-05-23", "cash": 330000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жавлон", "d": "2026-05-23", "cash": 0, "card": 220000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-05-23", "cash": 330000, "card": 680000, "qr": 0, "fine": 0, "cl": 7}, {"m": "Жамолиддин", "d": "2026-05-23", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-05-23", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-23", "cash": 150000, "card": 130000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Абдуллох", "d": "2026-05-24", "cash": 300000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жавлон", "d": "2026-05-24", "cash": 600000, "card": 150000, "qr": 0, "fine": 50000, "cl": 5}, {"m": "Жавохир", "d": "2026-05-24", "cash": 580000, "card": 250000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-05-24", "cash": 0, "card": 620000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-05-24", "cash": 680000, "card": 150000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Махмуд", "d": "2026-05-24", "cash": 550000, "card": 150000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Абдуллох", "d": "2026-05-25", "cash": 150000, "card": 150000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жавлон", "d": "2026-05-25", "cash": 230000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-25", "cash": 150000, "card": 250000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-05-25", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-25", "cash": 300000, "card": 310000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Абдуллох", "d": "2026-05-26", "cash": 230000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-05-26", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-26", "cash": 0, "card": 200000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-26", "cash": 330000, "card": 0, "qr": 0, "fine": 13000, "cl": 2}, {"m": "Иброхим", "d": "2026-05-26", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-05-26", "cash": 300000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-05-27", "cash": 100000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-05-28", "cash": 280000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-05-28", "cash": 440000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-05-28", "cash": 150000, "card": 180000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-28", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-29", "cash": 180000, "card": 0, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-05-29", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-29", "cash": 0, "card": 330000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-29", "cash": 0, "card": 0, "qr": 0, "fine": 13000, "cl": 0}, {"m": "Жавлон", "d": "2026-05-30", "cash": 0, "card": 100000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-05-30", "cash": 150000, "card": 0, "qr": 200000, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-05-30", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-05-30", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-05-31", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-05-31", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-05-31", "cash": 180000, "card": 150000, "qr": 0, "fine": 30000, "cl": 2}, {"m": "Иброхим", "d": "2026-05-31", "cash": 180000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-05-31", "cash": 130000, "card": 180000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-01", "cash": 0, "card": 180000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-01", "cash": 0, "card": 300000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-01", "cash": 150000, "card": 125000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-01", "cash": 100000, "card": 225000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-02", "cash": 0, "card": 150000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-06-02", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-06-02", "cash": 250000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-02", "cash": 0, "card": 270000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-02", "cash": 250000, "card": 130000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-06-03", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жамолиддин", "d": "2026-06-03", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-06-03", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-06-03", "cash": 0, "card": 130000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-04", "cash": 330000, "card": 280000, "qr": 0, "fine": 50000, "cl": 4}, {"m": "Жамолиддин", "d": "2026-06-04", "cash": 250000, "card": 60000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-04", "cash": 150000, "card": 60000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-04", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-05", "cash": 280000, "card": 180000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-05", "cash": 180000, "card": 80000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-05", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-06-05", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-06", "cash": 100000, "card": 250000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-06-06", "cash": 0, "card": 430000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-06", "cash": 330000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-06", "cash": 330000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-06", "cash": 150000, "card": 130000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Мироншох", "d": "2026-06-06", "cash": 150000, "card": 200000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-07", "cash": 310000, "card": 300000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-06-07", "cash": 250000, "card": 460000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-06-07", "cash": 600000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-06-07", "cash": 380000, "card": 150000, "qr": 360000, "fine": 0, "cl": 6}, {"m": "Махмуд", "d": "2026-06-07", "cash": 450000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Мироншох", "d": "2026-06-07", "cash": 110000, "card": 380000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавлон", "d": "2026-06-08", "cash": 180000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-08", "cash": 330000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-08", "cash": 180000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-08", "cash": 150000, "card": 170000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-08", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Мироншох", "d": "2026-06-08", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-09", "cash": 220000, "card": 30000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-09", "cash": 400000, "card": 0, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-09", "cash": 250000, "card": 250000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-09", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-09", "cash": 360000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-06-10", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-10", "cash": 250000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-10", "cash": 430000, "card": 300000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Иброхим", "d": "2026-06-10", "cash": 250000, "card": 60000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-10", "cash": 0, "card": 480000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-06-11", "cash": 0, "card": 0, "qr": 150000, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-11", "cash": 380000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-11", "cash": 150000, "card": 0, "qr": 100000, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-11", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-12", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-12", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-13", "cash": 460000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-06-13", "cash": 300000, "card": 430000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-06-13", "cash": 380000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-13", "cash": 330000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-06-14", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-14", "cash": 180000, "card": 330000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-14", "cash": 380000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-14", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-14", "cash": 180000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-15", "cash": 100000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-15", "cash": 180000, "card": 450000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-06-15", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-06-15", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-15", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-16", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавохир", "d": "2026-06-16", "cash": 280000, "card": 240000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-06-16", "cash": 0, "card": 280000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-16", "cash": 0, "card": 150000, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-16", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-17", "cash": 450000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-06-17", "cash": 230000, "card": 100000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-17", "cash": 800000, "card": 150000, "qr": 0, "fine": 0, "cl": 6}, {"m": "Иброхим", "d": "2026-06-17", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-17", "cash": 380000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавлон", "d": "2026-06-18", "cash": 450000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-06-18", "cash": 480000, "card": 270000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-06-18", "cash": 300000, "card": 330000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-06-18", "cash": 350000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-18", "cash": 100000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-19", "cash": 0, "card": 330000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-19", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-19", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Махмуд", "d": "2026-06-19", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-20", "cash": 0, "card": 150000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-06-20", "cash": 150000, "card": 200000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-20", "cash": 230000, "card": 300000, "qr": 0, "fine": 13000, "cl": 4}, {"m": "Махмуд", "d": "2026-06-20", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавлон", "d": "2026-06-21", "cash": 150000, "card": 80000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жавохир", "d": "2026-06-21", "cash": 150000, "card": 150000, "qr": 180000, "fine": 50000, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-21", "cash": 100000, "card": 480000, "qr": 200000, "fine": 0, "cl": 5}, {"m": "Иброхим", "d": "2026-06-21", "cash": 350000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-21", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавохир", "d": "2026-06-22", "cash": 680000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-06-22", "cash": 230000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-22", "cash": 330000, "card": 80000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-22", "cash": 0, "card": 280000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-23", "cash": 420000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-23", "cash": 0, "card": 150000, "qr": 0, "fine": 0, "cl": 1}, {"m": "Иброхим", "d": "2026-06-23", "cash": 150000, "card": 150000, "qr": 150000, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-23", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Мироншох", "d": "2026-06-23", "cash": 580000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жавохир", "d": "2026-06-24", "cash": 150000, "card": 150000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Жамолиддин", "d": "2026-06-24", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-24", "cash": 200000, "card": 0, "qr": 150000, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-24", "cash": 150000, "card": 260000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Мироншох", "d": "2026-06-24", "cash": 0, "card": 180000, "qr": 0, "fine": 50000, "cl": 1}, {"m": "Жавохир", "d": "2026-06-25", "cash": 620000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Жамолиддин", "d": "2026-06-25", "cash": 150000, "card": 0, "qr": 0, "fine": 0, "cl": 1}, {"m": "Жавлон", "d": "2026-06-26", "cash": 100000, "card": 300000, "qr": 0, "fine": 50000, "cl": 3}, {"m": "Жавохир", "d": "2026-06-26", "cash": 480000, "card": 0, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жамолиддин", "d": "2026-06-26", "cash": 300000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Иброхим", "d": "2026-06-26", "cash": 330000, "card": 150000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Махмуд", "d": "2026-06-26", "cash": 280000, "card": 280000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Мироншох", "d": "2026-06-26", "cash": 300000, "card": 150000, "qr": 0, "fine": 50000, "cl": 3}, {"m": "Жавлон", "d": "2026-06-27", "cash": 310000, "card": 0, "qr": 0, "fine": 50000, "cl": 3}, {"m": "Жавохир", "d": "2026-06-27", "cash": 750000, "card": 200000, "qr": 0, "fine": 50000, "cl": 8}, {"m": "Жамолиддин", "d": "2026-06-27", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Иброхим", "d": "2026-06-27", "cash": 300000, "card": 0, "qr": 0, "fine": 0, "cl": 2}, {"m": "Махмуд", "d": "2026-06-27", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Мироншох", "d": "2026-06-27", "cash": 250000, "card": 180000, "qr": 0, "fine": 0, "cl": 3}, {"m": "Жавлон", "d": "2026-06-28", "cash": 150000, "card": 150000, "qr": 0, "fine": 0, "cl": 2}, {"m": "Жавохир", "d": "2026-06-28", "cash": 580000, "card": 80000, "qr": 0, "fine": 0, "cl": 5}, {"m": "Жамолиддин", "d": "2026-06-28", "cash": 460000, "card": 150000, "qr": 0, "fine": 0, "cl": 4}, {"m": "Иброхим", "d": "2026-06-28", "cash": 600000, "card": 0, "qr": 0, "fine": 0, "cl": 4}, {"m": "Махмуд", "d": "2026-06-28", "cash": 150000, "card": 150000, "qr": 0, "fine": 50000, "cl": 2}, {"m": "Мироншох", "d": "2026-06-28", "cash": 150000, "card": 300000, "qr": 0, "fine": 0, "cl": 3}];
+
+// Тип оплаты по умолчанию для новой записи
+let curType = 'cash';
+let curClients = 1;
+let curMaster = ACTIVE[0];
+
+// «Сегодня» — реальная дата; демо-периоды считаем от последней даты в данных,
+// чтобы аналитика сразу была наполнена.
+const TODAY = new Date().toISOString().slice(0,10);
+const LATEST = DATA.map(r=>r.d).sort().slice(-1)[0];
+
+// --- Учёт прихода на работу ---
+let ATTEND = {};            // { 'ГГГГ-ММ-ДД': { 'Мастер':'ЧЧ:ММ' } }
+let shiftStart = '09:00';   // единое начало смены
+// Координаты салона для геопроверки (по умолчанию — центр Ташкента; поменяй в админке).
+let SALON = { lat:41.3111, lng:69.2797, radius:100 };
+// Демо: пара отметок на сегодня, чтобы экран админа сразу был наполнен.
+ATTEND[TODAY] = { 'Жавохир':'08:55', 'Иброхим':'09:18', 'Жамолиддин':'10:07' };
+
+/* ============================================================
+   TELEGRAM SDK — тема, разворот, тактильный отклик
+   ============================================================ */
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+
+// Несколько цветовых палитр. У каждой — светлый и тёмный набор.
+const THEMES = {
+  brass:{name:'Латунь',
+    light:{bg:'#F3F0EB',surface:'#FFFFFF','surface-2':'#FAF8F5',ink:'#181613',muted:'#7A736B',line:'#E7E2DA',brass:'#A9742E','brass-soft':'#F0E4D0'},
+    dark:{bg:'#15140F',surface:'#211F1A','surface-2':'#1A1915',ink:'#F2EEE7',muted:'#9A9388',line:'#33302A',brass:'#D9A75A','brass-soft':'#3A3326'}},
+  emerald:{name:'Изумруд',
+    light:{bg:'#F1F5F2',surface:'#FFFFFF','surface-2':'#F6FAF7',ink:'#14201A',muted:'#6B7A72',line:'#DDE8E1',brass:'#1E7A52','brass-soft':'#D9EFE3'},
+    dark:{bg:'#0E1714',surface:'#16211C','surface-2':'#121B17',ink:'#EAF3EE',muted:'#8AA398',line:'#29372F',brass:'#3FB37B','brass-soft':'#1C3329'}},
+  midnight:{name:'Полночь',
+    light:{bg:'#F1F2F8',surface:'#FFFFFF','surface-2':'#F6F7FC',ink:'#15172A',muted:'#6E7290',line:'#E1E3F0',brass:'#3B43B5','brass-soft':'#E2E4FA'},
+    dark:{bg:'#0F1020',surface:'#1A1B2E','surface-2':'#151628',ink:'#ECEDF7',muted:'#9498BE',line:'#2C2E47',brass:'#7C84F0','brass-soft':'#262A52'}},
+  barber:{name:'Барбер',
+    light:{bg:'#F4F2EE',surface:'#FFFFFF','surface-2':'#F9F7F3',ink:'#16202E',muted:'#6F7682',line:'#E4E2DC',brass:'#1F3A66','brass-soft':'#DBE3F0'},
+    dark:{bg:'#101620',surface:'#1A2230','surface-2':'#151B26',ink:'#ECF0F6',muted:'#8A93A3',line:'#2A3340',brass:'#5B86C9','brass-soft':'#213048'}}
+};
+let curTheme='brass';
+let dark = !!(tg && tg.colorScheme==='dark');
+
+function applyTheme(){
+  const set=THEMES[curTheme][dark?'dark':'light'], r=document.documentElement;
+  for(const k in set) r.style.setProperty('--'+k, set[k]);
+  r.style.setProperty('--shadow', dark
+    ? '0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35)'
+    : '0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05)');
+  const dt=document.getElementById('darkToggle'); if(dt) dt.textContent=dark?'☀':'☾';
+  document.querySelectorAll('.sw').forEach(s=>s.classList.toggle('on', s.dataset.t===curTheme));
+}
+function buildSwatches(){
+  const box=document.getElementById('swatches'); box.innerHTML='';
+  for(const key in THEMES){
+    const b=document.createElement('button'); b.className='sw'; b.dataset.t=key; b.title=THEMES[key].name;
+    b.innerHTML='<i style="background:'+THEMES[key].light.brass+'"></i>';
+    b.onclick=()=>{curTheme=key;haptic();applyTheme()};
+    box.appendChild(b);
+  }
+}
+function haptic(){ if(tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light'); }
+
+if(tg){
+  tg.ready(); tg.expand();
+  tg.onEvent('themeChanged', ()=>{dark=tg.colorScheme==='dark';applyTheme()});
+  const u = tg.initDataUnsafe && tg.initDataUnsafe.user;
+  if(u) document.getElementById('who').textContent = 'привет, '+(u.first_name||'мастер');
+}
+document.getElementById('darkToggle').onclick=()=>{dark=!dark;haptic();applyTheme()};
+buildSwatches(); applyTheme();
+
+/* ============================================================
+   ВСПОМОГАТЕЛЬНОЕ
+   ============================================================ */
+const fmt = n => Math.round(n).toLocaleString('ru-RU').replace(/,/g,' ');
+const $ = id => document.getElementById(id);
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)}
+// Понедельник недели, в которую попадает дата d
+function weekStart(d){const x=new Date(d);const g=(x.getDay()+6)%7;x.setDate(x.getDate()-g);return x.toISOString().slice(0,10)}
+function ddmm(d){const[,m,day]=d.split('-');return day+'.'+m}
+
+/* ============================================================
+   ЭКРАН МАСТЕРА
+   ============================================================ */
+function fillMasterPick(){
+  const s=$('masterPick'); s.innerHTML='';
+  ACTIVE.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n+' · '+PCT[n]+'%';s.appendChild(o)});
+  s.value=curMaster;
+}
+function renderToday(){
+  const list = DATA.filter(r=>r.m===curMaster && r.d===TODAY && r._new);
+  const box=$('todayList');
+  if(!list.length){box.innerHTML='<div class="hint">Пока нет записей за сегодня.</div>';}
+  else{
+    box.innerHTML='';
+    list.forEach((r,i)=>{
+      const t = r.cash?['cash','Наличные']:r.card?['card','Карта']:['qr','QR Paynet'];
+      const amount = r.cash||r.card||r.qr;
+      const div=document.createElement('div');div.className='row';
+      div.innerHTML=`<span class="chip ${t[0]}">${t[1]}</span>
+        <span class="hint num">${r.cl} кл.</span>
+        <span class="amt num">${fmt(amount)}</span>
+        <button class="del" title="удалить">×</button>`;
+      div.querySelector('.del').onclick=()=>{DATA.splice(DATA.indexOf(r),1);haptic();renderMaster()};
+      box.appendChild(div);
+    });
+  }
+}
+function renderMyWeek(){
+  const ws=weekStart(LATEST), we=addDays(ws,6); // показываем последнюю неделю с данными
+  const mine=DATA.filter(r=>r.m===curMaster && r.d>=ws && r.d<=we);
+  const rev=mine.reduce((s,r)=>s+r.cash+r.card+r.qr,0);
+  const fine=mine.reduce((s,r)=>s+(r.fine||0),0);
+  const cl=mine.reduce((s,r)=>s+(r.cl||0),0);
+  const pay=Math.max(0, rev*PCT[curMaster]/100 - fine);
+  $('mWeekPay').textContent=fmt(pay); $('mWeekRev').textContent=fmt(rev);
+  $('mPct').textContent=PCT[curMaster]; $('mFine').textContent=fmt(fine);
+  $('mCl').textContent=cl; $('mWeekRange').textContent=ddmm(ws)+'–'+ddmm(we);
+}
+/* ---------- Учёт прихода + геопроверка ---------- */
+function minsLate(t){ if(!t) return null; const [h,m]=t.split(':').map(Number),[H,M]=shiftStart.split(':').map(Number); return (h*60+m)-(H*60+M); }
+function statusChip(t){
+  if(!t) return '<span class="chip" style="background:var(--line);color:var(--muted)">не отметился</span>';
+  const d=minsLate(t);
+  if(d<=0) return '<span class="chip cash">вовремя · '+t+'</span>';
+  return '<span class="chip" style="background:rgba(192,57,43,.12);color:var(--fine)">опоздал '+d+' мин · '+t+'</span>';
+}
+// расстояние между точками в метрах (формула гаверсинуса)
+function distM(la1,lo1,la2,lo2){ const R=6371000,toR=x=>x*Math.PI/180;
+  const dLa=toR(la2-la1),dLo=toR(lo2-lo1);
+  const a=Math.sin(dLa/2)**2+Math.cos(toR(la1))*Math.cos(toR(la2))*Math.sin(dLo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a)); }
+function setShiftMsg(html){ const b=document.getElementById('shiftMsg'); if(b) b.innerHTML=html; }
+function markArrival(){ ATTEND[TODAY]=ATTEND[TODAY]||{}; ATTEND[TODAY][curMaster]=new Date().toTimeString().slice(0,5); haptic(); renderShift(); }
+function tryCheckin(lat,lng){
+  const d=distM(lat,lng,SALON.lat,SALON.lng);
+  if(d<=SALON.radius) markArrival();
+  else setShiftMsg('<span style="color:var(--fine)">Вы примерно в '+Math.round(d)+' м от салона — отметиться нельзя. Подойди ближе.</span>');
+}
+function requestCheckin(){
+  setShiftMsg('Определяем местоположение…');
+  if(!navigator.geolocation){ setShiftMsg('Геолокация недоступна в этом окружении. Проверь логику демо-кнопками ниже.'); return; }
+  navigator.geolocation.getCurrentPosition(
+    p=>tryCheckin(p.coords.latitude,p.coords.longitude),
+    ()=>setShiftMsg('Нет доступа к геопозиции. В реальном Телеграме разреши доступ к локации; сейчас можно проверить логику демо-кнопками ниже.'),
+    {enableHighAccuracy:true,timeout:8000}
+  );
+}
+function renderShift(){
+  const t=(ATTEND[TODAY]||{})[curMaster]; const box=$('shiftState');
+  if(t){
+    const d=minsLate(t);
+    box.innerHTML='<div class="hero num" style="font-size:24px">'+t+' <small>'+(d>0?'опоздание '+d+' мин':'вовремя')+'</small></div>'
+      +'<button class="btn ghost" id="resetShift" style="margin-top:12px">Изменить</button>';
+    $('resetShift').onclick=()=>{ delete ATTEND[TODAY][curMaster]; haptic(); renderShift(); };
+  } else {
+    box.innerHTML='<button class="btn" id="checkin">Я пришёл</button>'
+      +'<div class="hint" style="margin-top:8px">Отметиться можно только в радиусе '+SALON.radius+' м от салона.</div>'
+      +'<div id="shiftMsg" class="hint" style="margin-top:8px"></div>'
+      +'<div style="display:flex;gap:8px;margin-top:10px">'
+      +'<button class="btn ghost" id="demoNear" style="font-size:13px">📍 Демо: я у салона</button>'
+      +'<button class="btn ghost" id="demoFar" style="font-size:13px">🏠 Демо: я далеко</button></div>';
+    $('checkin').onclick=requestCheckin;
+    $('demoNear').onclick=()=>tryCheckin(SALON.lat,SALON.lng);
+    $('demoFar').onclick=()=>tryCheckin(SALON.lat+0.02,SALON.lng);
+  }
+}
+function renderAttendAdmin(){
+  const today=ATTEND[TODAY]||{}; const box=$('attList'); box.innerHTML='';
+  ACTIVE.forEach(n=>{
+    const t=today[n]||''; const d=minsLate(t);
+    const row=document.createElement('div'); row.className='att';
+    row.innerHTML='<span class="att-name">'+n+'</span>'
+      +'<input type="time" class="att-time" value="'+t+'">'
+      +'<span class="att-status">'+statusChip(t)+'</span>';
+    const inp=row.querySelector('input');
+    inp.onchange=()=>{ ATTEND[TODAY]=ATTEND[TODAY]||{}; if(inp.value) ATTEND[TODAY][n]=inp.value; else delete ATTEND[TODAY][n]; renderAttendAdmin(); };
+    if(t && d>0){
+      const fb=document.createElement('button'); fb.className='att-fine'; fb.textContent='Штраф';
+      fb.onclick=()=>quickFine(n); row.appendChild(fb);
+    }
+    box.appendChild(row);
+  });
+}
+// Быстрый штраф: подставляет мастера и дату в форму штрафа и прокручивает к ней
+function quickFine(n){
+  $('fineMaster').value=n; $('fineDate').value=TODAY;
+  document.getElementById('fineCard').scrollIntoView({behavior:'smooth'});
+  haptic(); setTimeout(()=>$('fineAmt').focus(),300);
+}
+function renderMaster(){fillMasterPick();renderShift();renderToday();renderMyWeek()}
+
+/* ============================================================
+   ЭКРАН АДМИНА
+   ============================================================ */
+let period='week';
+function periodRange(){
+  if(period==='day') return [LATEST,LATEST];
+  if(period==='week'){const ws=weekStart(LATEST);return [ws,addDays(ws,6)]}
+  if(period==='month') return [addDays(LATEST,-29),LATEST];
+  return [$('dFrom').value||LATEST, $('dTo').value||LATEST];
+}
+function renderAdmin(){
+  const [from,to]=periodRange();
+  $('periodLabel').textContent=ddmm(from)+' – '+ddmm(to);
+  renderAttendAdmin();
+  const rows=DATA.filter(r=>r.d>=from && r.d<=to);
+
+  // Разбивка по типам оплаты + итог
+  const cash=rows.reduce((s,r)=>s+r.cash,0), card=rows.reduce((s,r)=>s+r.card,0), qr=rows.reduce((s,r)=>s+r.qr,0);
+  $('sCash').textContent=fmt(cash);$('sCard').textContent=fmt(card);$('sQr').textContent=fmt(qr);
+  $('sTotal').textContent=fmt(cash+card+qr);
+
+  // Таблица по мастерам
+  const by={};
+  rows.forEach(r=>{const b=by[r.m]||(by[r.m]={rev:0,cl:0,fine:0});b.rev+=r.cash+r.card+r.qr;b.cl+=r.cl||0;b.fine+=r.fine||0});
+  const names=Object.keys(by).sort((a,b)=>by[b].rev-by[a].rev);
+  const tb=$('masterRows');tb.innerHTML='';
+  let tRev=0,tCl=0,tFine=0,tPay=0;
+  names.forEach(n=>{
+    const b=by[n];const pct=PCT[n]!=null?PCT[n]:40;
+    const pay=Math.max(0,b.rev*pct/100-b.fine);
+    tRev+=b.rev;tCl+=b.cl;tFine+=b.fine;tPay+=pay;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${n} <span class="hint">${pct}%</span></td>
+      <td class="num">${fmt(b.rev)}</td><td class="num">${b.cl}</td>
+      <td class="num fineval">${b.fine?'−'+fmt(b.fine):'—'}</td>
+      <td class="num payout">${fmt(pay)}</td>`;
+    tb.appendChild(tr);
+  });
+  $('fRev').textContent=fmt(tRev);$('fCl').textContent=tCl;
+  $('fFine').textContent=tFine?'−'+fmt(tFine):'—';$('fPay').textContent=fmt(tPay);
+  $('salonCut').textContent=fmt(tRev-tPay);
+
+  renderChart(from,to);
+}
+function renderChart(from,to){
+  // выручка по дням
+  const days=[];for(let d=from;d<=to;d=addDays(d,1))days.push(d);
+  const map={};DATA.filter(r=>r.d>=from&&r.d<=to).forEach(r=>{map[r.d]=(map[r.d]||0)+r.cash+r.card+r.qr});
+  const vals=days.map(d=>map[d]||0);const max=Math.max(1,...vals);
+  const bw=Math.max(14,Math.min(38,Math.floor(480/days.length)));const gap=6;
+  const W=days.length*(bw+gap)+10, H=150, base=120;
+  let bars='';
+  days.forEach((d,i)=>{
+    const h=Math.round(vals[i]/max*100);const x=10+i*(bw+gap);
+    bars+=`<rect x="${x}" y="${base-h}" width="${bw}" height="${h}" rx="3" fill="var(--brass)" opacity="${vals[i]?0.95:0.18}"></rect>`;
+    if(days.length<=14||i%Math.ceil(days.length/10)===0)
+      bars+=`<text x="${x+bw/2}" y="${base+14}" font-size="9" fill="var(--muted)" text-anchor="middle">${ddmm(d)}</text>`;
+  });
+  $('chart').innerHTML=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bars}</svg>`;
+}
+
+/* ============================================================
+   СОБЫТИЯ
+   ============================================================ */
+// Переключение роли
+document.querySelectorAll('#roleSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');haptic();
+  const admin=b.dataset.role==='admin';
+  $('adminView').style.display=admin?'block':'none';
+  $('masterView').style.display=admin?'none':'block';
+  if(admin)renderAdmin();else renderMaster();
+});
+// Выбор мастера
+$('masterPick').onchange=e=>{curMaster=e.target.value;renderMaster()};
+// Тип оплаты
+document.querySelectorAll('#typePick button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#typePick button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');curType=b.dataset.type;haptic();
+});
+// Степпер
+$('clMinus').onclick=()=>{curClients=Math.max(1,curClients-1);$('clVal').textContent=curClients;haptic()};
+$('clPlus').onclick=()=>{curClients++;$('clVal').textContent=curClients;haptic()};
+// Добавить продажу
+$('addSale').onclick=()=>{
+  const a=parseInt($('amt').value,10);
+  if(!a||a<=0){$('amt').focus();return}
+  const rec={m:curMaster,d:TODAY,cash:0,card:0,qr:0,fine:0,cl:curClients,_new:true};
+  rec[curType]=a;
+  DATA.push(rec);
+  $('amt').value='';curClients=1;$('clVal').textContent='1';
+  haptic();renderMaster();
+};
+// Период (админ)
+document.querySelectorAll('#periodSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#periodSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');period=b.dataset.p;haptic();
+  $('customWrap').style.display=period==='custom'?'grid':'none';
+  renderAdmin();
+});
+$('dFrom').onchange=renderAdmin; $('dTo').onchange=renderAdmin;
+// Начало смены
+$('shiftStart').onchange=()=>{shiftStart=$('shiftStart').value||'09:00';renderAttendAdmin()};
+// Координаты салона для геопроверки
+function syncSalonInputs(){$('salonLat').value=SALON.lat;$('salonLng').value=SALON.lng;$('salonRad').value=SALON.radius;
+  $('salonState').textContent='Текущая точка: '+SALON.lat.toFixed(5)+', '+SALON.lng.toFixed(5)+' · радиус '+SALON.radius+' м';}
+$('salonLat').onchange=()=>{SALON.lat=parseFloat($('salonLat').value)||SALON.lat;syncSalonInputs()};
+$('salonLng').onchange=()=>{SALON.lng=parseFloat($('salonLng').value)||SALON.lng;syncSalonInputs()};
+$('salonRad').onchange=()=>{SALON.radius=parseInt($('salonRad').value,10)||100;syncSalonInputs()};
+$('useMyLoc').onclick=()=>{
+  $('salonState').textContent='Определяем ваше положение…';
+  if(!navigator.geolocation){$('salonState').textContent='Геолокация недоступна в этом окружении.';return}
+  navigator.geolocation.getCurrentPosition(
+    p=>{SALON.lat=p.coords.latitude;SALON.lng=p.coords.longitude;haptic();syncSalonInputs()},
+    ()=>{$('salonState').textContent='Нет доступа к геопозиции — введи координаты вручную.';},
+    {enableHighAccuracy:true,timeout:8000});
+};
+// Штраф
+function fillFineMaster(){const s=$('fineMaster');s.innerHTML='';ACTIVE.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;s.appendChild(o)})}
+$('addFine').onclick=()=>{
+  const m=$('fineMaster').value, dt=$('fineDate').value||LATEST, a=parseInt($('fineAmt').value,10);
+  if(!a||a<=0){$('fineAmt').focus();return}
+  DATA.push({m,d:dt,cash:0,card:0,qr:0,fine:a,cl:0,_new:true});
+  $('fineAmt').value='';haptic();renderAdmin();
+};
+
+/* ============================================================
+   СТАРТ
+   ============================================================ */
+$('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
+$('shiftStart').value=shiftStart; syncSalonInputs();
+fillFineMaster();
+renderMaster();
+</script>
+</body>
+</html>
