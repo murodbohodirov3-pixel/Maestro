@@ -143,13 +143,25 @@ tfoot td{font-weight:800;border-top:2px solid var(--line);border-bottom:0;paddin
 svg{display:block}
 
 .muted-note{font-size:11px;color:var(--muted);text-align:center;margin-top:6px}
-.att{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 0;border-top:1px solid var(--line)}
+.att{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:12px 0;border-top:1px solid var(--line)}
 .att:first-child{border-top:0}
-.att-name{font-weight:650;min-width:96px}
+.att-name{font-weight:650;flex:1 1 100%}
 .att-time{width:auto!important;padding:8px 10px;flex:0 0 auto;font-size:15px}
-.att-status{margin-left:auto}
-.att-fine{border:1px solid var(--fine);color:var(--fine);background:transparent;border-radius:9px;
-  padding:7px 12px;font-size:13px;font-weight:650;cursor:pointer}
+.att-status{flex:1 1 auto}
+.att-fine{flex:0 0 auto;border:1px solid var(--fine);color:var(--fine);background:transparent;border-radius:9px;
+  padding:8px 14px;font-size:13px;font-weight:650;cursor:pointer}
+
+/* Карточки зарплаты — вместо широкой таблицы, влезают в любой экран */
+.pcard{padding:12px 0;border-top:1px solid var(--line)}
+.pcard:first-child{border-top:0}
+.pcard-top{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.pcard-name{font-weight:650}
+.pcard-pay{font-weight:750;color:var(--cash);font-size:18px;white-space:nowrap}
+.pcard-sub{font-size:13px;color:var(--muted);margin-top:4px;display:flex;flex-wrap:wrap;gap:4px 12px}
+.pcard-sub b{color:var(--ink);font-weight:650}
+.pcard.total{border-top:2px solid var(--line);margin-top:6px;padding-top:14px}
+.pcard.total .pcard-name{font-weight:800}
+.pcard.total .pcard-pay{font-size:21px}
 </style>
 </head>
 <body>
@@ -281,11 +293,7 @@ svg{display:block}
 
     <div class="card">
       <h2>Зарплата мастеров за период</h2>
-      <table>
-        <thead><tr><th>Мастер</th><th>Выручка</th><th>Кл.</th><th>Штраф</th><th>К выплате</th></tr></thead>
-        <tbody id="masterRows"></tbody>
-        <tfoot><tr><td>Итого</td><td class="num" id="fRev">0</td><td class="num" id="fCl">0</td><td class="num fineval" id="fFine">0</td><td class="num payout" id="fPay">0</td></tr></tfoot>
-      </table>
+      <div id="masterRows"></div>
       <div class="muted-note">Салону остаётся: <span class="num" id="salonCut">0</span> сум</div>
     </div>
 
@@ -293,11 +301,9 @@ svg{display:block}
       <h2>Выставить штраф</h2>
       <label class="fld">Мастер</label>
       <select id="fineMaster"></select>
-      <div class="period-custom" style="margin-top:10px">
-        <div><label class="fld">Дата</label><input id="fineDate" type="date"></div>
-        <div><label class="fld">Сумма, сум</label><input id="fineAmt" type="number" inputmode="numeric" placeholder="50000"></div>
-      </div>
-      <div style="height:12px"></div>
+      <div style="margin-top:12px"><label class="fld">Дата</label><input id="fineDate" type="date"></div>
+      <div style="margin-top:12px"><label class="fld">Сумма, сум</label><input id="fineAmt" type="number" inputmode="numeric" placeholder="50000"></div>
+      <div style="height:14px"></div>
       <button class="btn ghost" id="addFine">Добавить штраф</button>
     </div>
   </section>
@@ -539,15 +545,22 @@ function renderAdmin(){
     const b=by[n];const pct=PCT[n]!=null?PCT[n]:40;
     const pay=Math.max(0,b.rev*pct/100-b.fine);
     tRev+=b.rev;tCl+=b.cl;tFine+=b.fine;tPay+=pay;
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${n} <span class="hint">${pct}%</span></td>
-      <td class="num">${fmt(b.rev)}</td><td class="num">${b.cl}</td>
-      <td class="num fineval">${b.fine?'−'+fmt(b.fine):'—'}</td>
-      <td class="num payout">${fmt(pay)}</td>`;
-    tb.appendChild(tr);
+    const card=document.createElement('div');card.className='pcard';
+    card.innerHTML=`<div class="pcard-top">
+        <span class="pcard-name">${n} <span class="hint">${pct}%</span></span>
+        <span class="pcard-pay num">${fmt(pay)}</span></div>
+      <div class="pcard-sub"><span>Выручка <b class="num">${fmt(b.rev)}</b></span>
+        <span><b class="num">${b.cl}</b> кл.</span>
+        ${b.fine?`<span class="fineval">штраф −${fmt(b.fine)}</span>`:''}</div>`;
+    tb.appendChild(card);
   });
-  $('fRev').textContent=fmt(tRev);$('fCl').textContent=tCl;
-  $('fFine').textContent=tFine?'−'+fmt(tFine):'—';$('fPay').textContent=fmt(tPay);
+  const tot=document.createElement('div');tot.className='pcard total';
+  tot.innerHTML=`<div class="pcard-top"><span class="pcard-name">Итого к выплате</span>
+      <span class="pcard-pay num">${fmt(tPay)}</span></div>
+    <div class="pcard-sub"><span>Выручка <b class="num">${fmt(tRev)}</b></span>
+      <span><b class="num">${tCl}</b> кл.</span>
+      ${tFine?`<span class="fineval">штраф −${fmt(tFine)}</span>`:''}</div>`;
+  tb.appendChild(tot);
   $('salonCut').textContent=fmt(tRev-tPay);
 
   renderChart(from,to);
