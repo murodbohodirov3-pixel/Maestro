@@ -166,6 +166,9 @@ svg{display:block}
 .pcard.total .pcard-name{font-weight:800}
 .pcard.total .pcard-pay{font-size:21px}
 </style>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#C9A876">
+<link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
 <div class="pole"></div>
@@ -769,6 +772,13 @@ buildSwatches(); applyTheme();
   applyRoleUI();
 })();
 
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js");
+    });
+  }
 </script>
 </body>
 </html>
