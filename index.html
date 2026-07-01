@@ -192,7 +192,7 @@ svg{display:block}
 
   <!-- ================= ЭКРАН МАСТЕРА ================= -->
   <section id="masterView">
-    <div class="card">
+    <div class="card" id="whoCard">
       <h2>Кто вводит</h2>
       <select id="masterPick"></select>
       <div class="hint" style="margin-top:8px">В готовой версии это определится само по твоему Телеграму.</div>
@@ -320,7 +320,8 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v6';
+const APPVER = 'v7';
+const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 const REST = SUPABASE_URL + '/rest/v1/';
 // Ключ передаём прямо в адресе (?apikey=...) и без лишних заголовков —
 // тогда запрос «простой» и Телеграм его не блокирует (как в Safari).
@@ -360,7 +361,7 @@ let shiftStart='09:00';
 let SALON={lat:41.3111,lng:69.2797,radius:100};
 
 let curType='cash', curClients=1, curMaster=null;
-let period='week', view='master';
+let period='week', view='master', role='manual';
 let loadErr='';
 
 const TODAY = new Date().toISOString().slice(0,10);
@@ -713,16 +714,40 @@ $('addFine').onclick=async ()=>{
 };
 
 /* ============================================================
+   КТО ЗАШЁЛ: админ / мастер / ручной режим (браузер)
+   ============================================================ */
+function resolveIdentity(){
+  const uid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user.id : null;
+  if(uid==null){ role='manual'; return; }              // браузер/десктоп — ручной выбор
+  if(Number(uid)===ADMIN_ID){ role='admin'; return; }  // владелец
+  const m = MASTERS.find(x=>x.telegram_id && Number(x.telegram_id)===Number(uid));
+  if(m){ role='master'; curMaster=m.name; return; }     // мастер видит только себя
+  role='unknown';
+}
+function applyRoleUI(){
+  const seg=$('roleSeg'), who=$('whoCard');
+  const hide = (role==='master' || role==='unknown');
+  if(seg) seg.style.display = hide ? 'none' : 'flex';   // мастеру нельзя в админку
+  if(who) who.style.display = hide ? 'none' : '';        // мастеру не нужен выбор имени
+  view = (role==='admin') ? 'admin' : 'master';
+  document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.toggle('on', x.dataset.role===view));
+  $('adminView').style.display = view==='admin' ? 'block' : 'none';
+  $('masterView').style.display = view==='admin' ? 'none' : 'block';
+  if(role==='unknown'){ $('who').textContent='ты не в списке — напиши админу'; }
+  if(view==='admin') renderAdmin(); else renderMaster();
+}
+
+/* ============================================================
    СТАРТ — грузим данные из базы, потом рисуем
    ============================================================ */
 buildSwatches(); applyTheme();
 (async function init(){
   $('who').textContent='загрузка…';
   const ok = await loadAll();
-  const diag = ' <span style="opacity:.55">'+APPVER+' · '+location.origin+'</span>';
+  const diag = ' <span style="opacity:.5">'+APPVER+'</span>';
   if(!ok){
     $('who').textContent='нет связи с базой';
-    $('bottomNote').innerHTML='<span style="color:var(--fine)">Ошибка базы: '+loadErr+'</span><br>'+diag;
+    $('bottomNote').innerHTML='<span style="color:var(--fine)">Ошибка базы: '+loadErr+'</span>'+diag;
   } else {
     const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
     $('who').textContent = u ? ('привет, '+(u.first_name||'мастер')) : 'учёт салона';
@@ -731,7 +756,8 @@ buildSwatches(); applyTheme();
   fillFineMaster();
   $('shiftStart').value=shiftStart; syncSalonInputs();
   $('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
-  renderMaster();
+  resolveIdentity();
+  applyRoleUI();
 })();
 
 </script>
