@@ -172,6 +172,16 @@ svg{display:block}
 </head>
 <body>
 <div class="pole"></div>
+
+<!-- Экран входа (для приложения/браузера вне Telegram). Скрыт по умолчанию. -->
+<div id="loginGate" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);
+     flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center">
+  <img src="icon-192.png" alt="Maestro" style="width:96px;height:96px;border-radius:22px;box-shadow:var(--shadow)">
+  <div style="font-size:22px;font-weight:800;color:var(--ink)">Maestro</div>
+  <div style="color:var(--muted);max-width:280px">Войдите через Telegram, чтобы приложение узнало вас</div>
+  <div id="tgLoginBox"></div>
+  <div id="loginMsg" style="color:var(--muted);font-size:14px"></div>
+</div>
 <div class="wrap">
 
   <header>
@@ -343,12 +353,18 @@ const APPVER = 'v10';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
+
+// Вход через кнопку "Войти через Telegram" (когда открыто не внутри Telegram).
+// Запоминаем его, чтобы логиниться один раз.
+let WIDGET_USER = null;
+try { const _s = localStorage.getItem('tgAuth'); if(_s) WIDGET_USER = JSON.parse(_s); } catch(_){}
+
 async function callFn(action, payload){
   const idata = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : '';
   const r = await fetch(FN_URL, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ initData: idata, action, payload: payload||{} })
+    body: JSON.stringify({ initData: idata, tgAuth: WIDGET_USER, action, payload: payload||{} })
   });
   let j={}; try{ j = await r.json(); }catch(_){}
   if(!r.ok) throw new Error((j && j.error) ? j.error : ('HTTP '+r.status));
@@ -728,7 +744,8 @@ $('addFine').onclick=async ()=>{
    КТО ЗАШЁЛ: админ / мастер / ручной режим (браузер)
    ============================================================ */
 function resolveIdentity(){
-  const uid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user.id : null;
+  let uid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) ? tg.initDataUnsafe.user.id : null;
+  if(uid==null && WIDGET_USER) uid = WIDGET_USER.id;   // вход через кнопку
   if(uid==null){ role='manual'; return; }              // браузер/десктоп — ручной выбор
   if(Number(uid)===ADMIN_ID){ role='admin'; return; }  // владелец
   const m = MASTERS.find(x=>x.telegram_id && Number(x.telegram_id)===Number(uid));
@@ -752,8 +769,50 @@ function applyRoleUI(){
 /* ============================================================
    СТАРТ — грузим данные из базы, потом рисуем
    ============================================================ */
+/* ============================================================
+   ЭКРАН ВХОДА ЧЕРЕЗ TELEGRAM (для приложения/браузера)
+   ============================================================ */
+function inTelegram(){ return !!(tg && tg.initDataUnsafe && tg.initDataUnsafe.user); }
+function needLogin(){ return !inTelegram() && !WIDGET_USER; }
+
+// Когда Telegram возвращает нас обратно, данные входа приходят в адресе (?id=..&hash=..).
+// Ловим их, запоминаем и чистим адрес.
+function captureRedirectAuth(){
+  try{
+    const p = new URLSearchParams(location.search);
+    if(p.get('hash') && p.get('id')){
+      const user={};
+      p.forEach((v,k)=>{ user[k]=v; });
+      localStorage.setItem('tgAuth', JSON.stringify(user));
+      WIDGET_USER = user;
+      history.replaceState(null,'',location.origin+location.pathname);  // убрать данные из адреса
+    }
+  }catch(_){}
+}
+captureRedirectAuth();
+
+function showLoginGate(){
+  const gate=document.getElementById('loginGate');
+  const box=document.getElementById('tgLoginBox');
+  if(!gate||!box) return;
+  gate.style.display='flex';
+  if(!box.dataset.ready){          // кнопку вставляем один раз
+    const s=document.createElement('script');
+    s.async=true;
+    s.src='https://telegram.org/js/telegram-widget.js?22';
+    s.setAttribute('data-telegram-login','Maestro_uzbot');
+    s.setAttribute('data-size','large');
+    s.setAttribute('data-radius','12');
+    s.setAttribute('data-auth-url', location.origin + location.pathname);  // вернуться сюда же
+    s.setAttribute('data-request-access','write');
+    box.appendChild(s);
+    box.dataset.ready='1';
+  }
+}
+
 buildSwatches(); applyTheme();
-(async function init(){
+async function init(){
+  if(needLogin()){ showLoginGate(); return; }   // сначала вход, потом данные
   $('who').textContent='загрузка…';
   const ok = await loadAll();
   const diag = ' <span style="opacity:.5">'+APPVER+'</span>';
@@ -770,7 +829,8 @@ buildSwatches(); applyTheme();
   $('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
   $('mFrom').value=weekStart(LATEST); $('mTo').value=LATEST;
   applyRoleUI();
-})();
+}
+init();
 
 </script>
 <script>
