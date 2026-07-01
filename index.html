@@ -336,35 +336,21 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v8';
+const APPVER = 'v9';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
-const REST = SUPABASE_URL + '/rest/v1/';
-// Ключ передаём прямо в адресе (?apikey=...) и без лишних заголовков —
-// тогда запрос «простой» и Телеграм его не блокирует (как в Safari).
-function withKey(path){ return REST + path + (path.includes('?')?'&':'?') + 'apikey=' + SUPABASE_KEY; }
-
-async function sbGet(path){
-  const r = await fetch(withKey(path));
-  if(!r.ok) throw new Error('GET '+r.status+': '+(await r.text()));
-  return r.json();
+// Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
+const FN_URL = SUPABASE_URL + '/functions/v1/api';
+async function callFn(action, payload){
+  const idata = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) ? window.Telegram.WebApp.initData : '';
+  const r = await fetch(FN_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ initData: idata, action, payload: payload||{} })
+  });
+  let j={}; try{ j = await r.json(); }catch(_){}
+  if(!r.ok) throw new Error((j && j.error) ? j.error : ('HTTP '+r.status));
+  return j;
 }
-async function sbInsert(table, row){
-  const r = await fetch(withKey(table), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(row) });
-  if(!r.ok) throw new Error('INSERT '+r.status+': '+(await r.text()));
-}
-async function sbUpsert(table, row, onconflict){
-  const r = await fetch(withKey(table+'?on_conflict='+onconflict), { method:'POST', headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'}, body: JSON.stringify(row) });
-  if(!r.ok) throw new Error('UPSERT '+r.status+': '+(await r.text()));
-}
-async function sbPatch(table, filter, row){
-  const r = await fetch(withKey(table+'?'+filter), { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(row) });
-  if(!r.ok) throw new Error('PATCH '+r.status+': '+(await r.text()));
-}
-async function sbDelete(table, filter){
-  const r = await fetch(withKey(table+'?'+filter), { method:'DELETE' });
-  if(!r.ok) throw new Error('DELETE '+r.status+': '+(await r.text()));
-}
-const enc = encodeURIComponent;
 
 /* ============================================================
    СОСТОЯНИЕ (заполняется из базы)
@@ -446,30 +432,25 @@ function fineSum(name,from,to){return FINES.filter(f=>f.m===name&&f.d>=from&&f.d
    ============================================================ */
 async function loadAll(){
   try{
-    const [m,s,f,a,st] = await Promise.all([
-      sbGet('masters?select=*&order=id'),
-      sbGet('sales?select=*&order=d&limit=5000'),
-      sbGet('fines?select=*&limit=5000'),
-      sbGet('attendance?select=*&limit=5000'),
-      sbGet('settings?select=*&id=eq.1')
-    ]);
-    MASTERS=m||[]; PCT={}; MASTERS.forEach(x=>PCT[x.name]=x.pct);
-    ACTIVE=MASTERS.filter(x=>x.active).map(x=>x.name);
-    if(!curMaster || !ACTIVE.includes(curMaster)) curMaster=ACTIVE[0]||null;
-
-    DATA=(s||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl}));
-    FINES=(f||[]).map(r=>({id:r.id,m:r.master,d:r.d,amount:r.amount}));
-    ATTEND={}; (a||[]).forEach(r=>{(ATTEND[r.d]=ATTEND[r.d]||{})[r.master]=r.arrived;});
-    const conf=(st&&st[0])||null;
+    const j = await callFn('load');
+    role = j.role || 'unknown';
+    MASTERS = j.masters || []; PCT={}; MASTERS.forEach(x=>PCT[x.name]=x.pct);
+    ACTIVE = MASTERS.filter(x=>x.active).map(x=>x.name);
+    if(role==='master'){ curMaster = j.me || ACTIVE[0] || null; }
+    else { if(!curMaster || !ACTIVE.includes(curMaster)) curMaster = ACTIVE[0]||null; }
+    DATA=(j.sales||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl}));
+    FINES=(j.fines||[]).map(r=>({id:r.id,m:r.master,d:r.d,amount:r.amount}));
+    ATTEND={}; (j.attendance||[]).forEach(r=>{(ATTEND[r.d]=ATTEND[r.d]||{})[r.master]=r.arrived;});
+    const conf=(j.settings&&j.settings[0])||null;
     if(conf){ shiftStart=conf.shift_start||'09:00';
       SALON={lat:(conf.salon_lat??41.3111),lng:(conf.salon_lng??69.2797),radius:(conf.salon_radius||100)}; }
-
     const ds=DATA.map(r=>r.d).sort();
     LATEST = ds.length ? ds[ds.length-1] : TODAY;
     return true;
   }catch(e){
     loadErr = (e && e.message) ? e.message : 'неизвестная ошибка';
-    console.error('Supabase error:', loadErr);
+    role='unknown';
+    console.error('load error:', loadErr);
     return false;
   }
 }
@@ -496,7 +477,7 @@ function renderToday(){
       <span class="amt num">${fmt(amount)}</span>
       <button class="del" title="удалить">×</button>`;
     div.querySelector('.del').onclick=async ()=>{
-      try{ await sbDelete('sales','id=eq.'+r.id); }catch(e){ alert('Не удалось удалить: '+e.message); return; }
+      try{ await callFn('delSale',{id:r.id}); }catch(e){ alert('Не удалось удалить: '+e.message); return; }
       haptic(); await loadAll(); renderMaster();
     };
     box.appendChild(div);
@@ -539,7 +520,7 @@ function distM(la1,lo1,la2,lo2){ const R=6371000,toR=x=>x*Math.PI/180;
 function setShiftMsg(html){ const b=document.getElementById('shiftMsg'); if(b) b.innerHTML=html; }
 async function markArrival(){
   const arrived=new Date().toTimeString().slice(0,5);
-  try{ await sbUpsert('attendance',{master:curMaster,d:TODAY,arrived},'master,d'); }
+  try{ await callFn('setAttendance',{master:curMaster,d:TODAY,arrived}); }
   catch(e){ setShiftMsg('<span style="color:var(--fine)">Ошибка сохранения: '+e.message+'</span>'); return; }
   ATTEND[TODAY]=ATTEND[TODAY]||{}; ATTEND[TODAY][curMaster]=arrived;
   haptic(); renderShift();
@@ -564,7 +545,7 @@ function renderShift(){
     const d=minsLate(t);
     box.innerHTML='<div class="hero num" style="font-size:24px">'+t+' <small>'+(d>0?'опоздание '+d+' мин':'вовремя')+'</small></div>'
       +'<button class="btn ghost" id="resetShift" style="margin-top:12px">Изменить</button>';
-    $('resetShift').onclick=async ()=>{ try{ await sbDelete('attendance','master=eq.'+enc(curMaster)+'&d=eq.'+TODAY); }catch(e){} if(ATTEND[TODAY]) delete ATTEND[TODAY][curMaster]; haptic(); renderShift(); };
+    $('resetShift').onclick=async ()=>{ try{ await callFn('delAttendance',{master:curMaster,d:TODAY}); }catch(e){} if(ATTEND[TODAY]) delete ATTEND[TODAY][curMaster]; haptic(); renderShift(); };
   } else {
     box.innerHTML='<button class="btn" id="checkin">Я пришёл</button>'
       +'<div class="hint" style="margin-top:8px">Отметиться можно только в радиусе '+SALON.radius+' м от салона.</div>'
@@ -584,8 +565,8 @@ function renderAttendAdmin(){
     inp.onchange=async ()=>{
       ATTEND[TODAY]=ATTEND[TODAY]||{};
       try{
-        if(inp.value){ await sbUpsert('attendance',{master:n,d:TODAY,arrived:inp.value},'master,d'); ATTEND[TODAY][n]=inp.value; }
-        else { await sbDelete('attendance','master=eq.'+enc(n)+'&d=eq.'+TODAY); delete ATTEND[TODAY][n]; }
+        if(inp.value){ await callFn('setAttendance',{master:n,d:TODAY,arrived:inp.value}); ATTEND[TODAY][n]=inp.value; }
+        else { await callFn('delAttendance',{master:n,d:TODAY}); delete ATTEND[TODAY][n]; }
       }catch(e){ alert('Ошибка: '+e.message); }
       renderAttendAdmin();
     };
@@ -694,7 +675,7 @@ $('addSale').onclick=async ()=>{
   if(!curMaster){alert('Сначала выбери мастера');return}
   const rec={master:curMaster,d:TODAY,cash:0,card:0,qr:0,cl:curClients}; rec[curType]=a;
   const btn=$('addSale'); btn.disabled=true; const old=btn.textContent; btn.textContent='Сохраняю…';
-  try{ await sbInsert('sales',rec); }
+  try{ await callFn('addSale', rec); }
   catch(e){ btn.disabled=false; btn.textContent=old; alert('Не удалось сохранить: '+e.message); return; }
   btn.disabled=false; btn.textContent=old;
   $('amt').value='';curClients=1;$('clVal').textContent='1';
@@ -714,10 +695,10 @@ document.querySelectorAll('#mPeriodSeg button').forEach(b=>b.onclick=()=>{
   renderMyEarnings();
 });
 $('mFrom').onchange=renderMyEarnings; $('mTo').onchange=renderMyEarnings;
-$('shiftStart').onchange=async ()=>{ shiftStart=$('shiftStart').value||'09:00'; try{ await sbPatch('settings','id=eq.1',{shift_start:shiftStart}); }catch(e){} renderAttendAdmin(); };
+$('shiftStart').onchange=async ()=>{ shiftStart=$('shiftStart').value||'09:00'; try{ await callFn('setSettings',{shift_start:shiftStart}); }catch(e){} renderAttendAdmin(); };
 function syncSalonInputs(){$('salonLat').value=SALON.lat;$('salonLng').value=SALON.lng;$('salonRad').value=SALON.radius;
   $('salonState').textContent='Текущая точка: '+Number(SALON.lat).toFixed(5)+', '+Number(SALON.lng).toFixed(5)+' · радиус '+SALON.radius+' м';}
-async function saveSalon(){ try{ await sbPatch('settings','id=eq.1',{salon_lat:SALON.lat,salon_lng:SALON.lng,salon_radius:SALON.radius}); }catch(e){} }
+async function saveSalon(){ try{ await callFn('setSettings',{salon_lat:SALON.lat,salon_lng:SALON.lng,salon_radius:SALON.radius}); }catch(e){} }
 $('salonLat').onchange=async ()=>{SALON.lat=parseFloat($('salonLat').value)||SALON.lat;await saveSalon();syncSalonInputs()};
 $('salonLng').onchange=async ()=>{SALON.lng=parseFloat($('salonLng').value)||SALON.lng;await saveSalon();syncSalonInputs()};
 $('salonRad').onchange=async ()=>{SALON.radius=parseInt($('salonRad').value,10)||100;await saveSalon();syncSalonInputs()};
@@ -734,7 +715,7 @@ $('addFine').onclick=async ()=>{
   const m=$('fineMaster').value, dt=$('fineDate').value||TODAY, a=parseInt($('fineAmt').value,10);
   if(!a||a<=0){$('fineAmt').focus();return}
   const btn=$('addFine'); btn.disabled=true;
-  try{ await sbInsert('fines',{master:m,d:dt,amount:a}); }
+  try{ await callFn('addFine',{master:m,d:dt,amount:a}); }
   catch(e){ btn.disabled=false; alert('Не удалось сохранить штраф: '+e.message); return; }
   btn.disabled=false;
   $('fineAmt').value='';haptic(); await loadAll(); renderAdmin();
@@ -785,7 +766,6 @@ buildSwatches(); applyTheme();
   $('shiftStart').value=shiftStart; syncSalonInputs();
   $('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
   $('mFrom').value=weekStart(LATEST); $('mTo').value=LATEST;
-  resolveIdentity();
   applyRoleUI();
 })();
 
