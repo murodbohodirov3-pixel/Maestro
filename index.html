@@ -94,6 +94,9 @@ input:focus,select:focus{outline:2px solid var(--brass);border-color:transparent
 .types button .dot{width:9px;height:9px;border-radius:50%}
 .types button.on{border-color:currentColor}
 .t-cash.on{color:var(--cash)} .t-card.on{color:var(--card)} .t-qr.on{color:var(--qr)}
+/* Выбор нового/постоянного клиента */
+.nc{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.nc button.on{border-color:var(--brass);color:var(--brass);background:var(--brass-soft)}
 
 /* Степпер количества */
 .stepper{display:flex;align-items:center;gap:0;border:1px solid var(--line);
@@ -234,6 +237,12 @@ svg{display:block}
         <div class="val num" id="clVal">1</div>
         <button id="clPlus">+</button>
       </div>
+      <div style="height:12px"></div>
+      <label class="fld">Клиент новый или постоянный?</label>
+      <div class="types nc" id="ncPick">
+        <button data-nc="new"><span class="dot" style="background:var(--brass)"></span>Новый</button>
+        <button data-nc="reg"><span class="dot" style="background:var(--muted)"></span>Постоянный</button>
+      </div>
       <div style="height:14px"></div>
       <button class="btn" id="addSale">Добавить</button>
     </div>
@@ -277,8 +286,8 @@ svg{display:block}
     <div class="card">
       <h2>Период отчёта</h2>
       <div class="seg" id="periodSeg" style="margin:0">
-        <button data-p="day">День</button>
-        <button data-p="week" class="on">Неделя</button>
+        <button data-p="day" class="on">День</button>
+        <button data-p="week">Неделя</button>
         <button data-p="month">Месяц</button>
         <button data-p="custom">Период</button>
       </div>
@@ -319,6 +328,15 @@ svg{display:block}
     </div>
 
     <div class="card">
+      <h2>Новые и постоянные клиенты</h2>
+      <div class="tiles">
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--brass)"></span>Новые</div><div class="v num" id="cNew">0</div></div>
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--muted)"></span>Постоянные</div><div class="v num" id="cReg">0</div></div>
+      </div>
+      <div class="muted-note" id="cNewPct"></div>
+    </div>
+
+    <div class="card">
       <h2>Выручка по дням</h2>
       <div class="chart" id="chart"></div>
     </div>
@@ -349,7 +367,7 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v10';
+const APPVER = 'v11';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
@@ -382,7 +400,8 @@ let shiftStart='09:00';
 let SALON={lat:41.3111,lng:69.2797,radius:100};
 
 let curType='cash', curClients=1, curMaster=null;
-let period='week', view='master', role='manual';
+let curNewClient=null;   // null = не выбрано, true = новый, false = постоянный
+let period='day', view='master', role='manual';
 let loadErr='';
 
 const TODAY = new Date().toISOString().slice(0,10);
@@ -457,7 +476,7 @@ async function loadAll(){
     ACTIVE = MASTERS.filter(x=>x.active).map(x=>x.name);
     if(role==='master'){ curMaster = j.me || ACTIVE[0] || null; }
     else { if(!curMaster || !ACTIVE.includes(curMaster)) curMaster = ACTIVE[0]||null; }
-    DATA=(j.sales||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl}));
+    DATA=(j.sales||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl,nc:r.is_new_client}));
     FINES=(j.fines||[]).map(r=>({id:r.id,m:r.master,d:r.d,amount:r.amount}));
     ATTEND={}; (j.attendance||[]).forEach(r=>{(ATTEND[r.d]=ATTEND[r.d]||{})[r.master]=r.arrived;});
     const conf=(j.settings&&j.settings[0])||null;
@@ -490,8 +509,10 @@ function renderToday(){
   list.forEach(r=>{
     const t = r.cash?['cash','Наличные']:r.card?['card','Карта']:['qr','QR Paynet'];
     const amount = r.cash||r.card||r.qr;
+    const ncLabel = r.nc===true?'<span class="hint">новый</span>':(r.nc===false?'<span class="hint">постоянный</span>':'');
     const div=document.createElement('div');div.className='row';
     div.innerHTML=`<span class="chip ${t[0]}">${t[1]}</span>
+      ${ncLabel}
       <span class="hint num">${r.cl} кл.</span>
       <span class="amt num">${fmt(amount)}</span>
       <button class="del" title="удалить">×</button>`;
@@ -622,22 +643,32 @@ function renderAdmin(){
   $('sCash').textContent=fmt(cash);$('sCard').textContent=fmt(card);$('sQr').textContent=fmt(qr);
   $('sTotal').textContent=fmt(cash+card+qr);
 
+  // Новые / постоянные клиенты за период
+  let newCl=0, regCl=0;
+  rows.forEach(r=>{ if(r.nc===true) newCl+=(r.cl||0); else if(r.nc===false) regCl+=(r.cl||0); });
+  const totMarked=newCl+regCl;
+  const newPct = totMarked? Math.round(newCl/totMarked*100) : 0;
+  $('cNew').textContent=fmt(newCl);
+  $('cReg').textContent=fmt(regCl);
+  $('cNewPct').textContent=totMarked? ('Доля новых: '+newPct+'%') : 'Пока нет отмеченных клиентов за период';
+
   const by={};
-  rows.forEach(r=>{const b=by[r.m]||(by[r.m]={rev:0,cl:0,fine:0});b.rev+=r.cash+r.card+r.qr;b.cl+=r.cl||0;});
-  FINES.filter(f=>f.d>=from && f.d<=to).forEach(f=>{const b=by[f.m]||(by[f.m]={rev:0,cl:0,fine:0});b.fine+=f.amount;});
+  rows.forEach(r=>{const b=by[r.m]||(by[r.m]={rev:0,cl:0,fine:0,newc:0});b.rev+=r.cash+r.card+r.qr;b.cl+=r.cl||0; if(r.nc===true) b.newc+=(r.cl||0);});
+  FINES.filter(f=>f.d>=from && f.d<=to).forEach(f=>{const b=by[f.m]||(by[f.m]={rev:0,cl:0,fine:0,newc:0});b.fine+=f.amount;});
   const names=Object.keys(by).sort((a,b)=>by[b].rev-by[a].rev);
   const tb=$('masterRows');tb.innerHTML='';
-  let tRev=0,tCl=0,tFine=0,tPay=0;
+  let tRev=0,tCl=0,tFine=0,tPay=0,tNew=0;
   names.forEach(n=>{
     const b=by[n];const pct=PCT[n]!=null?PCT[n]:40;
     const pay=Math.max(0,b.rev*pct/100-b.fine);
-    tRev+=b.rev;tCl+=b.cl;tFine+=b.fine;tPay+=pay;
+    tRev+=b.rev;tCl+=b.cl;tFine+=b.fine;tPay+=pay;tNew+=b.newc;
     const card=document.createElement('div');card.className='pcard';
     card.innerHTML=`<div class="pcard-top">
         <span class="pcard-name">${n} <span class="hint">${pct}%</span></span>
         <span class="pcard-pay num">${fmt(pay)}</span></div>
       <div class="pcard-sub"><span>Выручка <b class="num">${fmt(b.rev)}</b></span>
         <span><b class="num">${b.cl}</b> кл.</span>
+        <span>новых <b class="num">${b.newc}</b></span>
         ${b.fine?`<span class="fineval">штраф −${fmt(b.fine)}</span>`:''}</div>`;
     tb.appendChild(card);
   });
@@ -647,6 +678,7 @@ function renderAdmin(){
       <span class="pcard-pay num">${fmt(tPay)}</span></div>
     <div class="pcard-sub"><span>Выручка <b class="num">${fmt(tRev)}</b></span>
       <span><b class="num">${tCl}</b> кл.</span>
+      <span>новых <b class="num">${tNew}</b></span>
       ${tFine?`<span class="fineval">штраф −${fmt(tFine)}</span>`:''}</div>`;
   tb.appendChild(tot);
   $('salonCut').textContent=fmt(tRev-tPay);
@@ -686,18 +718,24 @@ document.querySelectorAll('#typePick button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#typePick button').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');curType=b.dataset.type;haptic();
 });
+document.querySelectorAll('#ncPick button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#ncPick button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');curNewClient=(b.dataset.nc==='new');haptic();
+});
 $('clMinus').onclick=()=>{curClients=Math.max(0,curClients-1);$('clVal').textContent=curClients;haptic()};
 $('clPlus').onclick=()=>{curClients++;$('clVal').textContent=curClients;haptic()};
 $('addSale').onclick=async ()=>{
   const a=parseInt($('amt').value,10);
   if(!a||a<=0){$('amt').focus();return}
   if(!curMaster){alert('Сначала выбери мастера');return}
-  const rec={master:curMaster,d:TODAY,cash:0,card:0,qr:0,cl:curClients}; rec[curType]=a;
+  if(curNewClient===null){alert('Отметь, клиент новый или постоянный');return}
+  const rec={master:curMaster,d:TODAY,cash:0,card:0,qr:0,cl:curClients,is_new_client:curNewClient}; rec[curType]=a;
   const btn=$('addSale'); btn.disabled=true; const old=btn.textContent; btn.textContent='Сохраняю…';
   try{ await callFn('addSale', rec); }
   catch(e){ btn.disabled=false; btn.textContent=old; alert('Не удалось сохранить: '+e.message); return; }
   btn.disabled=false; btn.textContent=old;
   $('amt').value='';curClients=1;$('clVal').textContent='1';
+  curNewClient=null; document.querySelectorAll('#ncPick button').forEach(x=>x.classList.remove('on'));
   haptic(); await loadAll(); renderMaster();
 };
 document.querySelectorAll('#periodSeg button').forEach(b=>b.onclick=()=>{
