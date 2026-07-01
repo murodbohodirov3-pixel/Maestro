@@ -336,7 +336,7 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v9';
+const APPVER = 'v10';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
@@ -667,7 +667,7 @@ document.querySelectorAll('#typePick button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#typePick button').forEach(x=>x.classList.remove('on'));
   b.classList.add('on');curType=b.dataset.type;haptic();
 });
-$('clMinus').onclick=()=>{curClients=Math.max(1,curClients-1);$('clVal').textContent=curClients;haptic()};
+$('clMinus').onclick=()=>{curClients=Math.max(0,curClients-1);$('clVal').textContent=curClients;haptic()};
 $('clPlus').onclick=()=>{curClients++;$('clVal').textContent=curClients;haptic()};
 $('addSale').onclick=async ()=>{
   const a=parseInt($('amt').value,10);
