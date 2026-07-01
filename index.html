@@ -231,15 +231,31 @@ svg{display:block}
     </div>
 
     <div class="card">
-      <h2>Моя неделя</h2>
-      <div class="hero num"><span id="mWeekPay">0</span> <small>сум к выплате</small></div>
-      <div style="display:flex;gap:18px;margin-top:12px;flex-wrap:wrap">
-        <div><div class="hint">Выручка</div><div class="num" style="font-weight:700"><span id="mWeekRev">0</span></div></div>
-        <div><div class="hint">Мой %</div><div class="num" style="font-weight:700"><span id="mPct">0</span>%</div></div>
-        <div><div class="hint">Штрафы</div><div class="num fineval" style="font-weight:700">−<span id="mFine">0</span></div></div>
-        <div><div class="hint">Клиентов</div><div class="num" style="font-weight:700"><span id="mCl">0</span></div></div>
+      <h2>Мой заработок</h2>
+      <div class="seg" id="mPeriodSeg" style="margin:0 0 6px">
+        <button data-p="day">День</button>
+        <button data-p="week" class="on">Неделя</button>
+        <button data-p="month">Месяц</button>
+        <button data-p="custom">Период</button>
       </div>
-      <div class="muted-note">Неделя: <span id="mWeekRange"></span></div>
+      <div class="period-custom" id="mCustomWrap" style="display:none">
+        <div><label class="fld">С</label><input id="mFrom" type="date"></div>
+        <div><label class="fld">По</label><input id="mTo" type="date"></div>
+      </div>
+      <div class="hero num" style="margin-top:12px"><span id="mPay">0</span> <small>сум к выплате</small></div>
+      <div style="display:flex;gap:18px;margin-top:12px;flex-wrap:wrap">
+        <div><div class="hint">Выручка</div><div class="num" style="font-weight:700"><span id="mRev">0</span></div></div>
+        <div><div class="hint">Мой %</div><div class="num" style="font-weight:700"><span id="mPctV">0</span>%</div></div>
+        <div><div class="hint">Штрафы</div><div class="num fineval" style="font-weight:700">−<span id="mFineV">0</span></div></div>
+        <div><div class="hint">Клиентов</div><div class="num" style="font-weight:700"><span id="mClV">0</span></div></div>
+      </div>
+      <div class="tiles" style="margin-top:14px">
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--cash)"></span>Наличные</div><div class="v num" id="mCash">0</div></div>
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--card)"></span>Карта</div><div class="v num" id="mCardV">0</div></div>
+        <div class="tile"><div class="lbl"><span class="dot" style="background:var(--qr)"></span>QR Paynet</div><div class="v num" id="mQrV">0</div></div>
+        <div class="tile total"><div class="lbl">Итого выручка</div><div class="v num" id="mTot">0</div></div>
+      </div>
+      <div class="muted-note" id="mRangeLabel"></div>
     </div>
   </section>
 
@@ -320,7 +336,7 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v7';
+const APPVER = 'v8';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 const REST = SUPABASE_URL + '/rest/v1/';
 // Ключ передаём прямо в адресе (?apikey=...) и без лишних заголовков —
@@ -486,17 +502,26 @@ function renderToday(){
     box.appendChild(div);
   });
 }
-function renderMyWeek(){
+let mPeriod='week';
+function mRange(){
+  if(mPeriod==='day') return [LATEST,LATEST];
+  if(mPeriod==='week'){const ws=weekStart(LATEST);return [ws,addDays(ws,6)]}
+  if(mPeriod==='month') return [addDays(LATEST,-29),LATEST];
+  return [$('mFrom').value||LATEST, $('mTo').value||LATEST];
+}
+function renderMyEarnings(){
   if(!curMaster) return;
-  const ws=weekStart(LATEST), we=addDays(ws,6);
-  const mine=DATA.filter(r=>r.m===curMaster && r.d>=ws && r.d<=we);
-  const rev=mine.reduce((s,r)=>s+r.cash+r.card+r.qr,0);
+  const [from,to]=mRange();
+  const mine=DATA.filter(r=>r.m===curMaster && r.d>=from && r.d<=to);
+  const cash=mine.reduce((s,r)=>s+r.cash,0), card=mine.reduce((s,r)=>s+r.card,0), qr=mine.reduce((s,r)=>s+r.qr,0);
+  const rev=cash+card+qr;
   const cl=mine.reduce((s,r)=>s+(r.cl||0),0);
-  const fine=fineSum(curMaster,ws,we);
+  const fine=fineSum(curMaster,from,to);
   const pay=Math.max(0, rev*PCT[curMaster]/100 - fine);
-  $('mWeekPay').textContent=fmt(pay); $('mWeekRev').textContent=fmt(rev);
-  $('mPct').textContent=PCT[curMaster]; $('mFine').textContent=fmt(fine);
-  $('mCl').textContent=cl; $('mWeekRange').textContent=ddmm(ws)+'–'+ddmm(we);
+  $('mPay').textContent=fmt(pay); $('mRev').textContent=fmt(rev);
+  $('mPctV').textContent=PCT[curMaster]; $('mFineV').textContent=fmt(fine); $('mClV').textContent=cl;
+  $('mCash').textContent=fmt(cash); $('mCardV').textContent=fmt(card); $('mQrV').textContent=fmt(qr); $('mTot').textContent=fmt(rev);
+  $('mRangeLabel').textContent=ddmm(from)+' – '+ddmm(to);
 }
 
 /* ---------- Учёт прихода + геопроверка ---------- */
@@ -543,13 +568,8 @@ function renderShift(){
   } else {
     box.innerHTML='<button class="btn" id="checkin">Я пришёл</button>'
       +'<div class="hint" style="margin-top:8px">Отметиться можно только в радиусе '+SALON.radius+' м от салона.</div>'
-      +'<div id="shiftMsg" class="hint" style="margin-top:8px"></div>'
-      +'<div style="display:flex;gap:8px;margin-top:10px">'
-      +'<button class="btn ghost" id="demoNear" style="font-size:13px">📍 Демо: я у салона</button>'
-      +'<button class="btn ghost" id="demoFar" style="font-size:13px">🏠 Демо: я далеко</button></div>';
+      +'<div id="shiftMsg" class="hint" style="margin-top:8px"></div>';
     $('checkin').onclick=requestCheckin;
-    $('demoNear').onclick=()=>tryCheckin(SALON.lat,SALON.lng);
-    $('demoFar').onclick=()=>tryCheckin(SALON.lat+0.02,SALON.lng);
   }
 }
 function renderAttendAdmin(){
@@ -581,7 +601,7 @@ function quickFine(n){
   document.getElementById('fineCard').scrollIntoView({behavior:'smooth'});
   haptic(); setTimeout(()=>$('fineAmt').focus(),300);
 }
-function renderMaster(){fillMasterPick();renderShift();renderToday();renderMyWeek()}
+function renderMaster(){fillMasterPick();renderShift();renderToday();renderMyEarnings()}
 
 /* ============================================================
    ЭКРАН АДМИНА
@@ -687,6 +707,13 @@ document.querySelectorAll('#periodSeg button').forEach(b=>b.onclick=()=>{
   renderAdmin();
 });
 $('dFrom').onchange=renderAdmin; $('dTo').onchange=renderAdmin;
+document.querySelectorAll('#mPeriodSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#mPeriodSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');mPeriod=b.dataset.p;haptic();
+  $('mCustomWrap').style.display=mPeriod==='custom'?'grid':'none';
+  renderMyEarnings();
+});
+$('mFrom').onchange=renderMyEarnings; $('mTo').onchange=renderMyEarnings;
 $('shiftStart').onchange=async ()=>{ shiftStart=$('shiftStart').value||'09:00'; try{ await sbPatch('settings','id=eq.1',{shift_start:shiftStart}); }catch(e){} renderAttendAdmin(); };
 function syncSalonInputs(){$('salonLat').value=SALON.lat;$('salonLng').value=SALON.lng;$('salonRad').value=SALON.radius;
   $('salonState').textContent='Текущая точка: '+Number(SALON.lat).toFixed(5)+', '+Number(SALON.lng).toFixed(5)+' · радиус '+SALON.radius+' м';}
@@ -734,6 +761,7 @@ function applyRoleUI(){
   $('adminView').style.display = view==='admin' ? 'block' : 'none';
   $('masterView').style.display = view==='admin' ? 'none' : 'block';
   if(role==='unknown'){ $('who').textContent='ты не в списке — напиши админу'; }
+  if(role==='master' && curMaster){ $('who').textContent=curMaster+' · '+PCT[curMaster]+'%'; }
   if(view==='admin') renderAdmin(); else renderMaster();
 }
 
@@ -756,6 +784,7 @@ buildSwatches(); applyTheme();
   fillFineMaster();
   $('shiftStart').value=shiftStart; syncSalonInputs();
   $('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
+  $('mFrom').value=weekStart(LATEST); $('mTo').value=LATEST;
   resolveIdentity();
   applyRoleUI();
 })();
