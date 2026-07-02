@@ -235,6 +235,7 @@ section{animation:viewfade .25s ease}
       <button data-role="master" class="on">Мастер</button>
       <button data-role="admin">Админ</button>
       <button data-role="finance" id="finBtn" style="display:none">Финансы</button>
+      <button data-role="debts" id="dbtBtn" style="display:none">Долги</button>
     </div>
   </header>
 
@@ -321,6 +322,7 @@ section{animation:viewfade .25s ease}
         <button data-p="day" class="on">День</button>
         <button data-p="week">Неделя</button>
         <button data-p="month">Месяц</button>
+        <button data-p="all">Всё</button>
         <button data-p="custom">Период</button>
       </div>
       <div class="period-custom" id="customWrap" style="display:none">
@@ -401,8 +403,8 @@ section{animation:viewfade .25s ease}
     <div class="card">
       <h2>Период</h2>
       <div class="seg" id="finSeg" style="margin:0">
+        <button data-p="day">День</button>
         <button data-p="month" class="on">Месяц</button>
-        <button data-p="quarter">3 мес</button>
         <button data-p="all">Всё время</button>
         <button data-p="custom">Период</button>
       </div>
@@ -418,9 +420,11 @@ section{animation:viewfade .25s ease}
       <div class="hero num"><span id="finProfit">0</span> <small>сум прибыль</small></div>
       <div class="tiles" style="margin-top:14px">
         <div class="tile"><div class="lbl">Выручка</div><div class="v num" id="finRev">0</div></div>
+        <div class="tile"><div class="lbl">Зарплаты мастеров</div><div class="v num fineval" id="finPay">0</div></div>
+        <div class="tile"><div class="lbl">Остаток салону</div><div class="v num" id="finSalon" style="color:var(--brass)">0</div></div>
         <div class="tile"><div class="lbl">Расходы</div><div class="v num fineval" id="finExp">0</div></div>
       </div>
-      <div class="muted-note">Прибыль = выручка − расходы раздела «Ишхона»</div>
+      <div class="muted-note">Прибыль = остаток салону (выручка − зарплаты) − расходы «Ишхоны»</div>
     </div>
 
     <div class="card">
@@ -464,8 +468,18 @@ section{animation:viewfade .25s ease}
       <button class="btn" id="addExpBtn">Добавить расход</button>
     </div>
 
+  </section>
+
+  <!-- ================= ЭКРАН ДОЛГОВ (только админ) ================= -->
+  <section id="debtsView" style="display:none">
     <div class="card">
-      <h2>Долги</h2>
+      <h2>Таблица по месяцам</h2>
+      <div class="hint" style="margin-bottom:8px">Как в Excel: сколько погашено в каждом месяце. Таблица двигается пальцем влево-вправо.</div>
+      <div id="debtGrid"></div>
+    </div>
+
+    <div class="card">
+      <h2>Долги — погашение и управление</h2>
       <div id="debtList"></div>
       <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Закрытые долги</summary>
         <div id="debtClosed"></div></details>
@@ -499,7 +513,7 @@ section{animation:viewfade .25s ease}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v12';
+const APPVER = 'v13';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
@@ -532,6 +546,7 @@ let shiftStart='09:00';
 let SALON={lat:41.3111,lng:69.2797,radius:100};
 let EXP=[], DEBTS=[], DPAYS=[];          // финансы (только админ)
 let finPeriod='month', finTab='ishxona';
+let EARLIEST='2026-02-01';
 
 let curType='cash', curClients=1, curMaster=null;
 let curNewClient=null;   // null = не выбрано, true = новый, false = постоянный
@@ -623,6 +638,7 @@ async function loadAll(){
       SALON={lat:(conf.salon_lat??41.3111),lng:(conf.salon_lng??69.2797),radius:(conf.salon_radius||100)}; }
     const ds=DATA.map(r=>r.d).sort();
     LATEST = ds.length ? ds[ds.length-1] : TODAY;
+    EARLIEST = ds.length ? ds[0] : TODAY;
     return true;
   }catch(e){
     loadErr = (e && e.message) ? e.message : 'неизвестная ошибка';
@@ -770,6 +786,7 @@ function periodRange(){
   if(period==='day') return [LATEST,LATEST];
   if(period==='week'){const ws=weekStart(LATEST);return [ws,addDays(ws,6)]}
   if(period==='month') return [addDays(LATEST,-29),LATEST];
+  if(period==='all') return [EARLIEST,LATEST];
   return [$('dFrom').value||LATEST, $('dTo').value||LATEST];
 }
 function renderAdmin(){
@@ -887,9 +904,9 @@ function renderJournal(from,to){
    ФИНАНСЫ (только админ)
    ============================================================ */
 function finRange(){
-  if(finPeriod==='month')   return [addDays(TODAY,-29),TODAY];
-  if(finPeriod==='quarter') return [addDays(TODAY,-89),TODAY];
-  if(finPeriod==='all')     return ['2000-01-01',TODAY];
+  if(finPeriod==='day')   return [TODAY,TODAY];
+  if(finPeriod==='month') return [addDays(TODAY,-29),TODAY];
+  if(finPeriod==='all'){ let f=EARLIEST; EXP.forEach(e=>{ if(e.d<f) f=e.d; }); return [f,TODAY]; }
   return [$('fFrom').value||TODAY, $('fTo').value||TODAY];
 }
 function renderInvest(){
@@ -948,28 +965,67 @@ function debtRow(dbt){
       await callFn('addDebtPayment',{debt_id:dbt.id,date:dt,amount:a});
       if(a>=rem && !dbt.is_closed) await callFn('setDebtClosed',{id:dbt.id,is_closed:true});
     }catch(err){ alert('Ошибка: '+err.message); return; }
-    haptic(); await loadAll(); renderFinance();
+    haptic(); await loadAll(); renderDebtsView();
   };
   div.querySelector('.bToggle').onclick=async ()=>{
     try{ await callFn('setDebtClosed',{id:dbt.id,is_closed:!dbt.is_closed}); }
     catch(err){ alert('Ошибка: '+err.message); return; }
-    haptic(); await loadAll(); renderFinance();
+    haptic(); await loadAll(); renderDebtsView();
   };
   div.querySelectorAll('.pdel').forEach(b=>b.onclick=async ()=>{
     if(!confirm('Удалить это погашение?')) return;
     try{ await callFn('delDebtPayment',{id:+b.dataset.pid}); }
     catch(err){ alert('Ошибка: '+err.message); return; }
-    haptic(); await loadAll(); renderFinance();
+    haptic(); await loadAll(); renderDebtsView();
   });
   const bd=div.querySelector('.bDelDebt');
   if(bd) bd.onclick=async ()=>{
     if(!confirm('Удалить долг «'+dbt.counterparty+'» со всей историей погашений?')) return;
     try{ await callFn('delDebt',{id:dbt.id}); }
     catch(err){ alert('Ошибка: '+err.message); return; }
-    haptic(); await loadAll(); renderFinance();
+    haptic(); await loadAll(); renderDebtsView();
   };
   return div;
 }
+function ymLabel(ym){
+  const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const p=ym.split('-'); return M[+p[1]-1]+' '+p[0].slice(2);
+}
+function renderDebtGrid(){
+  const box=$('debtGrid'); if(!box) return;
+  if(!DEBTS.length){ box.innerHTML='<div class="hint">Долгов пока нет.</div>'; return; }
+  const yms=new Set(); DPAYS.forEach(p=>yms.add(String(p.date).slice(0,7)));
+  yms.add(TODAY.slice(0,7));
+  const cols=[...yms].sort();
+  let head='<tr><th style="text-align:left">Кому</th>';
+  cols.forEach(c=>head+='<th>'+ymLabel(c)+'</th>');
+  head+='<th>Погашено</th><th>Остаток</th></tr>';
+  function rowsFor(dir){
+    let html='';
+    DEBTS.slice().sort((a,b)=>(a.is_closed?1:0)-(b.is_closed?1:0))
+      .filter(d=>d.direction===dir).forEach(d=>{
+      const paid=debtPaid(d.id), rem=d.amount-paid;
+      const dim=d.is_closed?'opacity:.45;':'';
+      html+='<tr style="'+dim+'"><td style="white-space:nowrap">'+d.counterparty
+        +(d.currency==='USD'?' <span class="hint">$</span>':'')+'</td>';
+      cols.forEach(c=>{
+        const s=DPAYS.filter(p=>p.debt_id===d.id&&String(p.date).slice(0,7)===c)
+          .reduce((x,p)=>x+p.amount,0);
+        html+='<td class="num">'+(s?fmt(s):'<span style="opacity:.25">·</span>')+'</td>';
+      });
+      html+='<td class="num">'+fmt(paid)+'</td>';
+      html+='<td class="num" style="font-weight:750;color:'+(rem>0?'var(--fine)':'var(--cash)')+'">'+fmt(rem)+'</td></tr>';
+    });
+    return html;
+  }
+  const owe=rowsFor('i_owe'), owed=rowsFor('owed_to_me');
+  let html='';
+  const span=cols.length+3;
+  if(owe)  html+='<tr><td colspan="'+span+'" style="font-weight:800;color:var(--brass);border-bottom:0;padding-top:14px">Я должен</td></tr>'+owe;
+  if(owed) html+='<tr><td colspan="'+span+'" style="font-weight:800;color:var(--brass);border-bottom:0;padding-top:14px">Мне должны</td></tr>'+owed;
+  box.innerHTML='<div class="chart"><table style="min-width:'+(170+cols.length*72)+'px">'+head+html+'</table></div>';
+}
+function renderDebtsView(){ renderDebtGrid(); renderDebts(); }
 function renderDebts(){
   const act=DEBTS.filter(d=>!d.is_closed), cls=DEBTS.filter(d=>d.is_closed);
   const box=$('debtList'); box.innerHTML='';
@@ -984,9 +1040,18 @@ function renderFinance(){
   $('finPeriodLabel').textContent=ddmm(from)+' – '+ddmm(to);
   const rows=DATA.filter(r=>r.d>=from&&r.d<=to);
   const rev=rows.reduce((s,r)=>s+r.cash+r.card+r.qr,0);
+  // зарплаты мастеров за период (как в админке: % от выручки минус штрафы)
+  const by={}; rows.forEach(r=>{ const b=by[r.m]||(by[r.m]={rev:0}); b.rev+=r.cash+r.card+r.qr; });
+  let paysum=0;
+  Object.keys(by).forEach(n=>{
+    const pct=PCT[n]!=null?PCT[n]:40;
+    paysum+=Math.max(0, by[n].rev*pct/100 - fineSum(n,from,to));
+  });
+  const salon=rev-paysum;
   const exp=EXP.filter(e=>e.section==='ishxona'&&e.d>=from&&e.d<=to).reduce((s,e)=>s+e.amount,0);
-  $('finRev').textContent=fmt(rev); $('finExp').textContent=fmt(exp);
-  countUp($('finProfit'), rev-exp);
+  $('finRev').textContent=fmt(rev); $('finPay').textContent=fmt(paysum);
+  $('finSalon').textContent=fmt(salon); $('finExp').textContent=fmt(exp);
+  countUp($('finProfit'), salon-exp);
   renderInvest();
   const list=EXP.filter(e=>e.section===finTab&&e.d>=from&&e.d<=to)
     .sort((a,b)=>String(b.d).localeCompare(String(a.d)));
@@ -1021,9 +1086,11 @@ function showView(v){
   $('masterView').style.display  = v==='master'  ? 'block' : 'none';
   $('adminView').style.display   = v==='admin'   ? 'block' : 'none';
   $('financeView').style.display = v==='finance' ? 'block' : 'none';
+  $('debtsView').style.display   = v==='debts'   ? 'block' : 'none';
   document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.toggle('on', x.dataset.role===v));
   if(v==='admin') renderAdmin();
   else if(v==='finance') renderFinance();
+  else if(v==='debts') renderDebtsView();
   else renderMaster();
 }
 document.querySelectorAll('#roleSeg button').forEach(b=>b.onclick=()=>{ haptic(); showView(b.dataset.role); });
@@ -1134,7 +1201,7 @@ $('addDbtBtn').onclick=async ()=>{
   catch(e){ btn.disabled=false; btn.textContent=old; alert('Не удалось сохранить: '+e.message); return; }
   btn.disabled=false; btn.textContent=old;
   $('dbtName').value=''; $('dbtAmt').value='';
-  haptic(); await loadAll(); renderFinance();
+  haptic(); await loadAll(); renderDebtsView();
 };
 
 /* ============================================================
@@ -1156,6 +1223,8 @@ function applyRoleUI(){
   if(who) who.style.display = hide ? 'none' : '';        // мастеру не нужен выбор имени
   const fb=document.getElementById('finBtn');
   if(fb) fb.style.display = (role==='admin') ? '' : 'none';   // финансы — только владельцу
+  const db=document.getElementById('dbtBtn');
+  if(db) db.style.display = (role==='admin') ? '' : 'none';   // долги — только владельцу
   if(role==='unknown'){ $('who').textContent='ты не в списке — напиши админу'; }
   if(role==='master' && curMaster){ $('who').textContent=curMaster+' · '+PCT[curMaster]+'%'; }
   showView(role==='admin' ? 'admin' : 'master');
