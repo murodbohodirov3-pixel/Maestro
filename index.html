@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Барбершоп — учёт</title>
+<title>Maestro — учёт</title>
 <!-- SDK Telegram: даёт тему, кнопки, данные пользователя. Если открыть в обычном браузере — просто не подключится, всё будет работать. -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -16,17 +16,17 @@
    фирменный элемент — тонкая «барберская» полоса.
    ============================================================ */
 :root{
-  --bg:#F3F0EB; --surface:#FFFFFF; --surface-2:#FAF8F5;
-  --ink:#181613; --muted:#7A736B; --line:#E7E2DA;
-  --brass:#A9742E; --brass-soft:#F0E4D0;
+  --bg:#F5F3EF; --surface:#FFFFFF; --surface-2:#FAF8F4;
+  --ink:#1A1A1F; --muted:#75716B; --line:#E8E4DC;
+  --brass:#B8892E; --brass-soft:#F3E7CE;
   --cash:#1F7A4D; --card:#2563C9; --qr:#7A3FB0; --fine:#C0392B;
   --shadow:0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05);
   --radius:16px;
 }
 html.dark{
-  --bg:#15140F; --surface:#211F1A; --surface-2:#1A1915;
-  --ink:#F2EEE7; --muted:#9A9388; --line:#33302A;
-  --brass:#D9A75A; --brass-soft:#3A3326;
+  --bg:#131318; --surface:#1E1E25; --surface-2:#18181E;
+  --ink:#F2F0EA; --muted:#98948C; --line:#2E2E36;
+  --brass:#D4A94E; --brass-soft:#332B1C;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -168,13 +168,44 @@ svg{display:block}
 .pcard.total{border-top:2px solid var(--line);margin-top:6px;padding-top:14px}
 .pcard.total .pcard-name{font-weight:800}
 .pcard.total .pcard-pay{font-size:21px}
+
+/* ---------- Экран загрузки MAESTRO ---------- */
+#splash{position:fixed;inset:0;z-index:10000;background:#131318;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:18px;transition:opacity .5s ease}
+#splash.off{opacity:0;pointer-events:none}
+#splash .sp-logo{color:#D4A94E;font-size:26px;font-weight:800;letter-spacing:.35em;text-indent:.35em;
+  animation:spglow 1.6s ease-in-out infinite alternate}
+#splash .sp-line{width:130px;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,transparent,#D4A94E,transparent);
+  animation:spslide 1.4s ease-in-out infinite}
+#splash .sp-sub{color:#98948C;font-size:12px;letter-spacing:.12em}
+@keyframes spglow{from{opacity:.55}to{opacity:1}}
+@keyframes spslide{0%,100%{transform:scaleX(.25)}50%{transform:scaleX(1)}}
+
+/* ---------- Плавные анимации ---------- */
+section{animation:viewfade .25s ease}
+@keyframes viewfade{from{opacity:0}to{opacity:1}}
+.card{animation:rise .4s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.btn,.seg button,.sw,.types button,.att-fine,.dtog{transition:transform .12s ease,opacity .15s ease,
+  background .2s ease,color .2s ease,border-color .2s ease,box-shadow .2s ease}
+.btn:active{transform:scale(.97)}
+.seg button:active,.types button:active{transform:scale(.96)}
+.btn.danger{background:var(--fine);color:#fff}
 </style>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#C9A876">
+<meta name="theme-color" content="#D4A94E">
 <link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>
 <div class="pole"></div>
+
+<!-- Экран загрузки -->
+<div id="splash">
+  <div class="sp-logo">MAESTRO</div>
+  <div class="sp-line"></div>
+  <div class="sp-sub">загрузка данных…</div>
+</div>
 
 <!-- Экран входа (для приложения/браузера вне Telegram). Скрыт по умолчанию. -->
 <div id="loginGate" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);
@@ -189,9 +220,9 @@ svg{display:block}
 
   <header>
     <div class="brand">
-      <div class="mark">B</div>
+      <div class="mark">M</div>
       <div>
-        <h1>Барбершоп — учёт</h1>
+        <h1>Maestro</h1>
         <div class="sub" id="who">прототип интерфейса</div>
       </div>
     </div>
@@ -203,6 +234,7 @@ svg{display:block}
     <div class="seg" id="roleSeg">
       <button data-role="master" class="on">Мастер</button>
       <button data-role="admin">Админ</button>
+      <button data-role="finance" id="finBtn" style="display:none">Финансы</button>
     </div>
   </header>
 
@@ -347,6 +379,12 @@ svg{display:block}
       <div class="muted-note">Салону остаётся: <span class="num" id="salonCut">0</span> сум</div>
     </div>
 
+    <div class="card">
+      <h2>Журнал записей мастеров</h2>
+      <div class="hint" style="margin-bottom:6px">Точное время, когда мастер внёс запись</div>
+      <div id="journal"></div>
+    </div>
+
     <div class="card" id="fineCard">
       <h2>Выставить штраф</h2>
       <label class="fld">Мастер</label>
@@ -355,6 +393,100 @@ svg{display:block}
       <div style="margin-top:12px"><label class="fld">Сумма, сум</label><input id="fineAmt" type="number" inputmode="numeric" placeholder="50000"></div>
       <div style="height:14px"></div>
       <button class="btn ghost" id="addFine">Добавить штраф</button>
+    </div>
+  </section>
+
+  <!-- ================= ЭКРАН ФИНАНСОВ (только админ) ================= -->
+  <section id="financeView" style="display:none">
+    <div class="card">
+      <h2>Период</h2>
+      <div class="seg" id="finSeg" style="margin:0">
+        <button data-p="month" class="on">Месяц</button>
+        <button data-p="quarter">3 мес</button>
+        <button data-p="all">Всё время</button>
+        <button data-p="custom">Период</button>
+      </div>
+      <div class="period-custom" id="finCustomWrap" style="display:none">
+        <div><label class="fld">С</label><input id="fFrom" type="date"></div>
+        <div><label class="fld">По</label><input id="fTo" type="date"></div>
+      </div>
+      <div class="muted-note" id="finPeriodLabel"></div>
+    </div>
+
+    <div class="card">
+      <h2>Сводка</h2>
+      <div class="hero num"><span id="finProfit">0</span> <small>сум прибыль</small></div>
+      <div class="tiles" style="margin-top:14px">
+        <div class="tile"><div class="lbl">Выручка</div><div class="v num" id="finRev">0</div></div>
+        <div class="tile"><div class="lbl">Расходы</div><div class="v num fineval" id="finExp">0</div></div>
+      </div>
+      <div class="muted-note">Прибыль = выручка − расходы раздела «Ишхона»</div>
+    </div>
+
+    <div class="card">
+      <h2>Вложения и остатки</h2>
+      <div id="investBox"></div>
+      <div class="muted-note">Остаток = вложено − возвращено (записи «минус…» в Ишхоне). За всё время.</div>
+    </div>
+
+    <div class="card">
+      <h2>Расходы</h2>
+      <div class="seg" id="finTabSeg" style="margin:0 0 10px">
+        <button data-t="murod">Мурод</button>
+        <button data-t="jamshid">Жамшид</button>
+        <button data-t="ishxona" class="on">Ишхона</button>
+      </div>
+      <div class="tile total" style="margin-bottom:10px"><div class="lbl">Итого за период</div><div class="v num" id="finTabTotal">0</div></div>
+      <div id="expList"></div>
+    </div>
+
+    <div class="card">
+      <h2>Добавить расход</h2>
+      <div class="period-custom" style="margin:0">
+        <div><label class="fld">Дата</label><input id="expDate" type="date"></div>
+        <div><label class="fld">Раздел</label><select id="expSection">
+          <option value="ishxona">Ишхона</option>
+          <option value="murod">Мурод</option>
+          <option value="jamshid">Жамшид</option></select></div>
+      </div>
+      <div class="period-custom" style="margin-top:12px">
+        <div style="grid-column:1/-1"><label class="fld">Наименование</label><input id="expName" placeholder="например, аренда"></div>
+      </div>
+      <div class="period-custom" style="margin-top:12px">
+        <div><label class="fld">Сумма, сум</label><input id="expAmt" type="number" inputmode="numeric" placeholder="500000"></div>
+        <div><label class="fld">Курс USD</label><input id="expRate" type="number" inputmode="numeric"></div>
+      </div>
+      <div style="margin-top:12px" id="expMinusWrap"><label class="fld">Минусовать из вложений</label>
+        <select id="expMinus"><option value="">— нет —</option>
+          <option value="murod">минус Мурод</option>
+          <option value="jamshid">минус Жамшид</option></select></div>
+      <div style="height:14px"></div>
+      <button class="btn" id="addExpBtn">Добавить расход</button>
+    </div>
+
+    <div class="card">
+      <h2>Долги</h2>
+      <div id="debtList"></div>
+      <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Закрытые долги</summary>
+        <div id="debtClosed"></div></details>
+    </div>
+
+    <div class="card">
+      <h2>Добавить долг</h2>
+      <div style="margin-bottom:12px"><label class="fld">Кто / кому</label><input id="dbtName" placeholder="например, Alif"></div>
+      <div class="period-custom" style="margin:0 0 12px">
+        <div><label class="fld">Направление</label><select id="dbtDir">
+          <option value="i_owe">Я должен</option>
+          <option value="owed_to_me">Мне должны</option></select></div>
+        <div><label class="fld">Валюта</label><select id="dbtCur">
+          <option value="UZS">Сум</option>
+          <option value="USD">USD</option></select></div>
+      </div>
+      <div class="period-custom" style="margin:0 0 14px">
+        <div><label class="fld">Сумма</label><input id="dbtAmt" type="number" inputmode="numeric"></div>
+        <div><label class="fld">Дата</label><input id="dbtDate" type="date"></div>
+      </div>
+      <button class="btn" id="addDbtBtn">Добавить долг</button>
     </div>
   </section>
 
@@ -367,7 +499,7 @@ svg{display:block}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v11';
+const APPVER = 'v12';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
@@ -398,6 +530,8 @@ let FINES=[];     // штрафы:  {id,m,d,amount}
 let ATTEND={};    // приход:  { 'ГГГГ-ММ-ДД': { 'Мастер':'ЧЧ:ММ' } }
 let shiftStart='09:00';
 let SALON={lat:41.3111,lng:69.2797,radius:100};
+let EXP=[], DEBTS=[], DPAYS=[];          // финансы (только админ)
+let finPeriod='month', finTab='ishxona';
 
 let curType='cash', curClients=1, curMaster=null;
 let curNewClient=null;   // null = не выбрано, true = новый, false = постоянный
@@ -413,9 +547,9 @@ let LATEST = TODAY;
 const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
 const THEMES = {
-  brass:{name:'Латунь',
-    light:{bg:'#F3F0EB',surface:'#FFFFFF','surface-2':'#FAF8F5',ink:'#181613',muted:'#7A736B',line:'#E7E2DA',brass:'#A9742E','brass-soft':'#F0E4D0'},
-    dark:{bg:'#15140F',surface:'#211F1A','surface-2':'#1A1915',ink:'#F2EEE7',muted:'#9A9388',line:'#33302A',brass:'#D9A75A','brass-soft':'#3A3326'}},
+  brass:{name:'Маэстро',
+    light:{bg:'#F5F3EF',surface:'#FFFFFF','surface-2':'#FAF8F4',ink:'#1A1A1F',muted:'#75716B',line:'#E8E4DC',brass:'#B8892E','brass-soft':'#F3E7CE'},
+    dark:{bg:'#131318',surface:'#1E1E25','surface-2':'#18181E',ink:'#F2F0EA',muted:'#98948C',line:'#2E2E36',brass:'#D4A94E','brass-soft':'#332B1C'}},
   emerald:{name:'Изумруд',
     light:{bg:'#F1F5F2',surface:'#FFFFFF','surface-2':'#F6FAF7',ink:'#14201A',muted:'#6B7A72',line:'#DDE8E1',brass:'#1E7A52','brass-soft':'#D9EFE3'},
     dark:{bg:'#0E1714',surface:'#16211C','surface-2':'#121B17',ink:'#EAF3EE',muted:'#8AA398',line:'#29372F',brass:'#3FB37B','brass-soft':'#1C3329'}},
@@ -428,6 +562,8 @@ const THEMES = {
 };
 let curTheme='brass';
 let dark = !!(tg && tg.colorScheme==='dark');
+try{ const _t=localStorage.getItem('mTheme'); if(_t && THEMES[_t]) curTheme=_t;
+     const _d=localStorage.getItem('mDark'); if(_d!==null) dark=(_d==='1'); }catch(_){}
 
 function applyTheme(){
   const set=THEMES[curTheme][dark?'dark':'light'], r=document.documentElement;
@@ -443,7 +579,7 @@ function buildSwatches(){
   for(const key in THEMES){
     const b=document.createElement('button'); b.className='sw'; b.dataset.t=key; b.title=THEMES[key].name;
     b.innerHTML='<i style="background:'+THEMES[key].light.brass+'"></i>';
-    b.onclick=()=>{curTheme=key;haptic();applyTheme()};
+    b.onclick=()=>{curTheme=key;try{localStorage.setItem('mTheme',key)}catch(_){}haptic();applyTheme()};
     box.appendChild(b);
   }
 }
@@ -453,7 +589,7 @@ if(tg){
   tg.ready(); tg.expand();
   tg.onEvent('themeChanged', ()=>{dark=tg.colorScheme==='dark';applyTheme()});
 }
-document.getElementById('darkToggle').onclick=()=>{dark=!dark;haptic();applyTheme()};
+document.getElementById('darkToggle').onclick=()=>{dark=!dark;try{localStorage.setItem('mDark',dark?'1':'0')}catch(_){}haptic();applyTheme()};
 
 /* ============================================================
    ВСПОМОГАТЕЛЬНОЕ
@@ -476,7 +612,10 @@ async function loadAll(){
     ACTIVE = MASTERS.filter(x=>x.active).map(x=>x.name);
     if(role==='master'){ curMaster = j.me || ACTIVE[0] || null; }
     else { if(!curMaster || !ACTIVE.includes(curMaster)) curMaster = ACTIVE[0]||null; }
-    DATA=(j.sales||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl,nc:r.is_new_client}));
+    DATA=(j.sales||[]).map(r=>({id:r.id,m:r.master,d:r.d,cash:r.cash,card:r.card,qr:r.qr,cl:r.cl,nc:r.is_new_client,ct:r.created_at}));
+    EXP=(j.expenses||[]).map(r=>({id:r.id,d:r.date,section:r.section,name:r.name,qty:r.qty,amount:+r.amount_uzs,rate:r.usd_rate?+r.usd_rate:null,minus:r.minus_from}));
+    DEBTS=(j.debts||[]).map(r=>({id:r.id,counterparty:r.counterparty,direction:r.direction,amount:+r.amount,currency:r.currency,is_closed:!!r.is_closed}));
+    DPAYS=(j.debt_payments||[]).map(r=>({id:r.id,debt_id:r.debt_id,date:r.date,amount:+r.amount}));
     FINES=(j.fines||[]).map(r=>({id:r.id,m:r.master,d:r.d,amount:r.amount}));
     ATTEND={}; (j.attendance||[]).forEach(r=>{(ATTEND[r.d]=ATTEND[r.d]||{})[r.master]=r.arrived;});
     const conf=(j.settings&&j.settings[0])||null;
@@ -539,7 +678,7 @@ function renderMyEarnings(){
   const cl=mine.reduce((s,r)=>s+(r.cl||0),0);
   const fine=fineSum(curMaster,from,to);
   const pay=Math.max(0, rev*PCT[curMaster]/100 - fine);
-  $('mPay').textContent=fmt(pay); $('mRev').textContent=fmt(rev);
+  countUp($('mPay'),pay); $('mRev').textContent=fmt(rev);
   $('mPctV').textContent=PCT[curMaster]; $('mFineV').textContent=fmt(fine); $('mClV').textContent=cl;
   $('mCash').textContent=fmt(cash); $('mCardV').textContent=fmt(card); $('mQrV').textContent=fmt(qr); $('mTot').textContent=fmt(rev);
   $('mRangeLabel').textContent=ddmm(from)+' – '+ddmm(to);
@@ -641,7 +780,7 @@ function renderAdmin(){
 
   const cash=rows.reduce((s,r)=>s+r.cash,0), card=rows.reduce((s,r)=>s+r.card,0), qr=rows.reduce((s,r)=>s+r.qr,0);
   $('sCash').textContent=fmt(cash);$('sCard').textContent=fmt(card);$('sQr').textContent=fmt(qr);
-  $('sTotal').textContent=fmt(cash+card+qr);
+  countUp($('sTotal'),cash+card+qr);
 
   // Новые / постоянные клиенты за период
   let newCl=0, regCl=0;
@@ -684,6 +823,7 @@ function renderAdmin(){
   $('salonCut').textContent=fmt(tRev-tPay);
 
   renderChart(from,to);
+  renderJournal(from,to);
 }
 function renderChart(from,to){
   const days=[];for(let d=from;d<=to;d=addDays(d,1))days.push(d);
@@ -702,17 +842,191 @@ function renderChart(from,to){
 }
 
 /* ============================================================
+   ПЛАВНЫЙ СЧЁТЧИК ЦИФР
+   ============================================================ */
+function countUp(el,val){
+  if(!el) return;
+  const start=performance.now(), dur=450;
+  function step(t){
+    const k=Math.min(1,(t-start)/dur), e=1-Math.pow(1-k,3);
+    el.textContent=fmt(val*e);
+    if(k<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/* ============================================================
+   ЖУРНАЛ ЗАПИСЕЙ (админ): кто и КОГДА внёс продажу
+   ============================================================ */
+function renderJournal(from,to){
+  const box=$('journal'); if(!box) return;
+  const rows=DATA.filter(r=>r.d>=from&&r.d<=to).slice()
+    .sort((a,b)=>String(b.ct||'').localeCompare(String(a.ct||'')));
+  const show=rows.slice(0,40);
+  if(!show.length){ box.innerHTML='<div class="hint">Нет записей за период.</div>'; return; }
+  box.innerHTML='';
+  show.forEach(r=>{
+    const t=r.cash?['cash','Наличные']:r.card?['card','Карта']:['qr','QR Paynet'];
+    const amount=r.cash||r.card||r.qr;
+    let when='—';
+    if(r.ct){ const dt=new Date(r.ct);
+      when=String(dt.getDate()).padStart(2,'0')+'.'+String(dt.getMonth()+1).padStart(2,'0')
+        +' '+String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0'); }
+    const div=document.createElement('div'); div.className='row';
+    div.innerHTML=`<div style="flex:1;min-width:0">
+        <div style="font-weight:650">${r.m} <span class="chip ${t[0]}">${t[1]}</span></div>
+        <div class="hint">за ${ddmm(r.d)} · внесено ${when} · ${r.cl||0} кл.</div></div>
+      <span class="amt num">${fmt(amount)}</span>`;
+    box.appendChild(div);
+  });
+  if(rows.length>show.length)
+    box.innerHTML+='<div class="muted-note">Показаны последние '+show.length+' из '+rows.length+'</div>';
+}
+
+/* ============================================================
+   ФИНАНСЫ (только админ)
+   ============================================================ */
+function finRange(){
+  if(finPeriod==='month')   return [addDays(TODAY,-29),TODAY];
+  if(finPeriod==='quarter') return [addDays(TODAY,-89),TODAY];
+  if(finPeriod==='all')     return ['2000-01-01',TODAY];
+  return [$('fFrom').value||TODAY, $('fTo').value||TODAY];
+}
+function renderInvest(){
+  const box=$('investBox'); box.innerHTML='';
+  [['murod','Мурод'],['jamshid','Жамшид']].forEach(([k,nm])=>{
+    let inv=0,invU=0,ret=0,retU=0;
+    EXP.forEach(e=>{
+      if(e.section===k){ inv+=e.amount; if(e.rate) invU+=e.amount/e.rate; }
+      if(e.section==='ishxona' && e.minus===k){ ret+=e.amount; if(e.rate) retU+=e.amount/e.rate; }
+    });
+    const d=document.createElement('div'); d.className='pcard';
+    d.innerHTML=`<div class="pcard-top"><span class="pcard-name">${nm}</span>
+        <span class="pcard-pay num" style="color:var(--brass)">$${fmt(invU-retU)}</span></div>
+      <div class="pcard-sub"><span>вложено <b class="num">$${fmt(invU)}</b></span>
+        <span>возвращено <b class="num">$${fmt(retU)}</b></span>
+        <span>остаток в сумах <b class="num">${fmt(inv-ret)}</b></span></div>`;
+    box.appendChild(d);
+  });
+}
+function debtPaid(id){ return DPAYS.filter(p=>p.debt_id===id).reduce((s,p)=>s+p.amount,0); }
+function moneyD(v,cur){ return cur==='USD' ? ('$'+fmt(v)) : (fmt(v)+' сум'); }
+function debtRow(dbt){
+  const paid=debtPaid(dbt.id), rem=dbt.amount-paid;
+  const dir=dbt.direction==='i_owe'?'я должен':'мне должны';
+  const pays=DPAYS.filter(p=>p.debt_id===dbt.id).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  let payHtml='';
+  pays.forEach(p=>{ payHtml+=`<div class="row"><span class="hint">${ddmm(p.date)}</span>
+    <span class="amt num">${moneyD(p.amount,dbt.currency)}</span>
+    <button class="del pdel" data-pid="${p.id}">×</button></div>`; });
+  const div=document.createElement('div'); div.className='pcard';
+  div.innerHTML=`<div class="pcard-top">
+      <span class="pcard-name">${dbt.counterparty} <span class="hint">${dir}</span></span>
+      <span class="pcard-pay num" style="color:${rem>0?'var(--fine)':'var(--cash)'}">${moneyD(rem,dbt.currency)}</span></div>
+    <div class="pcard-sub"><span>исходно <b class="num">${moneyD(dbt.amount,dbt.currency)}</b></span>
+      <span>погашено <b class="num">${moneyD(paid,dbt.currency)}</b></span></div>
+    ${pays.length?`<details style="margin-top:6px"><summary class="hint" style="cursor:pointer">Погашения (${pays.length})</summary>${payHtml}</details>`:''}
+    <div class="period-custom" style="margin-top:10px">
+      <button class="btn ghost bPay">+ Погашение</button>
+      <button class="btn ghost bToggle">${dbt.is_closed?'Открыть снова':'Закрыть'}</button>
+    </div>
+    <div class="payForm" style="display:none;margin-top:10px">
+      <div class="period-custom" style="margin:0 0 10px">
+        <div><label class="fld">Сумма</label><input type="number" class="pAmt" inputmode="numeric"></div>
+        <div><label class="fld">Дата</label><input type="date" class="pDate" value="${TODAY}"></div>
+      </div>
+      <button class="btn bSavePay">Сохранить погашение</button>
+    </div>
+    ${dbt.is_closed?'<button class="btn ghost bDelDebt" style="margin-top:10px;color:var(--fine)">Удалить долг совсем</button>':''}`;
+  div.querySelector('.bPay').onclick=()=>{ const f=div.querySelector('.payForm');
+    f.style.display = f.style.display==='none' ? 'block' : 'none'; haptic(); };
+  div.querySelector('.bSavePay').onclick=async ()=>{
+    const a=parseFloat(div.querySelector('.pAmt').value);
+    const dt=div.querySelector('.pDate').value||TODAY;
+    if(!a||a<=0){ div.querySelector('.pAmt').focus(); return; }
+    try{
+      await callFn('addDebtPayment',{debt_id:dbt.id,date:dt,amount:a});
+      if(a>=rem && !dbt.is_closed) await callFn('setDebtClosed',{id:dbt.id,is_closed:true});
+    }catch(err){ alert('Ошибка: '+err.message); return; }
+    haptic(); await loadAll(); renderFinance();
+  };
+  div.querySelector('.bToggle').onclick=async ()=>{
+    try{ await callFn('setDebtClosed',{id:dbt.id,is_closed:!dbt.is_closed}); }
+    catch(err){ alert('Ошибка: '+err.message); return; }
+    haptic(); await loadAll(); renderFinance();
+  };
+  div.querySelectorAll('.pdel').forEach(b=>b.onclick=async ()=>{
+    if(!confirm('Удалить это погашение?')) return;
+    try{ await callFn('delDebtPayment',{id:+b.dataset.pid}); }
+    catch(err){ alert('Ошибка: '+err.message); return; }
+    haptic(); await loadAll(); renderFinance();
+  });
+  const bd=div.querySelector('.bDelDebt');
+  if(bd) bd.onclick=async ()=>{
+    if(!confirm('Удалить долг «'+dbt.counterparty+'» со всей историей погашений?')) return;
+    try{ await callFn('delDebt',{id:dbt.id}); }
+    catch(err){ alert('Ошибка: '+err.message); return; }
+    haptic(); await loadAll(); renderFinance();
+  };
+  return div;
+}
+function renderDebts(){
+  const act=DEBTS.filter(d=>!d.is_closed), cls=DEBTS.filter(d=>d.is_closed);
+  const box=$('debtList'); box.innerHTML='';
+  if(!act.length) box.innerHTML='<div class="hint">Активных долгов нет 🎉</div>';
+  act.forEach(d=>box.appendChild(debtRow(d)));
+  const cbox=$('debtClosed'); cbox.innerHTML='';
+  if(!cls.length) cbox.innerHTML='<div class="hint">Пока пусто.</div>';
+  cls.forEach(d=>cbox.appendChild(debtRow(d)));
+}
+function renderFinance(){
+  const [from,to]=finRange();
+  $('finPeriodLabel').textContent=ddmm(from)+' – '+ddmm(to);
+  const rows=DATA.filter(r=>r.d>=from&&r.d<=to);
+  const rev=rows.reduce((s,r)=>s+r.cash+r.card+r.qr,0);
+  const exp=EXP.filter(e=>e.section==='ishxona'&&e.d>=from&&e.d<=to).reduce((s,e)=>s+e.amount,0);
+  $('finRev').textContent=fmt(rev); $('finExp').textContent=fmt(exp);
+  countUp($('finProfit'), rev-exp);
+  renderInvest();
+  const list=EXP.filter(e=>e.section===finTab&&e.d>=from&&e.d<=to)
+    .sort((a,b)=>String(b.d).localeCompare(String(a.d)));
+  $('finTabTotal').textContent=fmt(list.reduce((s,e)=>s+e.amount,0));
+  const box=$('expList'); box.innerHTML='';
+  if(!list.length) box.innerHTML='<div class="hint">Нет расходов за период.</div>';
+  list.slice(0,120).forEach(e=>{
+    const u=e.rate?(' · ≈$'+fmt(e.amount/e.rate)):'';
+    const mn=e.minus?`<span class="chip" style="background:var(--brass-soft);color:var(--brass)">минус ${e.minus==='murod'?'Мурод':'Жамшид'}</span>`:'';
+    const div=document.createElement('div'); div.className='row';
+    div.innerHTML=`<div style="flex:1;min-width:0">
+        <div style="font-weight:650">${e.name}${e.qty?' <span class="hint">× '+e.qty+'</span>':''} ${mn}</div>
+        <div class="hint">${ddmm(e.d)}${u}</div></div>
+      <span class="amt num">${fmt(e.amount)}</span>
+      <button class="del edel">×</button>`;
+    div.querySelector('.edel').onclick=async ()=>{
+      if(!confirm('Удалить расход «'+e.name+'»?')) return;
+      try{ await callFn('delExpense',{id:e.id}); }
+      catch(err){ alert('Ошибка: '+err.message); return; }
+      haptic(); await loadAll(); renderFinance();
+    };
+    box.appendChild(div);
+  });
+  if(list.length>120) box.innerHTML+='<div class="muted-note">Показаны последние 120 из '+list.length+'</div>';
+}
+
+/* ============================================================
    СОБЫТИЯ
    ============================================================ */
-document.querySelectorAll('#roleSeg button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');haptic();
-  view=b.dataset.role;
-  const admin=view==='admin';
-  $('adminView').style.display=admin?'block':'none';
-  $('masterView').style.display=admin?'none':'block';
-  if(admin)renderAdmin();else renderMaster();
-});
+function showView(v){
+  view=v;
+  $('masterView').style.display  = v==='master'  ? 'block' : 'none';
+  $('adminView').style.display   = v==='admin'   ? 'block' : 'none';
+  $('financeView').style.display = v==='finance' ? 'block' : 'none';
+  document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.toggle('on', x.dataset.role===v));
+  if(v==='admin') renderAdmin();
+  else if(v==='finance') renderFinance();
+  else renderMaster();
+}
+document.querySelectorAll('#roleSeg button').forEach(b=>b.onclick=()=>{ haptic(); showView(b.dataset.role); });
 $('masterPick').onchange=e=>{curMaster=e.target.value;renderMaster()};
 document.querySelectorAll('#typePick button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#typePick button').forEach(x=>x.classList.remove('on'));
@@ -778,6 +1092,51 @@ $('addFine').onclick=async ()=>{
   $('fineAmt').value='';haptic(); await loadAll(); renderAdmin();
 };
 
+/* ---------- События раздела Финансы ---------- */
+document.querySelectorAll('#finSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#finSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); finPeriod=b.dataset.p; haptic();
+  $('finCustomWrap').style.display = finPeriod==='custom' ? 'grid' : 'none';
+  renderFinance();
+});
+$('fFrom').onchange=renderFinance; $('fTo').onchange=renderFinance;
+document.querySelectorAll('#finTabSeg button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#finTabSeg button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); finTab=b.dataset.t; haptic();
+  renderFinance();
+});
+$('expSection').onchange=()=>{ $('expMinusWrap').style.display = $('expSection').value==='ishxona' ? '' : 'none'; };
+$('addExpBtn').onclick=async ()=>{
+  const nm=$('expName').value.trim();
+  const a=parseInt($('expAmt').value,10);
+  const rate=parseInt($('expRate').value,10)||null;
+  if(!nm){ $('expName').focus(); return; }
+  if(!a||a<=0){ $('expAmt').focus(); return; }
+  const sec=$('expSection').value;
+  const minus = sec==='ishxona' ? ($('expMinus').value||null) : null;
+  const btn=$('addExpBtn'); btn.disabled=true; const old=btn.textContent; btn.textContent='Сохраняю…';
+  try{ await callFn('addExpense',{date:$('expDate').value||TODAY,section:sec,name:nm,
+    amount_uzs:a,usd_rate:rate,minus_from:minus}); }
+  catch(e){ btn.disabled=false; btn.textContent=old; alert('Не удалось сохранить: '+e.message); return; }
+  btn.disabled=false; btn.textContent=old;
+  try{ if(rate) localStorage.setItem('usdRate',String(rate)); }catch(_){}
+  $('expName').value=''; $('expAmt').value='';
+  haptic(); await loadAll(); renderFinance();
+};
+$('addDbtBtn').onclick=async ()=>{
+  const nm=$('dbtName').value.trim();
+  const a=parseFloat($('dbtAmt').value);
+  if(!nm){ $('dbtName').focus(); return; }
+  if(!a||a<=0){ $('dbtAmt').focus(); return; }
+  const btn=$('addDbtBtn'); btn.disabled=true; const old=btn.textContent; btn.textContent='Сохраняю…';
+  try{ await callFn('addDebt',{counterparty:nm,direction:$('dbtDir').value,amount:a,
+    currency:$('dbtCur').value,start_date:$('dbtDate').value||TODAY}); }
+  catch(e){ btn.disabled=false; btn.textContent=old; alert('Не удалось сохранить: '+e.message); return; }
+  btn.disabled=false; btn.textContent=old;
+  $('dbtName').value=''; $('dbtAmt').value='';
+  haptic(); await loadAll(); renderFinance();
+};
+
 /* ============================================================
    КТО ЗАШЁЛ: админ / мастер / ручной режим (браузер)
    ============================================================ */
@@ -795,13 +1154,11 @@ function applyRoleUI(){
   const hide = (role==='master' || role==='unknown');
   if(seg) seg.style.display = hide ? 'none' : 'flex';   // мастеру нельзя в админку
   if(who) who.style.display = hide ? 'none' : '';        // мастеру не нужен выбор имени
-  view = (role==='admin') ? 'admin' : 'master';
-  document.querySelectorAll('#roleSeg button').forEach(x=>x.classList.toggle('on', x.dataset.role===view));
-  $('adminView').style.display = view==='admin' ? 'block' : 'none';
-  $('masterView').style.display = view==='admin' ? 'none' : 'block';
+  const fb=document.getElementById('finBtn');
+  if(fb) fb.style.display = (role==='admin') ? '' : 'none';   // финансы — только владельцу
   if(role==='unknown'){ $('who').textContent='ты не в списке — напиши админу'; }
   if(role==='master' && curMaster){ $('who').textContent=curMaster+' · '+PCT[curMaster]+'%'; }
-  if(view==='admin') renderAdmin(); else renderMaster();
+  showView(role==='admin' ? 'admin' : 'master');
 }
 
 /* ============================================================
@@ -829,7 +1186,12 @@ function captureRedirectAuth(){
 }
 captureRedirectAuth();
 
+function splashOff(){
+  const s=document.getElementById('splash');
+  if(s){ s.classList.add('off'); setTimeout(()=>s.remove(),600); }
+}
 function showLoginGate(){
+  splashOff();
   const gate=document.getElementById('loginGate');
   const box=document.getElementById('tgLoginBox');
   if(!gate||!box) return;
@@ -853,6 +1215,7 @@ async function init(){
   if(needLogin()){ showLoginGate(); return; }   // сначала вход, потом данные
   $('who').textContent='загрузка…';
   const ok = await loadAll();
+  splashOff();
   const diag = ' <span style="opacity:.5">'+APPVER+'</span>';
   if(!ok){
     $('who').textContent='нет связи с базой';
@@ -866,6 +1229,9 @@ async function init(){
   $('shiftStart').value=shiftStart; syncSalonInputs();
   $('dFrom').value=weekStart(LATEST); $('dTo').value=LATEST; $('fineDate').value=TODAY;
   $('mFrom').value=weekStart(LATEST); $('mTo').value=LATEST;
+  $('fFrom').value=weekStart(LATEST); $('fTo').value=TODAY;
+  $('expDate').value=TODAY; $('dbtDate').value=TODAY;
+  try{ $('expRate').value=localStorage.getItem('usdRate')||'12200'; }catch(_){ $('expRate').value='12200'; }
   applyRoleUI();
 }
 init();
