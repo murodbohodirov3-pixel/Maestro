@@ -82,8 +82,11 @@ header{padding:18px 0 14px}
 
 /* ---------- Поля ввода ---------- */
 label.fld{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;font-weight:600}
-input,select{width:100%;background:var(--surface-2);border:1px solid var(--line);
-  color:var(--ink);border-radius:11px;padding:13px 12px;font-size:17px;font-family:inherit}
+input,select{width:100%;min-width:0;height:50px;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--line);
+  color:var(--ink);border-radius:11px;padding:13px 12px;font-size:17px;font-family:inherit;
+  -webkit-appearance:none;appearance:none}
+input[type="date"]{display:block;line-height:1.2}
+.period-custom>div{min-width:0}
 input:focus,select:focus{outline:2px solid var(--brass);border-color:transparent}
 
 /* Чипы типов оплаты */
@@ -321,8 +324,7 @@ section{animation:viewfade .25s ease}
       <div class="seg" id="periodSeg" style="margin:0">
         <button data-p="day" class="on">День</button>
         <button data-p="week">Неделя</button>
-        <button data-p="month">Месяц</button>
-        <button data-p="all">Всё</button>
+        <button data-p="all">Всё время</button>
         <button data-p="custom">Период</button>
       </div>
       <div class="period-custom" id="customWrap" style="display:none">
@@ -372,6 +374,9 @@ section{animation:viewfade .25s ease}
 
     <div class="card">
       <h2>Выручка по дням</h2>
+      <div id="chartInfo" style="display:none;margin-bottom:8px;font-size:13px;font-weight:650;
+        color:var(--brass);background:var(--brass-soft);border-radius:9px;padding:7px 11px;width:fit-content">
+      </div>
       <div class="chart" id="chart"></div>
     </div>
 
@@ -474,7 +479,10 @@ section{animation:viewfade .25s ease}
   <section id="debtsView" style="display:none">
     <div class="card">
       <h2>Таблица по месяцам</h2>
-      <div class="hint" style="margin-bottom:8px">Как в Excel: сколько погашено в каждом месяце. Таблица двигается пальцем влево-вправо.</div>
+      <div class="period-custom" style="margin:0 0 10px">
+        <button class="btn ghost" id="tglClosed" style="font-size:14px">Показать погашенные</button>
+        <button class="btn ghost" id="tglMonths" style="font-size:14px">Все месяцы</button>
+      </div>
       <div id="debtGrid"></div>
     </div>
 
@@ -513,7 +521,7 @@ section{animation:viewfade .25s ease}
    ============================================================ */
 const SUPABASE_URL = 'https://ivowbhraaistxvoymxpf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_ZceH0QuhD1Y6vaYH66g_3w_OoPgZ1rc';
-const APPVER = 'v13';
+const APPVER = 'v14';
 const ADMIN_ID = 2502169;   // Telegram ID владельца (админ)
 // Все запросы идут через "привратника" (Edge Function), который проверяет подпись Телеграма.
 const FN_URL = SUPABASE_URL + '/functions/v1/api';
@@ -785,7 +793,6 @@ function renderMaster(){fillMasterPick();renderShift();renderToday();renderMyEar
 function periodRange(){
   if(period==='day') return [LATEST,LATEST];
   if(period==='week'){const ws=weekStart(LATEST);return [ws,addDays(ws,6)]}
-  if(period==='month') return [addDays(LATEST,-29),LATEST];
   if(period==='all') return [EARLIEST,LATEST];
   return [$('dFrom').value||LATEST, $('dTo').value||LATEST];
 }
@@ -844,18 +851,30 @@ function renderAdmin(){
 }
 function renderChart(from,to){
   const days=[];for(let d=from;d<=to;d=addDays(d,1))days.push(d);
-  const map={};DATA.filter(r=>r.d>=from&&r.d<=to).forEach(r=>{map[r.d]=(map[r.d]||0)+r.cash+r.card+r.qr});
-  const vals=days.map(d=>map[d]||0);const max=Math.max(1,...vals);
+  const map={};DATA.filter(r=>r.d>=from&&r.d<=to).forEach(r=>{
+    const m=map[r.d]||(map[r.d]={sum:0,cl:0}); m.sum+=r.cash+r.card+r.qr; m.cl+=r.cl||0; });
+  const vals=days.map(d=>map[d]?map[d].sum:0);const max=Math.max(1,...vals);
   const bw=Math.max(14,Math.min(38,Math.floor(480/Math.max(1,days.length))));const gap=6;
   const W=days.length*(bw+gap)+10, H=150, base=120;
   let bars='';
   days.forEach((d,i)=>{
     const h=Math.round(vals[i]/max*100);const x=10+i*(bw+gap);
-    bars+=`<rect x="${x}" y="${base-h}" width="${bw}" height="${h}" rx="3" fill="var(--brass)" opacity="${vals[i]?0.95:0.18}"></rect>`;
+    bars+=`<rect data-i="${i}" x="${x}" y="${base-h-8}" width="${bw}" height="${h+8}" rx="3" fill="var(--brass)" opacity="${vals[i]?0.95:0.18}" style="cursor:pointer"></rect>`;
     if(days.length<=14||i%Math.ceil(days.length/10)===0)
       bars+=`<text x="${x+bw/2}" y="${base+14}" font-size="9" fill="var(--muted)" text-anchor="middle">${ddmm(d)}</text>`;
   });
   $('chart').innerHTML=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bars}</svg>`;
+  const info=$('chartInfo'); if(info) info.style.display='none';
+  $('chart').querySelectorAll('rect').forEach(rc=>{
+    rc.onclick=()=>{
+      const i=+rc.dataset.i, d=days[i], m=map[d]||{sum:0,cl:0};
+      $('chart').querySelectorAll('rect').forEach(o=>o.removeAttribute('stroke'));
+      rc.setAttribute('stroke','var(--ink)'); rc.setAttribute('stroke-width','1.5');
+      if(info){ info.textContent=ddmm(d)+' · '+fmt(m.sum)+' сум · '+m.cl+' кл';
+        info.style.display='block'; }
+      haptic();
+    };
+  });
 }
 
 /* ============================================================
@@ -887,12 +906,11 @@ function renderJournal(from,to){
     const amount=r.cash||r.card||r.qr;
     let when='—';
     if(r.ct){ const dt=new Date(r.ct);
-      when=String(dt.getDate()).padStart(2,'0')+'.'+String(dt.getMonth()+1).padStart(2,'0')
-        +' '+String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0'); }
+      when=String(dt.getHours()).padStart(2,'0')+':'+String(dt.getMinutes()).padStart(2,'0'); }
     const div=document.createElement('div'); div.className='row';
     div.innerHTML=`<div style="flex:1;min-width:0">
         <div style="font-weight:650">${r.m} <span class="chip ${t[0]}">${t[1]}</span></div>
-        <div class="hint">за ${ddmm(r.d)} · внесено ${when} · ${r.cl||0} кл.</div></div>
+        <div class="hint">За ${ddmm(r.d)} - ${when} - ${r.cl||0} кл</div></div>
       <span class="amt num">${fmt(amount)}</span>`;
     box.appendChild(div);
   });
@@ -991,19 +1009,25 @@ function ymLabel(ym){
   const M=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
   const p=ym.split('-'); return M[+p[1]-1]+' '+p[0].slice(2);
 }
+let gridShowClosed=false, gridAllMonths=false;
 function renderDebtGrid(){
   const box=$('debtGrid'); if(!box) return;
+  const tc=$('tglClosed'), tm=$('tglMonths');
+  if(tc) tc.textContent = gridShowClosed ? 'Скрыть погашенные' : 'Показать погашенные';
+  if(tm) tm.textContent = gridAllMonths ? 'Последние месяцы' : 'Все месяцы';
   if(!DEBTS.length){ box.innerHTML='<div class="hint">Долгов пока нет.</div>'; return; }
   const yms=new Set(); DPAYS.forEach(p=>yms.add(String(p.date).slice(0,7)));
   yms.add(TODAY.slice(0,7));
-  const cols=[...yms].sort();
+  let cols=[...yms].sort();
+  if(!gridAllMonths && cols.length>3) cols=cols.slice(-3);
   let head='<tr><th style="text-align:left">Кому</th>';
   cols.forEach(c=>head+='<th>'+ymLabel(c)+'</th>');
   head+='<th>Погашено</th><th>Остаток</th></tr>';
   function rowsFor(dir){
     let html='';
     DEBTS.slice().sort((a,b)=>(a.is_closed?1:0)-(b.is_closed?1:0))
-      .filter(d=>d.direction===dir).forEach(d=>{
+      .filter(d=>d.direction===dir)
+      .filter(d=>gridShowClosed || !d.is_closed).forEach(d=>{
       const paid=debtPaid(d.id), rem=d.amount-paid;
       const dim=d.is_closed?'opacity:.45;':'';
       html+='<tr style="'+dim+'"><td style="white-space:nowrap">'+d.counterparty
@@ -1190,6 +1214,8 @@ $('addExpBtn').onclick=async ()=>{
   $('expName').value=''; $('expAmt').value='';
   haptic(); await loadAll(); renderFinance();
 };
+$('tglClosed').onclick=()=>{ gridShowClosed=!gridShowClosed; haptic(); renderDebtGrid(); };
+$('tglMonths').onclick=()=>{ gridAllMonths=!gridAllMonths; haptic(); renderDebtGrid(); };
 $('addDbtBtn').onclick=async ()=>{
   const nm=$('dbtName').value.trim();
   const a=parseFloat($('dbtAmt').value);
