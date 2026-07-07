@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -621,6 +622,7 @@ const fmt = n => Math.round(n).toLocaleString('ru-RU').replace(/,/g,' ');
 const $ = id => document.getElementById(id);
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)}
 function weekStart(d){const x=new Date(d);const g=(x.getDay()+6)%7;x.setDate(x.getDate()-g);return x.toISOString().slice(0,10)}
+function monthStart(d){return String(d).slice(0,7)+'-01'}
 function ddmm(d){const[,m,day]=d.split('-');return day+'.'+m}
 function fineSum(name,from,to){return FINES.filter(f=>f.m===name&&f.d>=from&&f.d<=to).reduce((s,f)=>s+f.amount,0)}
 
@@ -690,7 +692,7 @@ let mPeriod='week';
 function mRange(){
   if(mPeriod==='day') return [LATEST,LATEST];
   if(mPeriod==='week'){const ws=weekStart(LATEST);return [ws,addDays(ws,6)]}
-  if(mPeriod==='month') return [addDays(LATEST,-29),LATEST];
+  if(mPeriod==='month') return [monthStart(LATEST),LATEST];
   return [$('mFrom').value||LATEST, $('mTo').value||LATEST];
 }
 function renderMyEarnings(){
@@ -923,7 +925,7 @@ function renderJournal(from,to){
    ============================================================ */
 function finRange(){
   if(finPeriod==='day')   return [TODAY,TODAY];
-  if(finPeriod==='month') return [addDays(TODAY,-29),TODAY];
+  if(finPeriod==='month') return [monthStart(TODAY),TODAY];
   if(finPeriod==='all'){ let f=EARLIEST; EXP.forEach(e=>{ if(e.d<f) f=e.d; }); return [f,TODAY]; }
   return [$('fFrom').value||TODAY, $('fTo').value||TODAY];
 }
