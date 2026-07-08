@@ -9,6 +9,28 @@ import {
 
 const APP_VERSION = 'react-restore-v1';
 const TODAY = localDate();
+const THEMES = {
+  brass: {
+    name: 'Латунь',
+    light: { brass: '#A9742E', 'brass-soft': '#F0E4D0', bg: '#F3F0EB', surface: '#FFFFFF', 'surface-2': '#FAF8F5', ink: '#181613', muted: '#7A736B', line: '#E7E2DA' },
+    dark: { brass: '#D9A75A', 'brass-soft': '#3A3326', bg: '#15140F', surface: '#211F1A', 'surface-2': '#1A1915', ink: '#F2EEE7', muted: '#9A9388', line: '#33302A' },
+  },
+  emerald: {
+    name: 'Изумруд',
+    light: { bg: '#F1F5F2', surface: '#FFFFFF', 'surface-2': '#F6FAF7', ink: '#14201A', muted: '#6B7A72', line: '#DDE8E1', brass: '#1E7A52', 'brass-soft': '#D9EFE3' },
+    dark: { bg: '#0E1714', surface: '#16211C', 'surface-2': '#121B17', ink: '#EAF3EE', muted: '#8AA398', line: '#29372F', brass: '#3FB37B', 'brass-soft': '#1C3329' },
+  },
+  midnight: {
+    name: 'Полночь',
+    light: { bg: '#F1F2F8', surface: '#FFFFFF', 'surface-2': '#F6F7FC', ink: '#15172A', muted: '#6E7290', line: '#E1E3F0', brass: '#3B43B5', 'brass-soft': '#E2E4FA' },
+    dark: { bg: '#0F1020', surface: '#1A1B2E', 'surface-2': '#151628', ink: '#ECEDF7', muted: '#9498BE', line: '#2C2E47', brass: '#7C84F0', 'brass-soft': '#262A52' },
+  },
+  barber: {
+    name: 'Барбер',
+    light: { bg: '#F4F2EE', surface: '#FFFFFF', 'surface-2': '#F9F7F3', ink: '#16202E', muted: '#6F7682', line: '#E4E2DC', brass: '#1F3A66', 'brass-soft': '#DBE3F0' },
+    dark: { bg: '#101620', surface: '#1A2230', 'surface-2': '#151B26', ink: '#ECF0F6', muted: '#8A93A3', line: '#2A3340', brass: '#5B86C9', 'brass-soft': '#213048' },
+  },
+};
 
 function localDate(date = new Date()) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -298,14 +320,14 @@ function MasterView({ data, reload, setError }) {
 
       <form className="card" onSubmit={submitSale}>
         <h2>Новая продажа</h2>
-        <div className="seg">
+        <div className="pay-types">
           {[
             ['cash', 'Наличные'],
             ['card', 'Карта'],
             ['qr', 'QR Paynet'],
           ].map(([value, label]) => (
-            <button className={payType === value ? 'on' : ''} key={value} type="button" onClick={() => setPayType(value)}>
-              {label}
+            <button className={`pay-type ${value} ${payType === value ? 'on' : ''}`} key={value} type="button" onClick={() => setPayType(value)}>
+              <span className="payment-dot" />{label}
             </button>
           ))}
         </div>
@@ -472,6 +494,11 @@ function AdminView({ data, reload, setError }) {
           <Tile label="Новые" value={newClients} />
           <Tile label="Постоянные" value={sales.reduce((sum, sale) => sum + clients(sale), 0) - newClients} />
         </div>
+      </div>
+
+      <div className="card wide">
+        <h2>Выручка по дням</h2>
+        <RevenueChart sales={sales} from={range.from} to={range.to} />
       </div>
 
       <div className="card wide">
@@ -676,6 +703,59 @@ function FinanceView({ data, reload, setError }) {
         <button className="btn" type="submit">Добавить расход</button>
       </form>
     </section>
+  );
+}
+
+function RevenueChart({ sales, from, to }) {
+  const days = [];
+  const cursor = new Date(`${from}T12:00:00`);
+  const end = new Date(`${to}T12:00:00`);
+
+  while (cursor <= end && days.length < 370) {
+    days.push(localDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const totals = Object.fromEntries(days.map((day) => [day, 0]));
+  sales.forEach((sale) => {
+    const day = rowDate(sale);
+    if (day in totals) totals[day] += saleTotal(sale);
+  });
+
+  const values = days.map((day) => totals[day]);
+  const max = Math.max(1, ...values);
+  const barWidth = Math.max(14, Math.min(38, Math.floor(480 / Math.max(1, days.length))));
+  const gap = 6;
+  const width = days.length * (barWidth + gap) + 10;
+  const labelEvery = Math.max(1, Math.ceil(days.length / 10));
+
+  return (
+    <div className="chart" aria-label="Выручка по дням">
+      <svg height="150" viewBox={`0 0 ${width} 150`} width={width}>
+        {days.map((day, index) => {
+          const height = Math.round((values[index] / max) * 100);
+          const x = 10 + index * (barWidth + gap);
+          return (
+            <g key={day}>
+              <rect
+                fill="var(--brass)"
+                height={height}
+                opacity={values[index] ? 0.95 : 0.18}
+                rx="3"
+                width={barWidth}
+                x={x}
+                y={120 - height}
+              />
+              {(days.length <= 14 || index % labelEvery === 0) ? (
+                <text fill="var(--muted)" fontSize="9" textAnchor="middle" x={x + barWidth / 2} y="134">
+                  {day.slice(8, 10)}.{day.slice(5, 7)}
+                </text>
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -895,12 +975,64 @@ function LoginGate({ error }) {
   );
 }
 
+function ThemeControls({ theme, setTheme, dark, setDark }) {
+  return (
+    <div className="themebar">
+      <div className="swatches" aria-label="Цветовая тема">
+        {Object.entries(THEMES).map(([key, item]) => (
+          <button
+            aria-label={item.name}
+            className={`swatch ${theme === key ? 'on' : ''}`}
+            key={key}
+            onClick={() => setTheme(key)}
+            title={item.name}
+            type="button"
+          >
+            <span style={{ background: item.light.brass }} />
+          </button>
+        ))}
+      </div>
+
+      <button
+        aria-label={dark ? 'Включить светлую тему' : 'Включить тёмную тему'}
+        className="dark-toggle"
+        onClick={() => setDark((current) => !current)}
+        title="Светлая / тёмная тема"
+        type="button"
+      >
+        {dark ? '☀' : '☾'}
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(emptyState);
   const [view, setView] = useState('master');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('maestroTheme') || 'brass');
+  const [dark, setDark] = useState(() => {
+    const saved = localStorage.getItem('maestroDark');
+    if (saved != null) return saved === 'true';
+    return window.Telegram?.WebApp?.colorScheme === 'dark';
+  });
+
+  useEffect(() => {
+    const selected = THEMES[theme] || THEMES.brass;
+    const colors = selected[dark ? 'dark' : 'light'];
+    Object.entries(colors).forEach(([key, value]) => document.documentElement.style.setProperty(`--${key}`, value));
+    document.documentElement.style.setProperty(
+      '--shadow',
+      dark
+        ? '0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35)'
+        : '0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05)',
+    );
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('maestroTheme', theme);
+    localStorage.setItem('maestroDark', String(dark));
+  }, [dark, theme]);
 
   async function load() {
     setIsLoading(true);
@@ -950,24 +1082,27 @@ export default function App() {
   return (
     <main className="app">
       <div className="pole" />
-      <header className="topbar">
-        <div className="brand">
-          <div className="mark">M</div>
-          <div>
-            <h1>Maestro</h1>
-            <p>{isLoading ? 'загрузка...' : data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
+      <header>
+        <div className="topbar">
+          <div className="brand">
+            <div className="mark">M</div>
+            <div>
+              <h1>Maestro Barberia</h1>
+              <p>{isLoading ? 'загрузка...' : data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
+            </div>
           </div>
+          <button
+            className="logout"
+            type="button"
+            onClick={() => {
+              clearWidgetAuth();
+              window.location.reload();
+            }}
+          >
+            Выйти
+          </button>
         </div>
-        <button
-          className="logout"
-          type="button"
-          onClick={() => {
-            clearWidgetAuth();
-            window.location.reload();
-          }}
-        >
-          Выйти
-        </button>
+        <ThemeControls theme={theme} setTheme={setTheme} dark={dark} setDark={setDark} />
       </header>
 
       {availableViews.length ? (

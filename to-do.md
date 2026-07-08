@@ -23,3 +23,6 @@
 - [x] Deployed Edge Function `api` v7 and confirmed expense totals remained unchanged.
 - [x] Build passed; GitHub and Vercel production received the feature commit.
 - [x] Production login gate loads without browser console or Vercel runtime errors.
+- [x] Matched the supplied HTML visual system while retaining the current API and financial behavior.
+- [x] Added palette controls, dark mode, payment chips, daily revenue chart, and the 540px mobile layout.
+- [x] Verified the build and a 390px viewport without horizontal overflow or console errors.
