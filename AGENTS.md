@@ -9,6 +9,8 @@ Project instructions for Codex agents working on Maestro Barberia.
 - The app uses Supabase project ref `ivowbhraaistxvoymxpf`.
 - Main local app code is under `src/`.
 - Supabase local assets are under `supabase/`.
+- Restoration source of truth: legacy single-file app `Maestro-main/index.html` version `v14` and the live Supabase Edge Function `api`.
+- The current restoration goal is near 1:1 behavior parity with the old HTML app while keeping React/Vite as the frontend shell.
 
 ## Default Workflow
 
@@ -23,6 +25,13 @@ When making any code or configuration change:
 7. Check the live Vercel deployment when the change affects user-visible behavior.
 
 If Git, GitHub, or Vercel cannot be used, report the exact blocker immediately and do not pretend the push or deployment happened.
+
+For large restoration work, maintain `to-do.md` in the project root:
+
+- Add new discovered tasks as they appear.
+- Mark completed tasks promptly.
+- Compact completed detail into short summary bullets so the file stays useful.
+- Keep `to-do.md` committed with the code changes it describes.
 
 ## GitHub Rules
 
@@ -46,6 +55,8 @@ If Git, GitHub, or Vercel cannot be used, report the exact blocker immediately a
 - Treat Supabase as core to the product, not an afterthought.
 - Before implementing features that touch data, roles, access, auth, Telegram login, finance, masters, sales, attendance, fines, expenses, or debts, inspect the relevant Supabase tables and local client code.
 - Current known Supabase project ref: `ivowbhraaistxvoymxpf`.
+- Current restoration backend: Edge Function `api`, endpoint `/functions/v1/api`, request shape `{ initData, tgAuth, action, payload }`.
+- Business writes should go through `api` actions (`load`, `addSale`, `delSale`, `setAttendance`, `delAttendance`, `addFine`, `setSettings`, `addExpense`, `delExpense`, `addDebt`, `addDebtPayment`, `delDebtPayment`, `delDebt`, `setDebtClosed`) unless a later approved migration replaces this gateway.
 - Current known public tables include:
   - `app_users`
   - `masters`
@@ -58,6 +69,8 @@ If Git, GitHub, or Vercel cannot be used, report the exact blocker immediately a
   - `settings`
 - Current known local Edge Function:
   - `supabase/functions/telegram-auth`
+- Current known remote Edge Function:
+  - `api`
 - Current known remote Edge Function list may differ from local files. Always compare before deploying or editing functions.
 - `telegram-auth` may intentionally use `verify_jwt = false` only because it must verify Telegram `initData` itself. Do not disable JWT verification for other functions without a clear security reason.
 - Critical security note: RLS was observed disabled on the public Maestro tables. Do not silently enable RLS without policies because that can break the app. When a data feature is added, evaluate RLS and policies, explain the risk, and propose a migration plan.
