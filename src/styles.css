@@ -303,6 +303,14 @@ small {
   color: var(--ink);
 }
 
+.login-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  text-decoration: none;
+}
+
 form {
   display: grid;
   gap: 10px;
@@ -394,7 +402,7 @@ td:first-child {
 
 .login-card {
   display: grid;
-  width: min(100%, 360px);
+  width: min(100%, 420px);
   gap: 14px;
   justify-items: center;
   padding: 28px 22px;
@@ -409,6 +417,33 @@ td:first-child {
   width: 88px;
   height: 88px;
   border-radius: 20px;
+}
+
+.domain-help {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+.domain-help strong {
+  color: var(--ink);
+}
+
+.domain-help code {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--brass);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 footer {

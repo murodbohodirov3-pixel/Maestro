@@ -13,3 +13,4 @@
 - [x] Added React legacy shell that loads and mutates data through Edge Function `api`.
 - [x] Restored Telegram Mini App / Login Widget auth flow in React.
 - [x] Added local source copy for `supabase/functions/api`.
+- [x] Replaced automatic broken Telegram widget render with Telegram fallback and BotFather domain guidance.

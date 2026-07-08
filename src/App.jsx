@@ -756,30 +756,49 @@ function Rows({ rows, empty, render }) {
   return <div className="rows">{rows.map(render)}</div>;
 }
 
+const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
+const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+const TELEGRAM_WIDGET_DOMAIN = 'maestro-pied-two.vercel.app';
+
 function LoginGate({ error }) {
+  const [showWidget, setShowWidget] = useState(false);
+
   useEffect(() => {
+    if (!showWidget) return;
+
     const box = document.getElementById('tgLoginBox');
     if (!box || box.dataset.ready) return;
 
     const script = document.createElement('script');
     script.async = true;
     script.src = 'https://telegram.org/js/telegram-widget.js?22';
-    script.setAttribute('data-telegram-login', 'Maestro_uzbot');
+    script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
     script.setAttribute('data-size', 'large');
     script.setAttribute('data-radius', '12');
-    script.setAttribute('data-auth-url', window.location.origin + window.location.pathname);
+    script.setAttribute('data-auth-url', `https://${TELEGRAM_WIDGET_DOMAIN}/`);
     script.setAttribute('data-request-access', 'write');
     box.appendChild(script);
     box.dataset.ready = '1';
-  }, []);
+  }, [showWidget]);
 
   return (
     <main className="login-gate">
       <div className="login-card">
         <img src="/icons/icon-192.png" alt="Maestro" />
         <h1>Maestro</h1>
-        <p>Войдите через Telegram, чтобы открыть учёт салона.</p>
-        <div id="tgLoginBox" />
+        <p>Откройте приложение через Telegram, чтобы войти в учёт салона.</p>
+        <a className="btn login-primary" href={TELEGRAM_BOT_LINK} rel="noreferrer" target="_blank">
+          Открыть в Telegram
+        </a>
+        <button className="btn ghost" type="button" onClick={() => setShowWidget(true)}>
+          Войти на сайте через Telegram
+        </button>
+        {showWidget ? <div id="tgLoginBox" /> : null}
+        <div className="domain-help">
+          <strong>Если появляется Bot domain invalid</strong>
+          <span>В BotFather для @{TELEGRAM_BOT_USERNAME} нужно указать домен:</span>
+          <code>{TELEGRAM_WIDGET_DOMAIN}</code>
+        </div>
         {error ? <p className="error">{error}</p> : null}
       </div>
     </main>
