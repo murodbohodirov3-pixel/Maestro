@@ -69,7 +69,7 @@ export default function App() {
       <header className="app-header">
         <div className="brand-mark">M</div>
         <div>
-          <h1>Maestro Barberia</h1>
+          <h1>это проверка от автора йоууу</h1>
           <p>React + Vite каркас. Бизнес-логика будет перенесена следующими этапами.</p>
         </div>
       </header>
