@@ -1,0 +1,89 @@
+# AGENTS.md
+
+Project instructions for Codex agents working on Maestro Barberia.
+
+## Project
+
+- This repository is the Maestro Barberia React + Vite frontend.
+- Production URL currently known to the user: `https://maestro-pied-two.vercel.app/`.
+- The app uses Supabase project ref `ivowbhraaistxvoymxpf`.
+- Main local app code is under `src/`.
+- Supabase local assets are under `supabase/`.
+
+## Default Workflow
+
+When making any code or configuration change:
+
+1. Inspect the current worktree first.
+2. Do not overwrite unrelated user changes.
+3. Run the relevant verification command before finishing.
+4. Commit the completed change.
+5. Push the commit to GitHub.
+6. Verify that Vercel received the pushed update.
+7. Check the live Vercel deployment when the change affects user-visible behavior.
+
+If Git, GitHub, or Vercel cannot be used, report the exact blocker immediately and do not pretend the push or deployment happened.
+
+## GitHub Rules
+
+- Before editing, run `git status --short --branch`.
+- If the repository metadata is broken or missing, fix or report that before promising any push.
+- After code changes, create a clear commit message and push it to the configured remote.
+- Never commit `.env`, secrets, tokens, private keys, local caches, `node_modules`, or generated files unless the project explicitly requires them.
+- If the user asks for a code update, assume they want it pushed to GitHub after verification unless they explicitly say not to push.
+
+## Vercel Rules
+
+- After every pushed code update, verify that Vercel has received the update.
+- Prefer the Vercel connector/tools when available.
+- If `.vercel/project.json` exists, use its `orgId` and `projectId`.
+- If Vercel project metadata is unavailable, use the known production URL and explain what could and could not be verified.
+- For UI changes, open the deployed site and confirm the visible behavior matches the change.
+- Report deployment status clearly: queued, building, ready, failed, or unknown.
+
+## Supabase Rules
+
+- Treat Supabase as core to the product, not an afterthought.
+- Before implementing features that touch data, roles, access, auth, Telegram login, finance, masters, sales, attendance, fines, expenses, or debts, inspect the relevant Supabase tables and local client code.
+- Current known Supabase project ref: `ivowbhraaistxvoymxpf`.
+- Current known public tables include:
+  - `app_users`
+  - `masters`
+  - `sales`
+  - `attendance`
+  - `fines`
+  - `expenses`
+  - `debts`
+  - `debt_payments`
+  - `settings`
+- Current known local Edge Function:
+  - `supabase/functions/telegram-auth`
+- Current known remote Edge Function list may differ from local files. Always compare before deploying or editing functions.
+- `telegram-auth` may intentionally use `verify_jwt = false` only because it must verify Telegram `initData` itself. Do not disable JWT verification for other functions without a clear security reason.
+- Critical security note: RLS was observed disabled on the public Maestro tables. Do not silently enable RLS without policies because that can break the app. When a data feature is added, evaluate RLS and policies, explain the risk, and propose a migration plan.
+- Never place `SUPABASE_SERVICE_ROLE_KEY`, Telegram bot tokens, or other server secrets in frontend code, Vercel client env vars, or committed files.
+
+## Verification
+
+Use the smallest verification that proves the change:
+
+- For frontend changes: `npm run build`.
+- For local UI behavior: run the app or preview build and inspect the page.
+- For deployed UI behavior: inspect the Vercel deployment URL.
+- For Supabase Edge Functions: compare local files with remote function state before deployment, then verify the function exists after deployment.
+- For auth changes: test both allowed and denied paths when possible.
+
+## Final Response Requirements
+
+At the end of every feature or fix, explain in detail:
+
+- What was changed.
+- Which files were changed.
+- What commands or checks were run.
+- Whether the change was committed and pushed to GitHub.
+- Whether Vercel received and deployed the update.
+- What Supabase tables, functions, auth rules, or env vars were checked.
+- Where the implementation could be wrong or fragile.
+- Exactly where the user should look first if something behaves incorrectly.
+
+Be direct about uncertainty. If a check was not possible, say why.
