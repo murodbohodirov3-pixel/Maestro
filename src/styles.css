@@ -226,6 +226,60 @@ small {
   color: var(--fine);
 }
 
+.collapsible-card {
+  padding: 0;
+}
+
+.collapsible-card summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 18px;
+  font-weight: 700;
+  justify-content: space-between;
+  list-style: none;
+  padding: 20px;
+}
+
+.collapsible-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary-action {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.collapsible-card[open] .summary-action {
+  font-size: 0;
+}
+
+.collapsible-card[open] .summary-action::after {
+  content: "Закрыть";
+  font-size: 13px;
+}
+
+.collapsible-content {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.section-total {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 14px 0 8px;
+}
+
+.section-total span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .approval-row {
   align-items: center;
 }

@@ -17,3 +17,8 @@
 - [x] Added mobile layout safeguards without changing formulas, API payloads, or database writes.
 - [x] Designed owner approval to use an explicit marker so 18 legacy pending sales keep their existing totals.
 - [x] Deployed Edge Function `api` v6 with owner approval actions and verified unauthorized requests return 401.
+- [x] Audited 249 expense rows and section totals directly in Supabase without changing data.
+- [x] Added payment creation time and new/returning client labels to master and owner views.
+- [x] Restored lifetime investment calculations and added complete paginated API reads.
+- [x] Made shift and salon settings collapsible.
+- [x] Deployed Edge Function `api` v7 and confirmed expense totals remained unchanged.

@@ -59,6 +59,8 @@ For large restoration work, maintain `to-do.md` in the project root:
 - Business writes should go through `api` actions (`load`, `addSale`, `setSaleApproval`, `delSale`, `setAttendance`, `delAttendance`, `addFine`, `setSettings`, `addExpense`, `delExpense`, `addDebt`, `addDebtPayment`, `delDebtPayment`, `delDebt`, `setDebtClosed`) unless a later approved migration replaces this gateway.
 - New sales submitted by masters require owner approval. Only rows explicitly marked with `comment = owner_approval_required` are treated as new pending approvals; legacy pending rows must keep their historical calculation behavior unless a separate audited migration is approved.
 - Pending or rejected owner-approval sales must not affect revenue, client, payout, or profit totals. Never bulk-update historical sale amounts or statuses while implementing this workflow.
+- Data loads from Supabase must be paginated; a large `.limit(...)` does not guarantee that PostgREST will return more than the configured server maximum.
+- Investment balances for Murod and Jamshid use all expense history, matching the legacy HTML. Period filters apply to the finance report and expense list, not to lifetime investment balances.
 - For UI-only work, do not change formulas, action payloads, Supabase writes, or stored values. Financial sums must remain byte-for-byte behaviorally equivalent unless the user explicitly asks for a calculation change.
 - Current known public tables include:
   - `app_users`

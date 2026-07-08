@@ -51,6 +51,25 @@ function displayTime(value) {
   return Number.isNaN(date.getTime()) ? text.slice(0, 5) : date.toTimeString().slice(0, 5);
 }
 
+function displayDateTime(value) {
+  if (!value) return 'время не указано';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Tashkent',
+  });
+}
+
+function clientType(sale) {
+  if (sale.is_new_client === true) return 'новый';
+  if (sale.is_new_client === false) return 'постоянный';
+  return 'тип не указан';
+}
+
 function timeToMinutes(value) {
   const time = displayTime(value);
   if (!time) return null;
@@ -313,7 +332,8 @@ function MasterView({ data, reload, setError }) {
             <div className="row" key={sale.id}>
               <div>
                 <strong>{money(saleTotal(sale))} сум</strong>
-                <span>{sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)}</span>
+                <span>{sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)} · {clientType(sale)}</span>
+                <span>Внесено: {displayDateTime(sale.created_at)}</span>
                 {isPendingOwnerApproval(sale) ? <span className="approval pending">Ожидает owner</span> : null}
                 {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено owner</span> : null}
               </div>
@@ -424,8 +444,9 @@ function AdminView({ data, reload, setError }) {
               <div>
                 <strong>{sale.master} · {money(saleTotal(sale))} сум</strong>
                 <span>
-                  {rowDate(sale)} · {sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)}
+                  {rowDate(sale)} · {sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)} · {clientType(sale)}
                 </span>
+                <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
               <div className="approval-actions">
                 <button className="btn approval-button" type="button" onClick={() => setSaleApproval(sale.id, 'approved')}>
@@ -473,16 +494,21 @@ function AdminView({ data, reload, setError }) {
         })}
       </div>
 
-      <form className="card" onSubmit={saveSettings}>
-        <h2>Настройки смены и салона</h2>
-        <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
-        <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
-        <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
-        <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
-        <button className="btn ghost" type="button" onClick={useMyLocation}>Задать по моему положению</button>
-        <button className="btn" type="submit">Сохранить настройки</button>
-        {message ? <p className="success">{message}</p> : null}
-      </form>
+      <details className="card collapsible-card">
+        <summary>
+          <span>Настройки смены и салона</span>
+          <span className="summary-action">Открыть</span>
+        </summary>
+        <form className="collapsible-content" onSubmit={saveSettings}>
+          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
+          <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
+          <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
+          <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
+          <button className="btn ghost" type="button" onClick={useMyLocation}>Задать по моему положению</button>
+          <button className="btn" type="submit">Сохранить настройки</button>
+          {message ? <p className="success">{message}</p> : null}
+        </form>
+      </details>
 
       <form className="card" onSubmit={addFine}>
         <h2>Штрафы</h2>
@@ -522,7 +548,8 @@ function FinanceView({ data, reload, setError }) {
   const [customTo, setCustomTo] = useState('');
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
-  const range = getRange(period, customFrom, customTo, data.sales);
+  const financeRows = [...data.sales, ...data.expenses];
+  const range = getRange(period, customFrom, customTo, financeRows);
   const sales = data.sales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
@@ -538,6 +565,7 @@ function FinanceView({ data, reload, setError }) {
   const salon = revenue - payouts;
   const ishxonaExpenses = expenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
   const visibleExpenses = expenses.filter((expense) => expense.section === tab);
+  const visibleExpenseTotal = visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
 
   async function addExpense(event) {
     event.preventDefault();
@@ -563,7 +591,7 @@ function FinanceView({ data, reload, setError }) {
   }
 
   function investment(owner) {
-    return expenses.reduce((acc, expense) => {
+    return data.expenses.reduce((acc, expense) => {
       const amount = Number(expense.amount_uzs) || 0;
       const rate = Number(expense.usd_rate) || 0;
       if (expense.section === owner) acc.invested += amount;
@@ -613,6 +641,10 @@ function FinanceView({ data, reload, setError }) {
             ['murod', 'Мурод'],
             ['jamshid', 'Жамшид'],
           ].map(([value, label]) => <button className={tab === value ? 'on' : ''} key={value} type="button" onClick={() => setTab(value)}>{label}</button>)}
+        </div>
+        <div className="section-total">
+          <span>За выбранный период: {visibleExpenses.length} записей</span>
+          <strong>{money(visibleExpenseTotal)} сум</strong>
         </div>
         <Rows rows={visibleExpenses} empty="Расходов за период нет." render={(expense) => (
           <div className="row" key={expense.id}>

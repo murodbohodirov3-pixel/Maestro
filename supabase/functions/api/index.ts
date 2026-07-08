@@ -6,6 +6,7 @@ const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const ADMIN_ID = 2502169;
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+const PAGE_SIZE = 1000;
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -18,6 +19,27 @@ function json(obj: unknown, status = 200) {
     status,
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
+}
+
+async function fetchAllRows(
+  table: string,
+  orderColumn: string,
+  filters: Record<string, string | number> = {},
+) {
+  const rows: Record<string, unknown>[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = sb.from(table).select('*');
+    for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
+
+    const { data, error } = await query
+      .order(orderColumn, { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
 }
 
 async function hmac(keyData: Uint8Array, msg: string): Promise<Uint8Array> {
@@ -101,12 +123,14 @@ Deno.serve(async (req) => {
       const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
 
       if (isAdmin) {
-        const sales = (await sb.from('sales').select('*').order('d').limit(20000)).data ?? [];
-        const fines = (await sb.from('fines').select('*').limit(20000)).data ?? [];
-        const attendance = (await sb.from('attendance').select('*').limit(20000)).data ?? [];
-        const expenses = (await sb.from('expenses').select('*').order('date').limit(20000)).data ?? [];
-        const debts = (await sb.from('debts').select('*').order('id')).data ?? [];
-        const debt_payments = (await sb.from('debt_payments').select('*').order('date').limit(20000)).data ?? [];
+        const [sales, fines, attendance, expenses, debts, debt_payments] = await Promise.all([
+          fetchAllRows('sales', 'd'),
+          fetchAllRows('fines', 'id'),
+          fetchAllRows('attendance', 'id'),
+          fetchAllRows('expenses', 'date'),
+          fetchAllRows('debts', 'id'),
+          fetchAllRows('debt_payments', 'date'),
+        ]);
 
         return json({
           role: 'admin',
@@ -121,9 +145,11 @@ Deno.serve(async (req) => {
         });
       }
 
-      const sales = (await sb.from('sales').select('*').eq('master', myMaster).order('d').limit(20000)).data ?? [];
-      const fines = (await sb.from('fines').select('*').eq('master', myMaster).limit(20000)).data ?? [];
-      const attendance = (await sb.from('attendance').select('*').eq('master', myMaster).limit(20000)).data ?? [];
+      const [sales, fines, attendance] = await Promise.all([
+        fetchAllRows('sales', 'd', { master: myMaster }),
+        fetchAllRows('fines', 'id', { master: myMaster }),
+        fetchAllRows('attendance', 'id', { master: myMaster }),
+      ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
       return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance });
