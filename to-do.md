@@ -2,8 +2,7 @@
 
 ## Active
 
-- [ ] Verify build, push to GitHub, and confirm Vercel production receives the commit.
-- [ ] Smoke test the live app: login gate, legacy layout, role tabs, and data load.
+- [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 
 ## Completed
 
@@ -22,3 +21,5 @@
 - [x] Restored lifetime investment calculations and added complete paginated API reads.
 - [x] Made shift and salon settings collapsible.
 - [x] Deployed Edge Function `api` v7 and confirmed expense totals remained unchanged.
+- [x] Build passed; GitHub and Vercel production received the feature commit.
+- [x] Production login gate loads without browser console or Vercel runtime errors.
