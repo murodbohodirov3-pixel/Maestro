@@ -23,6 +23,18 @@ function saleTotal(sale) {
   return (Number(sale.cash) || 0) + (Number(sale.card) || 0) + (Number(sale.qr) || 0);
 }
 
+function isPendingOwnerApproval(sale) {
+  return sale.status === 'pending' && sale.comment === 'owner_approval_required';
+}
+
+function isRejectedByOwner(sale) {
+  return sale.status === 'rejected' && sale.comment === 'owner_approval_rejected';
+}
+
+function isCountedSale(sale) {
+  return !isPendingOwnerApproval(sale) && !isRejectedByOwner(sale);
+}
+
 function rowDate(row, primary = 'd') {
   return row?.[primary] || row?.date || row?.sale_date || row?.attendance_date || row?.fine_date || '';
 }
@@ -142,7 +154,9 @@ function MasterView({ data, reload, setError }) {
   const range = getRange(period, customFrom, customTo, data.sales);
   const masterSales = data.sales.filter((sale) => sale.master === masterName);
   const todaySales = masterSales.filter((sale) => rowDate(sale) === TODAY);
-  const visibleSales = masterSales.filter((sale) => inRange(rowDate(sale), range.from, range.to));
+  const visibleSales = masterSales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
+  );
   const visibleFines = data.fines.filter((fine) => fine.master === masterName && inRange(rowDate(fine), range.from, range.to));
   const revenue = visibleSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const fineTotal = visibleFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
@@ -179,7 +193,9 @@ function MasterView({ data, reload, setError }) {
     setAmount('');
     setClientCount(1);
     setIsNewClient(null);
-    setMessage('Продажа сохранена.');
+    setMessage(data.role === 'master'
+      ? 'Оплата отправлена owner на подтверждение.'
+      : 'Продажа сохранена.');
     await reload();
   }
 
@@ -298,8 +314,12 @@ function MasterView({ data, reload, setError }) {
               <div>
                 <strong>{money(saleTotal(sale))} сум</strong>
                 <span>{sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)}</span>
+                {isPendingOwnerApproval(sale) ? <span className="approval pending">Ожидает owner</span> : null}
+                {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено owner</span> : null}
               </div>
-              <button className="del" type="button" onClick={() => deleteSale(sale.id)}>×</button>
+              {data.role === 'admin' || isPendingOwnerApproval(sale) ? (
+                <button className="del" type="button" onClick={() => deleteSale(sale.id)}>×</button>
+              ) : null}
             </div>
           )}
         />
@@ -336,7 +356,10 @@ function AdminView({ data, reload, setError }) {
   });
   const [message, setMessage] = useState('');
   const range = getRange(period, customFrom, customTo, data.sales);
-  const sales = data.sales.filter((sale) => inRange(rowDate(sale), range.from, range.to));
+  const pendingSales = data.sales.filter(isPendingOwnerApproval);
+  const sales = data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
+  );
   const attendance = data.attendance.filter((item) => inRange(rowDate(item), range.from, range.to));
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
@@ -382,8 +405,41 @@ function AdminView({ data, reload, setError }) {
     await reload();
   }
 
+  async function setSaleApproval(id, status) {
+    setError('');
+    await callLegacyApi('setSaleApproval', { id, status });
+    setMessage(status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.');
+    await reload();
+  }
+
   return (
     <section className="view-grid">
+      <div className="card wide">
+        <h2>Оплаты на подтверждение</h2>
+        <Rows
+          rows={pendingSales}
+          empty="Новых оплат от мастеров на подтверждение нет."
+          render={(sale) => (
+            <div className="row approval-row" key={sale.id}>
+              <div>
+                <strong>{sale.master} · {money(saleTotal(sale))} сум</strong>
+                <span>
+                  {rowDate(sale)} · {sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)}
+                </span>
+              </div>
+              <div className="approval-actions">
+                <button className="btn approval-button" type="button" onClick={() => setSaleApproval(sale.id, 'approved')}>
+                  Подтвердить
+                </button>
+                <button className="btn ghost approval-button" type="button" onClick={() => setSaleApproval(sale.id, 'rejected')}>
+                  Отклонить
+                </button>
+              </div>
+            </div>
+          )}
+        />
+      </div>
+
       <div className="card wide">
         <h2>Период отчёта</h2>
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
@@ -467,7 +523,9 @@ function FinanceView({ data, reload, setError }) {
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const range = getRange(period, customFrom, customTo, data.sales);
-  const sales = data.sales.filter((sale) => inRange(rowDate(sale), range.from, range.to));
+  const sales = data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
+  );
   const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);

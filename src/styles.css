@@ -207,6 +207,41 @@ small {
   font-weight: 700;
 }
 
+.approval {
+  width: fit-content;
+  margin-top: 5px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.approval.pending {
+  background: color-mix(in srgb, var(--brass) 18%, transparent);
+  color: var(--brass);
+}
+
+.approval.rejected {
+  background: color-mix(in srgb, var(--fine) 14%, transparent);
+  color: var(--fine);
+}
+
+.approval-row {
+  align-items: center;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.btn.approval-button {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
 .danger {
   color: var(--fine);
 }
@@ -581,6 +616,19 @@ footer span {
 
   .card {
     padding: 12px;
+  }
+
+  .approval-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .approval-actions {
+    justify-content: stretch;
+  }
+
+  .approval-actions .btn {
+    flex: 1 1 130px;
   }
 
   .hero {

@@ -131,7 +131,8 @@ Deno.serve(async (req) => {
 
     if (action === 'addSale') {
       const master = isAdmin ? payload.master : myMaster;
-      await sb.from('sales').insert({
+      const requiresOwnerApproval = !isAdmin;
+      const { error } = await sb.from('sales').insert({
         master,
         d: payload.d,
         cash: payload.cash || 0,
@@ -139,14 +140,56 @@ Deno.serve(async (req) => {
         qr: payload.qr || 0,
         cl: payload.cl || 0,
         is_new_client: payload.is_new_client,
+        status: requiresOwnerApproval ? 'pending' : 'approved',
+        approved_by: requiresOwnerApproval ? null : String(uid),
+        approved_at: requiresOwnerApproval ? null : new Date().toISOString(),
+        comment: requiresOwnerApproval ? 'owner_approval_required' : null,
       });
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (action === 'setSaleApproval') {
+      if (!isAdmin) return json({ error: 'forbidden' }, 403);
+      if (!['approved', 'rejected'].includes(payload.status)) {
+        return json({ error: 'invalid_sale_status' }, 400);
+      }
+
+      const existing = await sb
+        .from('sales')
+        .select('id, comment')
+        .eq('id', payload.id)
+        .maybeSingle();
+      if (existing.error) return json({ error: existing.error.message }, 500);
+      if (!existing.data || !['owner_approval_required', 'owner_approval_rejected'].includes(existing.data.comment)) {
+        return json({ error: 'sale_does_not_require_owner_approval' }, 409);
+      }
+
+      const { error } = await sb
+        .from('sales')
+        .update({
+          status: payload.status,
+          approved_by: String(uid),
+          approved_at: new Date().toISOString(),
+          comment: payload.status === 'approved'
+            ? 'owner_approval_approved'
+            : 'owner_approval_rejected',
+        })
+        .eq('id', payload.id);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
     if (action === 'delSale') {
       let query = sb.from('sales').delete().eq('id', payload.id);
-      if (!isAdmin) query = query.eq('master', myMaster);
-      await query;
+      if (!isAdmin) {
+        query = query
+          .eq('master', myMaster)
+          .eq('status', 'pending')
+          .eq('comment', 'owner_approval_required');
+      }
+      const { error } = await query;
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
