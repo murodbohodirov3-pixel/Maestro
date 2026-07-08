@@ -57,6 +57,7 @@ For large restoration work, maintain `to-do.md` in the project root:
 - Current known Supabase project ref: `ivowbhraaistxvoymxpf`.
 - Current restoration backend: Edge Function `api`, endpoint `/functions/v1/api`, request shape `{ initData, tgAuth, action, payload }`.
 - Business writes should go through `api` actions (`load`, `addSale`, `delSale`, `setAttendance`, `delAttendance`, `addFine`, `setSettings`, `addExpense`, `delExpense`, `addDebt`, `addDebtPayment`, `delDebtPayment`, `delDebt`, `setDebtClosed`) unless a later approved migration replaces this gateway.
+- For UI-only work, do not change formulas, action payloads, Supabase writes, or stored values. Financial sums must remain byte-for-byte behaviorally equivalent unless the user explicitly asks for a calculation change.
 - Current known public tables include:
   - `app_users`
   - `masters`
