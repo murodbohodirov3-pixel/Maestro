@@ -436,6 +436,19 @@ small {
   opacity: 0.45;
 }
 
+.detailed-sale {
+  align-items: flex-start;
+}
+
+.detailed-sale-amounts {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.detailed-sale-amounts span {
+  margin-top: 3px;
+}
+
 .btn.approval-button {
   min-height: 36px;
   padding: 7px 10px;

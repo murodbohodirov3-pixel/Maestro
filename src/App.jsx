@@ -224,7 +224,7 @@ function MasterView({ data, reload, setError }) {
   const [amount, setAmount] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [isNewClient, setIsNewClient] = useState(null);
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState('day');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [message, setMessage] = useState('');
@@ -438,7 +438,7 @@ function MasterView({ data, reload, setError }) {
 }
 
 function AdminView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState('day');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [message, setMessage] = useState('');
@@ -520,12 +520,41 @@ function AdminView({ data, reload, setError }) {
           );
         })}
       </div>
+
+      <div className="card wide">
+        <SectionHeading label="Детальный отчёт по мастерам" range={range} />
+        <Rows
+          rows={[...sales].sort((left, right) => (
+            String(right.created_at || rowDate(right)).localeCompare(String(left.created_at || rowDate(left)))
+          ))}
+          empty="За выбранный период продаж нет."
+          render={(sale) => {
+            const master = data.byName[sale.master];
+            const amount = saleTotal(sale);
+            const masterEarning = amount * Number(master?.pct || 40) / 100;
+            const payment = sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet';
+            return (
+              <div className="row detailed-sale" key={sale.id}>
+                <div>
+                  <strong>{sale.master}</strong>
+                  <span>{displayDateTime(sale.created_at)} · {payment}</span>
+                  <span>{clientType(sale)} · клиентов: {clients(sale)}</span>
+                </div>
+                <div className="detailed-sale-amounts">
+                  <strong>{money(amount)} сум</strong>
+                  <span>мастеру: {money(masterEarning)} сум</span>
+                </div>
+              </div>
+            );
+          }}
+        />
+      </div>
     </section>
   );
 }
 
 function AttendanceView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState('day');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [fineForm, setFineForm] = useState({
@@ -745,7 +774,7 @@ function AttendanceView({ data, reload, setError }) {
 }
 
 function FinanceView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState('day');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [tab, setTab] = useState('ishxona');
