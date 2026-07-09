@@ -734,6 +734,7 @@ function FinanceView({ data, reload, setError }) {
 }
 
 function RevenueChart({ sales, from, to }) {
+  const [selectedDay, setSelectedDay] = useState(null);
   const days = [];
   const cursor = new Date(`${from}T12:00:00`);
   const end = new Date(`${to}T12:00:00`);
@@ -743,18 +744,30 @@ function RevenueChart({ sales, from, to }) {
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  const totals = Object.fromEntries(days.map((day) => [day, 0]));
+  const totals = Object.fromEntries(days.map((day) => [day, { revenue: 0, clients: 0 }]));
   sales.forEach((sale) => {
     const day = rowDate(sale);
-    if (day in totals) totals[day] += saleTotal(sale);
+    if (day in totals) {
+      totals[day].revenue += saleTotal(sale);
+      totals[day].clients += clients(sale);
+    }
   });
 
-  const values = days.map((day) => totals[day]);
+  const values = days.map((day) => totals[day].revenue);
   const max = Math.max(1, ...values);
   const barWidth = Math.max(14, Math.min(38, Math.floor(480 / Math.max(1, days.length))));
   const gap = 6;
-  const width = days.length * (barWidth + gap) + 10;
+  const width = Math.max(170, days.length * (barWidth + gap) + 10);
   const labelEvery = Math.max(1, Math.ceil(days.length / 10));
+  const selectedIndex = days.indexOf(selectedDay);
+  const selectedValue = selectedIndex >= 0 ? values[selectedIndex] : 0;
+  const selectedHeight = Math.round((selectedValue / max) * 100);
+  const selectedCenter = selectedIndex >= 0
+    ? 10 + selectedIndex * (barWidth + gap) + barWidth / 2
+    : 0;
+  const tooltipWidth = 150;
+  const tooltipX = Math.max(4, Math.min(width - tooltipWidth - 4, selectedCenter - tooltipWidth / 2));
+  const tooltipY = Math.max(2, 120 - selectedHeight - 40);
 
   return (
     <div className="chart" aria-label="Выручка по дням">
@@ -762,17 +775,34 @@ function RevenueChart({ sales, from, to }) {
         {days.map((day, index) => {
           const height = Math.round((values[index] / max) * 100);
           const x = 10 + index * (barWidth + gap);
+          const isSelected = selectedDay === day;
           return (
-            <g key={day}>
+            <g
+              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум`}
+              className={`chart-bar ${isSelected ? 'selected' : ''}`}
+              key={day}
+              onClick={() => setSelectedDay((current) => current === day ? null : day)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setSelectedDay((current) => current === day ? null : day);
+                }
+              }}
+              role="button"
+              tabIndex="0"
+            >
               <rect
                 fill="var(--brass)"
                 height={height}
                 opacity={values[index] ? 0.95 : 0.18}
                 rx="3"
+                stroke={isSelected ? 'var(--ink)' : 'none'}
+                strokeWidth={isSelected ? 2 : 0}
                 width={barWidth}
                 x={x}
                 y={120 - height}
               />
+              <rect fill="transparent" height="120" width={barWidth + gap} x={x - gap / 2} y="0" />
               {(days.length <= 14 || index % labelEvery === 0) ? (
                 <text fill="var(--muted)" fontSize="9" textAnchor="middle" x={x + barWidth / 2} y="134">
                   {day.slice(8, 10)}.{day.slice(5, 7)}
@@ -781,6 +811,25 @@ function RevenueChart({ sales, from, to }) {
             </g>
           );
         })}
+        {selectedIndex >= 0 ? (
+          <g className="chart-tooltip" pointerEvents="none">
+            <rect
+              fill="var(--surface)"
+              height="34"
+              rx="8"
+              stroke="var(--line)"
+              width={tooltipWidth}
+              x={tooltipX}
+              y={tooltipY}
+            />
+            <text fill="var(--muted)" fontSize="9" x={tooltipX + 9} y={tooltipY + 13}>
+              {displayDate(selectedDay)} · {totals[selectedDay].clients} кл.
+            </text>
+            <text fill="var(--ink)" fontSize="11" fontWeight="700" x={tooltipX + 9} y={tooltipY + 27}>
+              {money(totals[selectedDay].revenue)} сум
+            </text>
+          </g>
+        ) : null}
       </svg>
     </div>
   );

@@ -493,6 +493,20 @@ small {
   max-width: none;
 }
 
+.chart-bar {
+  cursor: pointer;
+  outline: none;
+}
+
+.chart-bar:focus rect:first-child {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.chart-tooltip {
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.12));
+}
+
 .tile span {
   display: block;
   margin-bottom: 6px;
