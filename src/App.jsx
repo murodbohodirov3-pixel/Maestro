@@ -42,6 +42,10 @@ function money(value) {
   return Math.round(Number(value) || 0).toLocaleString('ru-RU');
 }
 
+function usdMoney(value) {
+  return `$${money(value)}`;
+}
+
 function digitsOnly(value) {
   return String(value ?? '').replace(/\D/g, '');
 }
@@ -69,6 +73,12 @@ function isCountedSale(sale) {
 
 function rowDate(row, primary = 'd') {
   return row?.[primary] || row?.date || row?.sale_date || row?.attendance_date || row?.fine_date || '';
+}
+
+function newestFirst(left, right) {
+  const leftKey = `${rowDate(left)}T${left.created_at || left.arrived_at || left.arrived || ''}`;
+  const rightKey = `${rowDate(right)}T${right.created_at || right.arrived_at || right.arrived || ''}`;
+  return rightKey.localeCompare(leftKey);
 }
 
 function clients(sale) {
@@ -403,7 +413,7 @@ function MasterView({ data, reload, setError }) {
       <div className="card">
         <SectionHeading label="Сегодня" range={{ from: TODAY, to: TODAY }} />
         <Rows
-          rows={todaySales}
+          rows={[...todaySales].sort(newestFirst)}
           empty="Пока нет записей за сегодня."
           render={(sale) => (
             <div className="row" key={sale.id}>
@@ -482,7 +492,7 @@ function AdminView({ data, reload, setError }) {
       <div className="card wide">
         <h2>Оплаты на подтверждение</h2>
         <Rows
-          rows={pendingSales}
+          rows={[...pendingSales].sort(newestFirst)}
           empty="Новых оплат от мастеров на подтверждение нет."
           render={(sale) => (
             <div className="row approval-row" key={sale.id}>
@@ -590,10 +600,7 @@ function AttendanceView({ data, reload, setError }) {
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredAttendance = data.attendance
     .filter((item) => inRange(rowDate(item), range.from, range.to))
-    .sort((left, right) => {
-      const dateOrder = rowDate(right).localeCompare(rowDate(left));
-      return dateOrder || String(left.master).localeCompare(String(right.master), 'ru');
-    });
+    .sort(newestFirst);
   const attendanceRows = period === 'day'
     ? data.activeMasters.map((master) => (
         data.attendance.find((item) => item.master === master.name && rowDate(item) === TODAY)
@@ -602,7 +609,7 @@ function AttendanceView({ data, reload, setError }) {
     : filteredAttendance;
   const filteredFines = data.fines
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
-    .sort((left, right) => rowDate(right).localeCompare(rowDate(left)));
+    .sort(newestFirst);
   const shiftStart = settings.shift_start || '09:00';
 
   async function saveSettings(event) {
@@ -812,7 +819,7 @@ function FinanceView({ data, reload, setError }) {
   }, 0);
   const salon = revenue - payouts;
   const ishxonaExpenses = expenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
-  const visibleExpenses = expenses.filter((expense) => expense.section === tab);
+  const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
   const visibleExpenseTotal = visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
 
   async function addExpense(event) {
@@ -850,16 +857,28 @@ function FinanceView({ data, reload, setError }) {
     }, { invested: 0, returned: 0, investedUsd: 0, returnedUsd: 0 });
   }
 
+  function sectionExpense(section) {
+    return data.expenses
+      .filter((expense) => expense.section === section)
+      .reduce((totals, expense) => {
+        const amount = Number(expense.amount_uzs) || 0;
+        const rate = Number(expense.usd_rate) || 0;
+        totals.uzs += amount;
+        if (rate) totals.usd += amount / rate;
+        return totals;
+      }, { uzs: 0, usd: 0 });
+  }
+
   return (
     <section className="view-grid">
       <div className="card wide">
         <SectionHeading label="Финансы" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
-        <div className="hero">{money(salon - ishxonaExpenses)} <small>сум прибыль</small></div>
+        <div className="hero profit-value">{money(salon - ishxonaExpenses)} <small>сум прибыль</small></div>
         <div className="tiles">
           <Tile label="Выручка" value={money(revenue)} />
-          <Tile label="Зарплаты мастеров" value={money(payouts)} danger />
-          <Tile label="Остаток салону" value={money(salon)} />
+          <Tile label="Зарплаты мастеров" value={money(payouts)} />
+          <Tile label="Остаток салону" value={money(salon)} tone="salon" />
           <Tile label="Расходы" value={money(ishxonaExpenses)} danger />
         </div>
       </div>
@@ -869,15 +888,29 @@ function FinanceView({ data, reload, setError }) {
         <div className="tiles">
           {['murod', 'jamshid'].map((owner) => {
             const item = investment(owner);
+            const netUzs = item.invested - item.returned;
+            const netUsd = item.investedUsd - item.returnedUsd;
             return (
               <Tile
                 key={owner}
                 label={owner === 'murod' ? 'Мурод' : 'Жамшид'}
-                value={`${money(item.invested - item.returned)} сум`}
-                hint={`вложено ${money(item.invested)} · возврат ${money(item.returned)}`}
+                value={usdMoney(netUsd)}
+                secondary={`${money(netUzs)} сум`}
+                hint={`вложено ${usdMoney(item.investedUsd)} · возврат ${usdMoney(item.returnedUsd)}`}
               />
             );
           })}
+          {(() => {
+            const item = sectionExpense('ishxona');
+            return (
+              <Tile
+                label="Расходы Ишхоны"
+                value={usdMoney(item.usd)}
+                secondary={`${money(item.uzs)} сум`}
+                hint={`расходы ${usdMoney(item.usd)}`}
+              />
+            );
+          })()}
         </div>
       </div>
 
@@ -1034,9 +1067,9 @@ function DebtsView({ data, reload, setError }) {
   const [allMonths, setAllMonths] = useState(false);
   const [form, setForm] = useState({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
   const [payments, setPayments] = useState({});
-  const activeDebts = data.debts.filter((debt) => !debt.is_closed);
-  const closedDebts = data.debts.filter((debt) => debt.is_closed);
-  const months = [...new Set(data.debtPayments.map((payment) => String(payment.date).slice(0, 7)))].sort();
+  const activeDebts = data.debts.filter((debt) => !debt.is_closed).sort(newestFirst);
+  const closedDebts = data.debts.filter((debt) => debt.is_closed).sort(newestFirst);
+  const months = [...new Set(data.debtPayments.map((payment) => String(payment.date).slice(0, 7)))].sort().reverse();
   const visibleMonths = allMonths ? months : months.slice(-4);
 
   function paid(debtId) {
@@ -1081,7 +1114,9 @@ function DebtsView({ data, reload, setError }) {
   }
 
   const renderDebt = (debt) => {
-    const debtPayments = data.debtPayments.filter((payment) => String(payment.debt_id) === String(debt.id));
+    const debtPayments = data.debtPayments
+      .filter((payment) => String(payment.debt_id) === String(debt.id))
+      .sort(newestFirst);
     const remaining = Number(debt.amount) - paid(debt.id);
     const paymentForm = payments[debt.id] || { date: TODAY, amount: '' };
     return (
@@ -1190,11 +1225,12 @@ function SectionHeading({ label, range }) {
   );
 }
 
-function Tile({ label, value, hint, danger, tone }) {
+function Tile({ label, value, secondary, hint, danger, tone }) {
   return (
     <div className={`tile ${danger ? 'danger' : ''} ${tone ? `tile-${tone}` : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {secondary ? <em>{secondary}</em> : null}
       {hint ? <small>{hint}</small> : null}
     </div>
   );

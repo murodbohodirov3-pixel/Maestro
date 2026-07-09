@@ -519,6 +519,11 @@ small {
   background: color-mix(in srgb, var(--cash) 9%, var(--surface));
 }
 
+.tile-salon strong,
+.profit-value {
+  color: var(--cash);
+}
+
 .payout-total {
   display: flex;
   align-items: center;
@@ -638,6 +643,15 @@ small {
   font-size: clamp(18px, 5vw, 20px);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+.tile em {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
 }
 
 .rows {
