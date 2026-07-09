@@ -449,6 +449,16 @@ small {
   margin-top: 3px;
 }
 
+.detailed-sale-delete {
+  margin-top: 7px;
+  margin-left: auto;
+}
+
+.detailed-sale-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
 .btn.approval-button {
   min-height: 36px;
   padding: 7px 10px;
@@ -497,6 +507,34 @@ small {
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface-2);
+}
+
+.tile-total {
+  border-color: color-mix(in srgb, var(--card) 28%, var(--line));
+  background: color-mix(in srgb, var(--card) 8%, var(--surface));
+}
+
+.tile-salon {
+  border-color: color-mix(in srgb, var(--cash) 30%, var(--line));
+  background: color-mix(in srgb, var(--cash) 9%, var(--surface));
+}
+
+.payout-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--brass-soft);
+}
+
+.payout-total span {
+  color: var(--brass);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .pay-types {

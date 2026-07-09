@@ -129,11 +129,14 @@ function minutesLate(arrived, shiftStart = '09:00') {
   return Math.max(0, arrivedMinutes - shiftMinutes);
 }
 
-function recentFineCanBeDeleted(fineDate) {
+function recentRecordCanBeDeleted(recordDate, days) {
   const cutoff = new Date(`${TODAY}T12:00:00`);
-  cutoff.setDate(cutoff.getDate() - 7);
-  return Boolean(fineDate) && fineDate >= localDate(cutoff);
+  cutoff.setDate(cutoff.getDate() - days);
+  return Boolean(recordDate) && recordDate >= localDate(cutoff);
 }
+
+const recentFineCanBeDeleted = (date) => recentRecordCanBeDeleted(date, 7);
+const recentSaleCanBeDeleted = (date) => recentRecordCanBeDeleted(date, 2);
 
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const radius = 6371000;
@@ -450,11 +453,27 @@ function AdminView({ data, reload, setError }) {
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
+  const masterSummaries = data.activeMasters.map((master) => {
+    const rows = sales.filter((sale) => sale.master === master.name);
+    const masterRevenue = rows.reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const masterFine = fines.filter((fine) => fine.master === master.name).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    return { master, rows, revenue: masterRevenue, pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine) };
+  });
+  const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
+  const salonRemainder = revenue - totalMasterPayout;
 
   async function setSaleApproval(id, status) {
     setError('');
     await callLegacyApi('setSaleApproval', { id, status });
     setMessage(status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.');
+    await reload();
+  }
+
+  async function deleteDetailedSale(sale) {
+    if (!recentSaleCanBeDeleted(rowDate(sale))) return setError('Можно удалять только продажи не старше 2 дней.');
+    if (!confirm(`Удалить продажу ${sale.master} на ${money(saleTotal(sale))} сум?`)) return;
+    await callLegacyApi('delSale', { id: sale.id });
+    setMessage('Продажа удалена.');
     await reload();
   }
 
@@ -491,10 +510,11 @@ function AdminView({ data, reload, setError }) {
         <SectionHeading label="Период отчёта" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="tiles">
+          <Tile label="Итого" value={money(revenue)} tone="total" />
+          <Tile label="Остаток салону" value={money(salonRemainder)} tone="salon" />
           <Tile label="Наличные" value={money(sales.reduce((sum, sale) => sum + (Number(sale.cash) || 0), 0))} />
           <Tile label="Карта" value={money(sales.reduce((sum, sale) => sum + (Number(sale.card) || 0), 0))} />
           <Tile label="QR Paynet" value={money(sales.reduce((sum, sale) => sum + (Number(sale.qr) || 0), 0))} />
-          <Tile label="Итого" value={money(revenue)} />
           <Tile label="Новые" value={newClients} />
           <Tile label="Постоянные" value={sales.reduce((sum, sale) => sum + clients(sale), 0) - newClients} />
         </div>
@@ -507,18 +527,13 @@ function AdminView({ data, reload, setError }) {
 
       <div className="card wide">
         <h2>По мастерам</h2>
-        {data.activeMasters.map((master) => {
-          const rows = sales.filter((sale) => sale.master === master.name);
-          const masterRevenue = rows.reduce((sum, sale) => sum + saleTotal(sale), 0);
-          const masterFine = fines.filter((fine) => fine.master === master.name).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
-          const pay = Math.max(0, (masterRevenue * Number(master.pct || 40)) / 100 - masterFine);
-          return (
+        <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
+        {masterSummaries.map(({ master, rows, revenue: masterRevenue, pay }) => (
             <div className="row" key={master.name}>
               <div><strong>{master.name}</strong><span>{money(masterRevenue)} сум · {rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</span></div>
               <strong>{money(pay)}</strong>
             </div>
-          );
-        })}
+        ))}
       </div>
 
       <div className="card wide">
@@ -533,6 +548,7 @@ function AdminView({ data, reload, setError }) {
             const amount = saleTotal(sale);
             const masterEarning = amount * Number(master?.pct || 40) / 100;
             const payment = sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet';
+            const canDelete = recentSaleCanBeDeleted(rowDate(sale));
             return (
               <div className="row detailed-sale" key={sale.id}>
                 <div>
@@ -543,6 +559,7 @@ function AdminView({ data, reload, setError }) {
                 <div className="detailed-sale-amounts">
                   <strong>{money(amount)} сум</strong>
                   <span>мастеру: {money(masterEarning)} сум</span>
+                  <button className="del detailed-sale-delete" disabled={!canDelete} title={canDelete ? 'Удалить продажу' : 'Срок удаления 2 дня истёк'} type="button" onClick={() => deleteDetailedSale(sale)}>×</button>
                 </div>
               </div>
             );
@@ -1173,9 +1190,9 @@ function SectionHeading({ label, range }) {
   );
 }
 
-function Tile({ label, value, hint, danger }) {
+function Tile({ label, value, hint, danger, tone }) {
   return (
-    <div className={`tile ${danger ? 'danger' : ''}`}>
+    <div className={`tile ${danger ? 'danger' : ''} ${tone ? `tile-${tone}` : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
       {hint ? <small>{hint}</small> : null}
@@ -1297,7 +1314,6 @@ export default function App() {
   }, [dark, theme]);
 
   async function load() {
-    setIsLoading(true);
     setError('');
 
     try {

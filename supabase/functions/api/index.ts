@@ -213,14 +213,19 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'delSale') {
-      let query = sb.from('sales').delete().eq('id', payload.id);
-      if (!isAdmin) {
-        query = query
-          .eq('master', myMaster)
-          .eq('status', 'pending')
-          .eq('comment', 'owner_approval_required');
+      if (isAdmin) {
+        const existing = await sb.from('sales').select('id,d').eq('id', payload.id).maybeSingle();
+        if (existing.error) return json({ error: existing.error.message }, 500);
+        if (!existing.data) return json({ error: 'sale_not_found' }, 404);
+        if (existing.data.d < tashkentDate(-2)) {
+          return json({ error: 'sale_delete_window_expired' }, 403);
+        }
+        const { error } = await sb.from('sales').delete().eq('id', payload.id);
+        if (error) return json({ error: error.message }, 500);
+        return json({ ok: true });
       }
-      const { error } = await query;
+      const { error } = await sb.from('sales').delete().eq('id', payload.id)
+        .eq('master', myMaster).eq('status', 'pending').eq('comment', 'owner_approval_required');
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
