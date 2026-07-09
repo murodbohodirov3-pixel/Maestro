@@ -8,7 +8,7 @@ import {
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
-const APP_VERSION = 'react-restore-v1';
+const APP_VERSION = 'debts-dashboard-v2';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -1064,47 +1064,109 @@ function RevenueChart({ sales, from, to }) {
 
 function DebtsView({ data, reload, setError }) {
   const [showClosed, setShowClosed] = useState(false);
-  const [allMonths, setAllMonths] = useState(false);
+  const [openPaymentId, setOpenPaymentId] = useState(null);
+  const [historyIds, setHistoryIds] = useState([]);
+  const [message, setMessage] = useState('');
   const [form, setForm] = useState({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
   const [payments, setPayments] = useState({});
-  const activeDebts = data.debts.filter((debt) => !debt.is_closed).sort(newestFirst);
-  const closedDebts = data.debts.filter((debt) => debt.is_closed).sort(newestFirst);
-  const months = [...new Set(data.debtPayments.map((payment) => String(payment.date).slice(0, 7)))].sort().reverse();
-  const visibleMonths = allMonths ? months : months.slice(-4);
+  const myDebts = data.debts.filter((debt) => debt.direction === 'i_owe');
+  const activeDebts = myDebts.filter((debt) => !debt.is_closed).sort(newestFirst);
+  const closedDebts = myDebts.filter((debt) => debt.is_closed).sort(newestFirst);
+  const currentMonth = TODAY.slice(0, 7);
+
+  function shiftDebtMonth(offset) {
+    const [year, month] = currentMonth.split('-').map(Number);
+    const date = new Date(year, month - 1 + offset, 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function debtMonthLabel(value) {
+    const labels = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+    return labels[Number(value.slice(5, 7)) - 1];
+  }
 
   function paid(debtId) {
     return data.debtPayments.filter((payment) => String(payment.debt_id) === String(debtId)).reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
   }
 
+  function currencyPayments(currency, month) {
+    const ids = new Set(myDebts.filter((debt) => debt.currency === currency).map((debt) => String(debt.id)));
+    return data.debtPayments
+      .filter((payment) => ids.has(String(payment.debt_id)) && String(payment.date).startsWith(month))
+      .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+  }
+
+  const dashboard = ['USD', 'UZS'].map((currency) => {
+    const currencyDebts = myDebts.filter((debt) => debt.currency === currency);
+    const remaining = currencyDebts
+      .filter((debt) => !debt.is_closed)
+      .reduce((sum, debt) => sum + Math.max(0, Number(debt.amount) - paid(debt.id)), 0);
+    const previousMonths = [-3, -2, -1].map(shiftDebtMonth);
+    const average = previousMonths.reduce((sum, month) => sum + currencyPayments(currency, month), 0) / 3;
+    const forecast = Math.max(0, remaining - average);
+    const chartMonths = [-5, -4, -3, -2, -1, 0].map(shiftDebtMonth);
+    const points = chartMonths.map((month) => {
+      const started = currencyDebts
+        .filter((debt) => !debt.start_date || String(debt.start_date).slice(0, 7) <= month)
+        .reduce((sum, debt) => sum + (Number(debt.amount) || 0), 0);
+      const debtIds = new Set(currencyDebts.map((debt) => String(debt.id)));
+      const paidThroughMonth = data.debtPayments
+        .filter((payment) => debtIds.has(String(payment.debt_id)) && String(payment.date).slice(0, 7) <= month)
+        .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+      return { month, value: Math.max(0, started - paidThroughMonth) };
+    });
+    points.push({ month: shiftDebtMonth(1), value: forecast, forecast: true });
+    return {
+      currency,
+      remaining,
+      paidThisMonth: currencyPayments(currency, currentMonth),
+      average,
+      forecast,
+      points,
+    };
+  });
+
   async function addDebt(event) {
     event.preventDefault();
     const amount = Number(form.amount);
-    if (!form.counterparty.trim() || !amount) return setError('Введите контрагента и сумму долга.');
+    setError('');
+    setMessage('');
+    if (!form.counterparty.trim() || !amount) return setError('Укажите, кому вы должны, и сумму долга.');
     await callLegacyApi('addDebt', { ...form, amount, start_date: form.start_date || TODAY });
     setForm({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
+    setMessage('Долг добавлен.');
     await reload();
   }
 
   async function addPayment(event, debt) {
     event.preventDefault();
+    setError('');
+    setMessage('');
     const payment = payments[debt.id] || {};
     const amount = Number(payment.amount);
+    const remaining = Math.max(0, Number(debt.amount) - paid(debt.id));
     if (!amount) return setError('Введите сумму платежа.');
+    if (amount > remaining) return setError(`Платёж больше остатка: ${money(remaining)} ${debt.currency}.`);
     await callLegacyApi('addDebtPayment', { debt_id: debt.id, date: payment.date || TODAY, amount });
-    if (amount >= Number(debt.amount) - paid(debt.id) && !debt.is_closed) {
+    if (amount >= remaining && !debt.is_closed) {
       await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: true });
     }
     setPayments((current) => ({ ...current, [debt.id]: { date: TODAY, amount: '' } }));
+    setOpenPaymentId(null);
+    setMessage('Платёж сохранён. Остаток пересчитан.');
     await reload();
   }
 
-  async function deletePayment(id) {
+  async function deletePayment(payment, debt) {
     await callLegacyApi('delDebtPayment', { id });
+    if (debt.is_closed) await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: false });
+    setMessage('Платёж удалён.');
     await reload();
   }
 
-  async function toggleDebt(debt) {
-    await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: !debt.is_closed });
+  async function reopenDebt(debt) {
+    await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: false });
+    setMessage('Долг снова открыт.');
     await reload();
   }
 
@@ -1117,75 +1179,147 @@ function DebtsView({ data, reload, setError }) {
     const debtPayments = data.debtPayments
       .filter((payment) => String(payment.debt_id) === String(debt.id))
       .sort(newestFirst);
-    const remaining = Number(debt.amount) - paid(debt.id);
+    const paidAmount = paid(debt.id);
+    const remaining = Math.max(0, Number(debt.amount) - paidAmount);
+    const progress = Math.min(100, Math.round((paidAmount / Math.max(Number(debt.amount), 1)) * 100));
     const paymentForm = payments[debt.id] || { date: TODAY, amount: '' };
+    const previousMonths = [-3, -2, -1].map(shiftDebtMonth);
+    const average = previousMonths.reduce((sum, month) => (
+      sum + debtPayments
+        .filter((payment) => String(payment.date).startsWith(month))
+        .reduce((monthSum, payment) => monthSum + (Number(payment.amount) || 0), 0)
+    ), 0) / 3;
+    const payoffMonths = average > 0 ? Math.ceil(remaining / average) : null;
+    const showHistory = historyIds.includes(debt.id);
+    const showPayment = openPaymentId === debt.id;
+
     return (
-      <article className="debt-card" key={debt.id}>
-        <div className="row">
-          <div><strong>{debt.counterparty}</strong><span>{debt.direction === 'i_owe' ? 'я должен' : 'мне должны'} · {debt.currency}</span></div>
-          <strong className={remaining > 0 ? 'danger' : 'success'}>{money(remaining)}</strong>
+      <article className={`debt-card debt-person-card ${debt.is_closed ? 'closed' : ''}`} key={debt.id}>
+        <div className="debt-person-heading">
+          <div>
+            <span className="debt-status">{debt.is_closed ? 'Погашен' : 'Активный долг'}</span>
+            <h4>{debt.counterparty}</h4>
+            <small>С {displayDate(debt.start_date)}</small>
+          </div>
+          <div className="debt-person-balance">
+            <span>Осталось</span>
+            <strong>{debt.currency === 'USD' ? usdMoney(remaining) : `${money(remaining)} сум`}</strong>
+          </div>
         </div>
-        <Rows rows={debtPayments} empty="Платежей нет." render={(payment) => (
-          <div className="row compact" key={payment.id}><span>{payment.date}</span><strong>{money(payment.amount)}</strong><button className="del" type="button" onClick={() => deletePayment(payment.id)}>×</button></div>
-        )} />
-        <form className="inline-form" onSubmit={(event) => addPayment(event, debt)}>
-          <input type="date" value={paymentForm.date || TODAY} onChange={(event) => setPayments({ ...payments, [debt.id]: { ...paymentForm, date: event.target.value } })} />
-          <MoneyInput placeholder="Сумма" value={paymentForm.amount || ''} onChange={(amount) => setPayments({ ...payments, [debt.id]: { ...paymentForm, amount } })} />
-          <button className="btn ghost" type="submit">Платёж</button>
-        </form>
-        <div className="actions">
-          <button className="btn ghost" type="button" onClick={() => toggleDebt(debt)}>{debt.is_closed ? 'Открыть' : 'Закрыть'}</button>
-          {debt.is_closed ? <button className="btn danger-btn" type="button" onClick={() => deleteDebt(debt.id)}>Удалить</button> : null}
+
+        <div className="debt-progress-track"><span style={{ width: `${progress}%` }} /></div>
+        <div className="debt-progress-meta">
+          <span>Погашено {money(paidAmount)} из {money(debt.amount)} {debt.currency}</span>
+          <strong>{progress}%</strong>
+        </div>
+
+        <div className="debt-person-stats">
+          <div><span>Средний платёж</span><strong>{money(average)} {debt.currency} / мес.</strong></div>
+          <div><span>Последний платёж</span><strong>{debtPayments[0] ? `${money(debtPayments[0].amount)} · ${displayDate(debtPayments[0].date)}` : 'Пока нет'}</strong></div>
+          <div><span>До погашения</span><strong>{debt.is_closed ? 'Погашен' : payoffMonths ? `≈ ${payoffMonths} мес.` : 'Нужны платежи'}</strong></div>
+        </div>
+
+        {showPayment ? (
+          <form className="debt-payment-form" onSubmit={(event) => addPayment(event, debt)}>
+            <label>Дата<input type="date" value={paymentForm.date || TODAY} onChange={(event) => setPayments({ ...payments, [debt.id]: { ...paymentForm, date: event.target.value } })} /></label>
+            <label>Сумма<MoneyInput placeholder="Сумма платежа" value={paymentForm.amount || ''} onChange={(amount) => setPayments({ ...payments, [debt.id]: { ...paymentForm, amount } })} /></label>
+            <button className="btn" type="submit">Сохранить платёж</button>
+          </form>
+        ) : null}
+
+        {showHistory ? (
+          <div className="debt-payment-history">
+            {debtPayments.length ? debtPayments.map((payment) => (
+              <div className="debt-payment-row" key={payment.id}>
+                <div><strong>{money(payment.amount)} {debt.currency}</strong><span>Погашение долга</span></div>
+                <time>{displayDate(payment.date)}</time>
+                <button className="debt-delete-payment" type="button" onClick={() => deletePayment(payment, debt)}>×</button>
+              </div>
+            )) : <p className="hint">Платежей пока нет.</p>}
+          </div>
+        ) : null}
+
+        <div className="debt-card-actions">
+          {!debt.is_closed ? <button className="btn" type="button" onClick={() => setOpenPaymentId(showPayment ? null : debt.id)}>{showPayment ? 'Отменить' : 'Внести платёж'}</button> : null}
+          <button className="btn ghost" type="button" onClick={() => setHistoryIds((current) => showHistory ? current.filter((id) => id !== debt.id) : [...current, debt.id])}>{showHistory ? 'Скрыть историю' : `История (${debtPayments.length})`}</button>
+          {debt.is_closed ? <button className="btn ghost" type="button" onClick={() => reopenDebt(debt)}>Открыть снова</button> : null}
+          {debt.is_closed && !debtPayments.length ? <button className="btn danger-btn" type="button" onClick={() => deleteDebt(debt.id)}>Удалить</button> : null}
         </div>
       </article>
     );
   };
 
   return (
-    <section className="view-grid">
-      <div className="card wide">
-        <h2>Долги по месяцам</h2>
-        <div className="seg">
-          <button className={showClosed ? 'on' : ''} type="button" onClick={() => setShowClosed(!showClosed)}>Погашенные</button>
-          <button className={allMonths ? 'on' : ''} type="button" onClick={() => setAllMonths(!allMonths)}>Все месяцы</button>
-        </div>
-        <div className="table-scroll">
-          <table>
-            <thead><tr><th>Кому</th>{visibleMonths.map((month) => <th key={month}>{month}</th>)}<th>Остаток</th></tr></thead>
-            <tbody>
-              {data.debts.filter((debt) => showClosed || !debt.is_closed).map((debt) => (
-                <tr key={debt.id}>
-                  <td>{debt.counterparty}</td>
-                  {visibleMonths.map((month) => <td key={month}>{money(data.debtPayments.filter((payment) => String(payment.debt_id) === String(debt.id) && String(payment.date).startsWith(month)).reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0))}</td>)}
-                  <td>{money(Number(debt.amount) - paid(debt.id))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <section className="view-grid debt-dashboard">
+      <div className="card wide debt-page-heading">
+        <div>
+          <p className="debt-eyebrow">Мои обязательства</p>
+          <h2>Долги</h2>
+          <p>Остаток, история погашений и прогноз на следующий месяц.</p>
         </div>
       </div>
 
-      <form className="card" onSubmit={addDebt}>
-        <h2>Добавить долг</h2>
-        <input placeholder="Кто / кому" value={form.counterparty} onChange={(event) => setForm({ ...form, counterparty: event.target.value })} />
-        <select value={form.direction} onChange={(event) => setForm({ ...form, direction: event.target.value })}>
-          <option value="i_owe">Я должен</option>
-          <option value="owed_to_me">Мне должны</option>
-        </select>
-        <select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}>
-          <option value="UZS">UZS</option>
-          <option value="USD">USD</option>
-        </select>
-        <MoneyInput placeholder="Сумма" value={form.amount} onChange={(amount) => setForm({ ...form, amount })} />
-        <input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} />
+      {message ? <div className="notice success">{message}</div> : null}
+
+      <div className="debt-summary-grid wide">
+        {dashboard.map((item) => (
+          <article className="debt-summary-card" key={item.currency}>
+            <span>Осталось выплатить · {item.currency}</span>
+            <strong>{item.currency === 'USD' ? usdMoney(item.remaining) : `${money(item.remaining)} сум`}</strong>
+            <div>
+              <p><span>Погашено в этом месяце</span><b>{money(item.paidThisMonth)} {item.currency}</b></p>
+              <p><span>Остаток через месяц</span><b>{money(item.forecast)} {item.currency}</b></p>
+            </div>
+            <small>Прогноз по среднему платежу за 3 месяца: {money(item.average)} {item.currency}</small>
+          </article>
+        ))}
+      </div>
+
+      <div className="card wide">
+        <div className="debt-section-heading">
+          <div><h2>Как уменьшается долг</h2><p>Шесть месяцев истории и следующий месяц по прогнозу.</p></div>
+        </div>
+        <div className="debt-charts">
+          {dashboard.map((item) => {
+            const maxValue = Math.max(...item.points.map((point) => point.value), 1);
+            return (
+              <article className="debt-chart-card" key={item.currency}>
+                <div className="debt-chart-heading">
+                  <div><span>Остаток · {item.currency}</span><strong>{money(item.remaining)} {item.currency}</strong></div>
+                  <small>последний — прогноз</small>
+                </div>
+                <div className="debt-mini-bars">
+                  {item.points.map((point) => (
+                    <div className={point.forecast ? 'forecast' : ''} key={point.month}>
+                      <span title={`${money(point.value)} ${item.currency}`} style={{ height: `${Math.max(5, (point.value / maxValue) * 100)}%` }} />
+                      <small>{debtMonthLabel(point.month)}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card wide">
+        <div className="debt-section-heading">
+          <div><h2>Кому я должен</h2><p>{activeDebts.length} активных · {closedDebts.length} погашенных</p></div>
+          <button className={`btn ghost ${showClosed ? 'on' : ''}`} type="button" onClick={() => setShowClosed(!showClosed)}>{showClosed ? 'Скрыть погашенные' : 'Показать погашенные'}</button>
+        </div>
+        <div className="debt-card-list">
+          <Rows rows={showClosed ? [...activeDebts, ...closedDebts] : activeDebts} empty="Активных долгов нет." render={renderDebt} />
+        </div>
+      </div>
+
+      <form className="card wide debt-new-form" onSubmit={addDebt}>
+        <div className="debt-section-heading"><div><h2>Добавить новый долг</h2><p>Выплаты будут автоматически уменьшать остаток.</p></div></div>
+        <label>Кому я должен<input placeholder="Имя или организация" value={form.counterparty} onChange={(event) => setForm({ ...form, counterparty: event.target.value })} /></label>
+        <label>Валюта<select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}><option value="UZS">UZS — сум</option><option value="USD">USD — доллар</option></select></label>
+        <label>Сумма<MoneyInput placeholder="Сумма долга" value={form.amount} onChange={(amount) => setForm({ ...form, amount })} /></label>
+        <label>Дата начала<input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
         <button className="btn" type="submit">Добавить долг</button>
       </form>
-
-      <div className="card wide">
-        <h2>Активные долги</h2>
-        <Rows rows={activeDebts} empty="Долгов пока нет." render={renderDebt} />
-        {showClosed ? <><h2>Погашенные</h2><Rows rows={closedDebts} empty="Погашенных долгов нет." render={renderDebt} /></> : null}
-      </div>
     </section>
   );
 }

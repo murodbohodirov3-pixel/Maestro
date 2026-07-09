@@ -972,6 +972,41 @@ td:first-child {
   font-size: 11px;
 }
 
+.debt-mini-bars {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: end;
+  gap: 7px;
+  height: 160px;
+  margin-top: 12px;
+}
+
+.debt-mini-bars > div {
+  display: grid;
+  grid-template-rows: 128px 20px;
+  align-items: end;
+  gap: 5px;
+  height: 100%;
+  text-align: center;
+}
+
+.debt-mini-bars > div > span {
+  display: block;
+  min-height: 5px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, var(--brass), color-mix(in srgb, var(--brass) 65%, var(--cash)));
+}
+
+.debt-mini-bars > div.forecast > span {
+  border: 2px dashed var(--brass);
+  background: color-mix(in srgb, var(--brass) 12%, var(--surface));
+}
+
+.debt-mini-bars small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .debt-card-list {
   display: grid;
   gap: 10px;

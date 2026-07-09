@@ -1,4 +1,4 @@
-const CACHE_NAME = 'maestro-vite-v1';
+const CACHE_NAME = 'maestro-vite-v2';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
