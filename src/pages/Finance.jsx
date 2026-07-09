@@ -20,6 +20,7 @@ import {
   masterPayoutSum,
   masterRevenue,
   profit,
+  saleClientsCount,
   salonCut,
   totalCard,
   totalCash,
@@ -41,10 +42,6 @@ function todayLocalDate() {
 
 function expenseKind(expense) {
   return expense.category || expense.section || '—';
-}
-
-function saleClients(sale) {
-  return Number(sale.clients_count ?? sale.cl ?? 1) || 1;
 }
 
 function getFinanceRange(period, customFrom, customTo) {
@@ -123,7 +120,7 @@ export default function Finance({ currentUser }) {
       qr: totalQr(filteredSales),
       fines: totalFines(filteredFines),
       salesCount: filteredSales.length,
-      clientsCount: filteredSales.reduce((sum, sale) => sum + saleClients(sale), 0),
+      clientsCount: filteredSales.reduce((sum, sale) => sum + saleClientsCount(sale), 0),
       payout,
       salonCut: cut,
       ishxonaExpenses: ishxona,

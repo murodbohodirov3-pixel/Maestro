@@ -6,6 +6,7 @@ import {
   getTelegramFirstName,
   needsTelegramLogin,
 } from './lib/legacyApi.js';
+import { saleClientsCount } from './utils/calculations.js';
 
 const APP_VERSION = 'react-restore-v1';
 const TODAY = localDate();
@@ -62,7 +63,7 @@ function rowDate(row, primary = 'd') {
 }
 
 function clients(sale) {
-  return Number(sale.cl ?? sale.clients_count ?? 1) || 1;
+  return saleClientsCount(sale);
 }
 
 function displayTime(value) {

@@ -22,6 +22,7 @@ import {
   masterNetPayFromRevenue,
   masterNewClientsCount,
   masterOldClientsCount,
+  saleClientsCount,
 } from '../utils/calculations.js';
 
 function money(value) {
@@ -73,10 +74,6 @@ function attendanceStatus(arrivedAt, shiftStart) {
 
 function saleAmount(row) {
   return (Number(row.cash) || 0) + (Number(row.card) || 0) + (Number(row.qr) || 0);
-}
-
-function saleClients(row) {
-  return row.clients_count ?? row.cl ?? 0;
 }
 
 function getMasterRange(period, customFrom, customTo) {
@@ -603,7 +600,7 @@ export default function Master({ currentUser }) {
                         <td>{money(sale.card)}</td>
                         <td>{money(sale.qr)}</td>
                         <td>{money(saleAmount(sale))}</td>
-                        <td>{saleClients(sale)}</td>
+                        <td>{saleClientsCount(sale)}</td>
                         <td>{sale.is_new_client ? 'да' : 'нет'}</td>
                         <td>{sale.status || '—'}</td>
                         <td>
@@ -723,7 +720,7 @@ export default function Master({ currentUser }) {
                         <td>{money(sale.card)}</td>
                         <td>{money(sale.qr)}</td>
                         <td>{money(saleAmount(sale))}</td>
-                        <td>{saleClients(sale)}</td>
+                        <td>{saleClientsCount(sale)}</td>
                         <td>{sale.status || '—'}</td>
                       </tr>
                     ))}

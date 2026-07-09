@@ -246,7 +246,10 @@ export async function createSaleForMaster({
   const normalizedCash = toMoneyNumber(cash);
   const normalizedCard = toMoneyNumber(card);
   const normalizedQr = toMoneyNumber(qr);
-  const normalizedClientsCount = Math.max(1, Number(clientsCount) || 1);
+  const parsedClientsCount = Number(clientsCount);
+  const normalizedClientsCount = Number.isFinite(parsedClientsCount)
+    ? Math.max(0, Math.trunc(parsedClientsCount))
+    : 1;
   const saleDate = todayLocalDate();
 
   if (normalizedCash + normalizedCard + normalizedQr <= 0) {

@@ -13,7 +13,12 @@ import {
   updateSaleStatus,
   updateSettings,
 } from '../lib/api.js';
-import { getCurrentMonthRange, getTodayRange, isDateInRange } from '../utils/calculations.js';
+import {
+  getCurrentMonthRange,
+  getTodayRange,
+  isDateInRange,
+  saleClientsCount,
+} from '../utils/calculations.js';
 
 function money(value) {
   return Math.round(Number(value) || 0).toLocaleString('ru-RU');
@@ -31,10 +36,6 @@ function saleAmount(row) {
 
 function rowDate(row) {
   return row.sale_date || row.d || '—';
-}
-
-function clientsCount(row) {
-  return row.clients_count ?? row.cl ?? 0;
 }
 
 function formatDateTime(value) {
@@ -651,7 +652,7 @@ export default function Admin({ currentUser }) {
                   </div>
                   <div>
                     <span>Клиенты</span>
-                    <strong>{clientsCount(sale)}</strong>
+                    <strong>{saleClientsCount(sale)}</strong>
                   </div>
                   <div>
                     <span>Новый клиент</span>

@@ -37,26 +37,27 @@ export function masterApprovedRevenue(sales, masterId) {
   );
 }
 
-function saleClientsValue(sale) {
-  return Number(sale.clients_count ?? sale.cl ?? 1) || 1;
+export function saleClientsCount(sale) {
+  const value = Number(sale.clients_count ?? sale.cl ?? 1);
+  return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 1;
 }
 
 export function masterClientsCount(sales, masterId) {
   return sales
     .filter((sale) => String(sale.master_id) === String(masterId))
-    .reduce((sum, sale) => sum + saleClientsValue(sale), 0);
+    .reduce((sum, sale) => sum + saleClientsCount(sale), 0);
 }
 
 export function masterNewClientsCount(sales, masterId) {
   return sales
     .filter((sale) => String(sale.master_id) === String(masterId) && sale.is_new_client === true)
-    .reduce((sum, sale) => sum + saleClientsValue(sale), 0);
+    .reduce((sum, sale) => sum + saleClientsCount(sale), 0);
 }
 
 export function masterOldClientsCount(sales, masterId) {
   return sales
     .filter((sale) => String(sale.master_id) === String(masterId) && sale.is_new_client === false)
-    .reduce((sum, sale) => sum + saleClientsValue(sale), 0);
+    .reduce((sum, sale) => sum + saleClientsCount(sale), 0);
 }
 
 export function masterGrossPay(revenue, pct) {
