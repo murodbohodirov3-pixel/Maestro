@@ -436,17 +436,25 @@ small {
 
 .pay-type.cash.on {
   border-color: var(--cash);
+  background: #edf8f2;
   color: var(--cash);
 }
 
 .pay-type.card.on {
   border-color: var(--card);
+  background: #eef5ff;
   color: var(--card);
 }
 
 .pay-type.qr.on {
   border-color: var(--qr);
+  background: #f6effc;
   color: var(--qr);
+}
+
+.pay-type:not(.on):hover {
+  border-color: #d9d1c4;
+  background: #fffdf9;
 }
 
 .chart {

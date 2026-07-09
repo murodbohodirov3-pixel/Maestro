@@ -180,7 +180,7 @@ function emptyState() {
 
 function MasterView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
-  const [payType, setPayType] = useState('cash');
+  const [payType, setPayType] = useState(null);
   const [amount, setAmount] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [isNewClient, setIsNewClient] = useState(null);
@@ -215,6 +215,7 @@ function MasterView({ data, reload, setError }) {
     setMessage('');
 
     const numericAmount = Number(amount);
+    if (!payType) return setError('Выберите способ оплаты.');
     if (!numericAmount || numericAmount <= 0) return setError('Введите сумму продажи.');
     if (!masterName) return setError('Сначала выберите мастера.');
     if (isNewClient == null) return setError('Отметьте, клиент новый или постоянный.');
@@ -231,6 +232,7 @@ function MasterView({ data, reload, setError }) {
     };
 
     await callLegacyApi('addSale', payload);
+    setPayType(null);
     setAmount('');
     setClientCount(1);
     setIsNewClient(null);
@@ -326,12 +328,24 @@ function MasterView({ data, reload, setError }) {
             ['card', 'Карта'],
             ['qr', 'QR Paynet'],
           ].map(([value, label]) => (
-            <button className={`pay-type ${value} ${payType === value ? 'on' : ''}`} key={value} type="button" onClick={() => setPayType(value)}>
+            <button
+              aria-pressed={payType === value}
+              className={`pay-type ${value} ${payType === value ? 'on' : ''}`}
+              key={value}
+              type="button"
+              onClick={() => setPayType(value)}
+            >
               <span className="payment-dot" />{label}
             </button>
           ))}
         </div>
-        <input inputMode="numeric" type="number" placeholder="например, 150000" value={amount} onChange={(event) => setAmount(event.target.value)} />
+        <input
+          inputMode="numeric"
+          type="text"
+          placeholder="например, 150 000"
+          value={amount ? Number(amount).toLocaleString('ru-RU') : ''}
+          onChange={(event) => setAmount(event.target.value.replace(/\D/g, ''))}
+        />
         <div className="counter">
           <button type="button" onClick={() => setClientCount(Math.max(0, clientCount - 1))}>-</button>
           <strong>{clientCount}</strong>
