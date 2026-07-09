@@ -527,13 +527,13 @@ function AdminView({ data, reload, setError }) {
 
       <div className="card wide">
         <h2>По мастерам</h2>
-        <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
         {masterSummaries.map(({ master, rows, revenue: masterRevenue, pay }) => (
-            <div className="row" key={master.name}>
-              <div><strong>{master.name}</strong><span>{money(masterRevenue)} сум · {rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</span></div>
-              <strong>{money(pay)}</strong>
-            </div>
+          <div className="row" key={master.name}>
+            <div><strong>{master.name}</strong><span>{money(masterRevenue)} сум · {rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</span></div>
+            <strong>{money(pay)}</strong>
+          </div>
         ))}
+        <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
       </div>
 
       <div className="card wide">

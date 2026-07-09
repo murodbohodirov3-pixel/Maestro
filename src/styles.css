@@ -524,7 +524,7 @@ small {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-top: 8px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
