@@ -86,6 +86,18 @@ function displayDateTime(value) {
   });
 }
 
+function displayDate(value) {
+  if (!value) return 'дата не выбрана';
+  const [year, month, day] = String(value).split('-');
+  return year && month && day ? `${day}.${month}.${year}` : String(value);
+}
+
+function displayRange(range) {
+  if (!range?.from && !range?.to) return 'период не выбран';
+  if (range.from === range.to || !range.to) return displayDate(range.from);
+  return `${displayDate(range.from)}–${displayDate(range.to)}`;
+}
+
 function clientType(sale) {
   if (sale.is_new_client === true) return 'новый';
   if (sale.is_new_client === false) return 'постоянный';
@@ -301,7 +313,7 @@ function MasterView({ data, reload, setError }) {
       ) : null}
 
       <div className="card">
-        <h2>Смена сегодня</h2>
+        <SectionHeading label="Смена сегодня" range={{ from: TODAY, to: TODAY }} />
         {attendanceToday ? (
           <>
             <p className="big-line">Пришёл в {displayTime(attendanceToday.arrived || attendanceToday.arrived_at)}</p>
@@ -360,7 +372,7 @@ function MasterView({ data, reload, setError }) {
       </form>
 
       <div className="card">
-        <h2>Сегодня</h2>
+        <SectionHeading label="Сегодня" range={{ from: TODAY, to: TODAY }} />
         <Rows
           rows={todaySales}
           empty="Пока нет записей за сегодня."
@@ -382,7 +394,7 @@ function MasterView({ data, reload, setError }) {
       </div>
 
       <div className="card wide">
-        <h2>Мой заработок</h2>
+        <SectionHeading label="Мой заработок" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(pay)} <small>сум к выплате</small></div>
         <div className="tiles">
@@ -498,7 +510,7 @@ function AdminView({ data, reload, setError }) {
       </div>
 
       <div className="card wide">
-        <h2>Период отчёта</h2>
+        <SectionHeading label="Период отчёта" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="tiles">
           <Tile label="Наличные" value={money(sales.reduce((sum, sale) => sum + (Number(sale.cash) || 0), 0))} />
@@ -516,7 +528,7 @@ function AdminView({ data, reload, setError }) {
       </div>
 
       <div className="card wide">
-        <h2>Посещаемость сегодня</h2>
+        <SectionHeading label="Посещаемость сегодня" range={{ from: TODAY, to: TODAY }} />
         {data.activeMasters.map((master) => {
           const item = data.attendance.find((row) => row.master === master.name && rowDate(row) === TODAY);
           return (
@@ -646,7 +658,7 @@ function FinanceView({ data, reload, setError }) {
   return (
     <section className="view-grid">
       <div className="card wide">
-        <h2>Финансы</h2>
+        <SectionHeading label="Финансы" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(salon - ishxonaExpenses)} <small>сум прибыль</small></div>
         <div className="tiles">
@@ -922,6 +934,15 @@ function PeriodPicker({ period, setPeriod, customFrom, setCustomFrom, customTo, 
         </div>
       ) : null}
     </>
+  );
+}
+
+function SectionHeading({ label, range }) {
+  return (
+    <div className="section-heading">
+      <h2>{label}</h2>
+      <span className="date-badge">{displayRange(range)}</span>
+    </div>
   );
 }
 
