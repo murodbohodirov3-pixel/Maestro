@@ -42,6 +42,15 @@ function money(value) {
   return Math.round(Number(value) || 0).toLocaleString('ru-RU');
 }
 
+function digitsOnly(value) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+function formatDigits(value) {
+  const digits = digitsOnly(value);
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
 function saleTotal(sale) {
   return (Number(sale.cash) || 0) + (Number(sale.card) || 0) + (Number(sale.qr) || 0);
 }
@@ -120,6 +129,12 @@ function minutesLate(arrived, shiftStart = '09:00') {
   return Math.max(0, arrivedMinutes - shiftMinutes);
 }
 
+function recentFineCanBeDeleted(fineDate) {
+  const cutoff = new Date(`${TODAY}T12:00:00`);
+  cutoff.setDate(cutoff.getDate() - 7);
+  return Boolean(fineDate) && fineDate >= localDate(cutoff);
+}
+
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const radius = 6371000;
   const toRad = (value) => (value * Math.PI) / 180;
@@ -189,6 +204,18 @@ function normalizeData(data) {
 
 function emptyState() {
   return normalizeData({});
+}
+
+function MoneyInput({ value, onChange, ...props }) {
+  return (
+    <input
+      {...props}
+      inputMode="numeric"
+      type="text"
+      value={formatDigits(value)}
+      onChange={(event) => onChange(digitsOnly(event.target.value))}
+    />
+  );
 }
 
 function MasterView({ data, reload, setError }) {
@@ -352,12 +379,10 @@ function MasterView({ data, reload, setError }) {
             </button>
           ))}
         </div>
-        <input
-          inputMode="numeric"
-          type="text"
+        <MoneyInput
           placeholder="например, 150 000"
-          value={amount ? Number(amount).toLocaleString('ru-RU') : ''}
-          onChange={(event) => setAmount(event.target.value.replace(/\D/g, ''))}
+          value={amount}
+          onChange={setAmount}
         />
         <div className="counter">
           <button type="button" onClick={() => setClientCount(Math.max(0, clientCount - 1))}>-</button>
@@ -416,63 +441,15 @@ function AdminView({ data, reload, setError }) {
   const [period, setPeriod] = useState('week');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [fineForm, setFineForm] = useState({ master: data.activeMasters[0]?.name || '', d: TODAY, amount: '' });
-  const [settings, setSettings] = useState({
-    shift_start: data.settings.shift_start || '09:00',
-    salon_lat: data.settings.salon_lat || '',
-    salon_lng: data.settings.salon_lng || '',
-    salon_radius: data.settings.salon_radius || 100,
-  });
   const [message, setMessage] = useState('');
   const range = getRange(period, customFrom, customTo, data.sales);
   const pendingSales = data.sales.filter(isPendingOwnerApproval);
   const sales = data.sales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
-  const attendance = data.attendance.filter((item) => inRange(rowDate(item), range.from, range.to));
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
-
-  async function saveSettings(event) {
-    event.preventDefault();
-    await callLegacyApi('setSettings', {
-      shift_start: settings.shift_start,
-      salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
-      salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
-      salon_radius: Number(settings.salon_radius) || 100,
-    });
-    setMessage('Настройки сохранены.');
-    await reload();
-  }
-
-  async function useMyLocation() {
-    if (!navigator.geolocation) return setError('Геолокация не поддерживается.');
-    const position = await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000 });
-    });
-    setSettings((current) => ({
-      ...current,
-      salon_lat: position.coords.latitude,
-      salon_lng: position.coords.longitude,
-    }));
-  }
-
-  async function saveAttendance(master, arrived) {
-    if (arrived) await callLegacyApi('setAttendance', { master, d: TODAY, arrived });
-    else await callLegacyApi('delAttendance', { master, d: TODAY });
-    await reload();
-  }
-
-  async function addFine(event) {
-    event.preventDefault();
-    const amount = Number(fineForm.amount);
-    if (!amount || amount <= 0) return setError('Введите сумму штрафа.');
-    await callLegacyApi('addFine', { master: fineForm.master, d: fineForm.d || TODAY, amount });
-    setFineForm((current) => ({ ...current, amount: '' }));
-    setMessage('Штраф добавлен.');
-    await reload();
-  }
 
   async function setSaleApproval(id, status) {
     setError('');
@@ -529,55 +506,6 @@ function AdminView({ data, reload, setError }) {
       </div>
 
       <div className="card wide">
-        <SectionHeading label="Посещаемость сегодня" range={{ from: TODAY, to: TODAY }} />
-        {data.activeMasters.map((master) => {
-          const item = data.attendance.find((row) => row.master === master.name && rowDate(row) === TODAY);
-          return (
-            <div className="row" key={master.name}>
-              <div>
-                <strong>{master.name}</strong>
-                <span>{item ? `пришёл ${displayTime(item.arrived || item.arrived_at)}` : 'нет отметки'}</span>
-              </div>
-              <input
-                type="time"
-                defaultValue={displayTime(item?.arrived || item?.arrived_at)}
-                onBlur={(event) => saveAttendance(master.name, event.target.value)}
-              />
-            </div>
-          );
-        })}
-      </div>
-
-      <details className="card collapsible-card">
-        <summary>
-          <span>Настройки смены и салона</span>
-          <span className="summary-action">Открыть</span>
-        </summary>
-        <form className="collapsible-content" onSubmit={saveSettings}>
-          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
-          <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
-          <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
-          <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
-          <button className="btn ghost" type="button" onClick={useMyLocation}>Задать по моему положению</button>
-          <button className="btn" type="submit">Сохранить настройки</button>
-          {message ? <p className="success">{message}</p> : null}
-        </form>
-      </details>
-
-      <form className="card" onSubmit={addFine}>
-        <h2>Штрафы</h2>
-        <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
-          {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
-        </select>
-        <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
-        <input inputMode="numeric" type="number" placeholder="50000" value={fineForm.amount} onChange={(event) => setFineForm({ ...fineForm, amount: event.target.value })} />
-        <button className="btn" type="submit">Добавить штраф</button>
-        <Rows rows={fines} empty="Штрафов за период нет." render={(fine) => (
-          <div className="row" key={fine.id}><strong>{fine.master}</strong><span>{rowDate(fine)} · -{money(fine.amount)}</span></div>
-        )} />
-      </form>
-
-      <div className="card wide">
         <h2>По мастерам</h2>
         {data.activeMasters.map((master) => {
           const rows = sales.filter((sale) => sale.master === master.name);
@@ -592,6 +520,226 @@ function AdminView({ data, reload, setError }) {
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function AttendanceView({ data, reload, setError }) {
+  const [period, setPeriod] = useState('week');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [fineForm, setFineForm] = useState({
+    master: data.activeMasters[0]?.name || '',
+    d: TODAY,
+    amount: '',
+  });
+  const [settings, setSettings] = useState({
+    shift_start: data.settings.shift_start || '09:00',
+    salon_lat: data.settings.salon_lat || '',
+    salon_lng: data.settings.salon_lng || '',
+    salon_radius: data.settings.salon_radius || 100,
+  });
+  const [message, setMessage] = useState('');
+  const [savingFineKey, setSavingFineKey] = useState('');
+  const range = getRange(period, customFrom, customTo, data.attendance);
+  const filteredAttendance = data.attendance
+    .filter((item) => inRange(rowDate(item), range.from, range.to))
+    .sort((left, right) => {
+      const dateOrder = rowDate(right).localeCompare(rowDate(left));
+      return dateOrder || String(left.master).localeCompare(String(right.master), 'ru');
+    });
+  const attendanceRows = period === 'day'
+    ? data.activeMasters.map((master) => (
+        data.attendance.find((item) => item.master === master.name && rowDate(item) === TODAY)
+        || { master: master.name, d: TODAY, arrived: '' }
+      ))
+    : filteredAttendance;
+  const filteredFines = data.fines
+    .filter((fine) => inRange(rowDate(fine), range.from, range.to))
+    .sort((left, right) => rowDate(right).localeCompare(rowDate(left)));
+  const shiftStart = settings.shift_start || '09:00';
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    setError('');
+    await callLegacyApi('setSettings', {
+      shift_start: settings.shift_start,
+      salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
+      salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
+      salon_radius: Number(settings.salon_radius) || 100,
+    });
+    setMessage('Настройки сохранены.');
+    await reload();
+  }
+
+  async function useMyLocation() {
+    if (!navigator.geolocation) return setError('Геолокация не поддерживается.');
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000 });
+      });
+      setSettings((current) => ({
+        ...current,
+        salon_lat: position.coords.latitude,
+        salon_lng: position.coords.longitude,
+      }));
+    } catch {
+      setError('Не удалось получить геолокацию.');
+    }
+  }
+
+  async function saveAttendance(master, date, arrived) {
+    setError('');
+    if (arrived) await callLegacyApi('setAttendance', { master, d: date, arrived });
+    else await callLegacyApi('delAttendance', { master, d: date });
+    await reload();
+  }
+
+  async function createFine(master, date, amount) {
+    setError('');
+    setMessage('');
+    await callLegacyApi('addFine', { master, d: date || TODAY, amount });
+    setMessage(`Штраф ${money(amount)} сум выставлен: ${master}.`);
+    await reload();
+  }
+
+  async function addFine(event) {
+    event.preventDefault();
+    const amount = Number(fineForm.amount);
+    if (!amount || amount <= 0) return setError('Введите сумму штрафа.');
+    await createFine(fineForm.master, fineForm.d, amount);
+    setFineForm((current) => ({ ...current, amount: '' }));
+  }
+
+  async function addLateFine(item) {
+    const key = `${item.master}-${rowDate(item)}`;
+    setSavingFineKey(key);
+    try {
+      await createFine(item.master, rowDate(item), 50000);
+    } finally {
+      setSavingFineKey('');
+    }
+  }
+
+  async function deleteFine(fine) {
+    if (!recentFineCanBeDeleted(rowDate(fine))) {
+      setError('Можно удалять только штрафы не старше 7 дней.');
+      return;
+    }
+    if (!confirm(`Удалить штраф ${fine.master} на ${money(fine.amount)} сум?`)) return;
+    setError('');
+    await callLegacyApi('delFine', { id: fine.id });
+    setMessage('Штраф удалён.');
+    await reload();
+  }
+
+  return (
+    <section className="view-grid">
+      <div className="card wide">
+        <SectionHeading label="Посещаемость" range={range} />
+        <PeriodPicker
+          period={period}
+          setPeriod={setPeriod}
+          customFrom={customFrom}
+          setCustomFrom={setCustomFrom}
+          customTo={customTo}
+          setCustomTo={setCustomTo}
+        />
+        <div className="attendance-list">
+          {attendanceRows.length ? attendanceRows.map((item) => {
+            const arrived = displayTime(item.arrived || item.arrived_at);
+            const lateBy = arrived ? minutesLate(arrived, shiftStart) : 0;
+            const status = !arrived ? 'missing' : lateBy > 0 ? 'late' : 'on-time';
+            const fineKey = `${item.master}-${rowDate(item)}`;
+            const quickFineExists = data.fines.some((fine) => (
+              fine.master === item.master
+              && rowDate(fine) === rowDate(item)
+              && Number(fine.amount) === 50000
+            ));
+
+            return (
+              <div className={`attendance-row ${status}`} key={`${item.master}-${rowDate(item)}`}>
+                <div className="attendance-person">
+                  <strong>{item.master}</strong>
+                  <span>{displayDate(rowDate(item))}</span>
+                  <span>
+                    {!arrived
+                      ? 'нет отметки'
+                      : lateBy > 0
+                        ? `опоздал на ${lateBy} мин`
+                        : 'пришёл вовремя'}
+                  </span>
+                </div>
+                <div className="attendance-actions">
+                  <input
+                    aria-label={`Время прихода ${item.master} ${displayDate(rowDate(item))}`}
+                    type="time"
+                    defaultValue={arrived}
+                    onBlur={(event) => saveAttendance(item.master, rowDate(item), event.target.value)}
+                  />
+                  {status === 'late' ? (
+                    <button
+                      className="fine-button"
+                      disabled={quickFineExists || savingFineKey === fineKey}
+                      title="Автоматически выставить штраф 50 000 сум"
+                      type="button"
+                      onClick={() => addLateFine(item)}
+                    >
+                      {quickFineExists ? 'Штраф выставлен' : savingFineKey === fineKey ? 'Сохраняю…' : 'Штраф'}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          }) : <p className="hint">За выбранный период отметок нет.</p>}
+        </div>
+      </div>
+
+      <details className="card collapsible-card">
+        <summary>
+          <span>Настройки смены и салона</span>
+          <span className="summary-action">Открыть</span>
+        </summary>
+        <form className="collapsible-content" onSubmit={saveSettings}>
+          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
+          <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
+          <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
+          <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
+          <button className="btn ghost" type="button" onClick={useMyLocation}>Задать по моему положению</button>
+          <button className="btn" type="submit">Сохранить настройки</button>
+        </form>
+      </details>
+
+      <form className="card" onSubmit={addFine}>
+        <h2>Штрафы</h2>
+        <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
+          {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
+        </select>
+        <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
+        <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
+        <button className="btn" type="submit">Добавить штраф</button>
+        <Rows rows={filteredFines} empty="Штрафов за период нет." render={(fine) => {
+          const canDelete = recentFineCanBeDeleted(rowDate(fine));
+          return (
+            <div className="row fine-row" key={fine.id}>
+              <div>
+                <strong>{fine.master}</strong>
+                <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
+              </div>
+              <button
+                className="del"
+                disabled={!canDelete}
+                title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
+                type="button"
+                onClick={() => deleteFine(fine)}
+              >
+                ×
+              </button>
+            </div>
+          );
+        }} />
+        {message ? <p className="success">{message}</p> : null}
+      </form>
     </section>
   );
 }
@@ -718,8 +866,8 @@ function FinanceView({ data, reload, setError }) {
         </select>
         <input placeholder="Наименование" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
         <input placeholder="Количество" value={form.qty} onChange={(event) => setForm({ ...form, qty: event.target.value })} />
-        <input inputMode="numeric" type="number" placeholder="Сумма" value={form.amount_uzs} onChange={(event) => setForm({ ...form, amount_uzs: event.target.value })} />
-        <input inputMode="numeric" type="number" placeholder="Курс USD" value={form.usd_rate} onChange={(event) => setForm({ ...form, usd_rate: event.target.value })} />
+        <MoneyInput placeholder="Сумма" value={form.amount_uzs} onChange={(amount_uzs) => setForm({ ...form, amount_uzs })} />
+        <MoneyInput placeholder="Курс USD" value={form.usd_rate} onChange={(usd_rate) => setForm({ ...form, usd_rate })} />
         {form.section === 'ishxona' ? (
           <select value={form.minus_from} onChange={(event) => setForm({ ...form, minus_from: event.target.value })}>
             <option value="">— нет —</option>
@@ -901,7 +1049,7 @@ function DebtsView({ data, reload, setError }) {
         )} />
         <form className="inline-form" onSubmit={(event) => addPayment(event, debt)}>
           <input type="date" value={paymentForm.date || TODAY} onChange={(event) => setPayments({ ...payments, [debt.id]: { ...paymentForm, date: event.target.value } })} />
-          <input inputMode="numeric" type="number" placeholder="Сумма" value={paymentForm.amount || ''} onChange={(event) => setPayments({ ...payments, [debt.id]: { ...paymentForm, amount: event.target.value } })} />
+          <MoneyInput placeholder="Сумма" value={paymentForm.amount || ''} onChange={(amount) => setPayments({ ...payments, [debt.id]: { ...paymentForm, amount } })} />
           <button className="btn ghost" type="submit">Платёж</button>
         </form>
         <div className="actions">
@@ -947,7 +1095,7 @@ function DebtsView({ data, reload, setError }) {
           <option value="UZS">UZS</option>
           <option value="USD">USD</option>
         </select>
-        <input inputMode="numeric" type="number" placeholder="Сумма" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} />
+        <MoneyInput placeholder="Сумма" value={form.amount} onChange={(amount) => setForm({ ...form, amount })} />
         <input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} />
         <button className="btn" type="submit">Добавить долг</button>
       </form>
@@ -1150,7 +1298,7 @@ export default function App() {
   }, []);
 
   const availableViews = useMemo(() => {
-    if (data.role === 'admin') return ['master', 'admin', 'finance', 'debts'];
+    if (data.role === 'admin') return ['master', 'admin', 'attendance', 'finance', 'debts'];
     if (data.role === 'master') return ['master'];
     return [];
   }, [data.role]);
@@ -1160,6 +1308,7 @@ export default function App() {
   const CurrentView = {
     master: MasterView,
     admin: AdminView,
+    attendance: AttendanceView,
     finance: FinanceView,
     debts: DebtsView,
   }[view] || MasterView;
@@ -1195,6 +1344,7 @@ export default function App() {
           {[
             ['master', 'Мастер'],
             ['admin', 'Админ'],
+            ['attendance', 'Посещаемость'],
             ['finance', 'Финансы'],
             ['debts', 'Долги'],
           ].filter(([id]) => availableViews.includes(id)).map(([id, label]) => (

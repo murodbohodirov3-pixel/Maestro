@@ -368,6 +368,74 @@ small {
   gap: 7px;
 }
 
+.attendance-list {
+  display: grid;
+  gap: 9px;
+}
+
+.attendance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+}
+
+.attendance-row.on-time {
+  border-color: color-mix(in srgb, var(--cash) 32%, var(--line));
+  background: color-mix(in srgb, var(--cash) 9%, var(--surface));
+}
+
+.attendance-row.late {
+  border-color: color-mix(in srgb, var(--fine) 32%, var(--line));
+  background: color-mix(in srgb, var(--fine) 9%, var(--surface));
+}
+
+.attendance-row.missing {
+  background: var(--surface-2);
+}
+
+.attendance-person {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.attendance-person span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attendance-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.attendance-actions input {
+  width: 112px;
+}
+
+.fine-button {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--fine) 35%, var(--line));
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--fine);
+  font-weight: 750;
+}
+
+.fine-button:disabled,
+.fine-row .del:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .btn.approval-button {
   min-height: 36px;
   padding: 7px 10px;

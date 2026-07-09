@@ -26,3 +26,5 @@
 - [x] Matched the supplied HTML visual system while retaining the current API and financial behavior.
 - [x] Added palette controls, dark mode, payment chips, daily revenue chart, and the 540px mobile layout.
 - [x] Verified the build and a 390px viewport without horizontal overflow or console errors.
+- [x] Added a dedicated attendance view with period filters, punctuality colors, quick fines, and seven-day fine deletion protection.
+- [x] Formatted all active money inputs with grouped thousands while typing.

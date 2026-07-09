@@ -56,7 +56,7 @@ For large restoration work, maintain `to-do.md` in the project root:
 - Before implementing features that touch data, roles, access, auth, Telegram login, finance, masters, sales, attendance, fines, expenses, or debts, inspect the relevant Supabase tables and local client code.
 - Current known Supabase project ref: `ivowbhraaistxvoymxpf`.
 - Current restoration backend: Edge Function `api`, endpoint `/functions/v1/api`, request shape `{ initData, tgAuth, action, payload }`.
-- Business writes should go through `api` actions (`load`, `addSale`, `setSaleApproval`, `delSale`, `setAttendance`, `delAttendance`, `addFine`, `setSettings`, `addExpense`, `delExpense`, `addDebt`, `addDebtPayment`, `delDebtPayment`, `delDebt`, `setDebtClosed`) unless a later approved migration replaces this gateway.
+- Business writes should go through `api` actions (`load`, `addSale`, `setSaleApproval`, `delSale`, `setAttendance`, `delAttendance`, `addFine`, `delFine`, `setSettings`, `addExpense`, `delExpense`, `addDebt`, `addDebtPayment`, `delDebtPayment`, `delDebt`, `setDebtClosed`) unless a later approved migration replaces this gateway.
 - New sales submitted by masters require owner approval. Only rows explicitly marked with `comment = owner_approval_required` are treated as new pending approvals; legacy pending rows must keep their historical calculation behavior unless a separate audited migration is approved.
 - Pending or rejected owner-approval sales must not affect revenue, client, payout, or profit totals. Never bulk-update historical sale amounts or statuses while implementing this workflow.
 - Data loads from Supabase must be paginated; a large `.limit(...)` does not guarantee that PostgREST will return more than the configured server maximum.

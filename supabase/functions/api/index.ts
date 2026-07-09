@@ -8,6 +8,12 @@ const ADMIN_ID = 2502169;
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 const PAGE_SIZE = 1000;
 
+function tashkentDate(offsetDays = 0) {
+  const date = new Date(Date.now() + 5 * 60 * 60 * 1000);
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -235,7 +241,21 @@ Deno.serve(async (req) => {
 
     if (action === 'addFine') {
       if (!isAdmin) return json({ error: 'forbidden' }, 403);
-      await sb.from('fines').insert({ master: payload.master, d: payload.d, amount: payload.amount });
+      const amount = Math.round(Number(payload.amount) || 0);
+      if (!payload.master || !payload.d || amount <= 0) return json({ error: 'invalid_fine' }, 400);
+      const { error } = await sb.from('fines').insert({ master: payload.master, d: payload.d, amount });
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (action === 'delFine') {
+      if (!isAdmin) return json({ error: 'forbidden' }, 403);
+      const existing = await sb.from('fines').select('id,d').eq('id', payload.id).maybeSingle();
+      if (existing.error) return json({ error: existing.error.message }, 500);
+      if (!existing.data) return json({ error: 'fine_not_found' }, 404);
+      if (existing.data.d < tashkentDate(-7)) return json({ error: 'fine_delete_window_expired' }, 403);
+      const { error } = await sb.from('fines').delete().eq('id', payload.id);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
