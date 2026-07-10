@@ -1453,6 +1453,7 @@ export default function App() {
   const [data, setData] = useState(emptyState);
   const [view, setView] = useState('master');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('maestroTheme') || 'brass');
@@ -1477,8 +1478,10 @@ export default function App() {
     localStorage.setItem('maestroDark', String(dark));
   }, [dark, theme]);
 
-  async function load() {
+  async function load({ preserveView = true } = {}) {
     setError('');
+    if (preserveView) setIsRefreshing(true);
+    else setIsLoading(true);
 
     try {
       await captureTelegramOAuthCode();
@@ -1493,18 +1496,25 @@ export default function App() {
       const normalized = normalizeData(result);
       setData(normalized);
       setLoginRequired(false);
-      setView(normalized.role === 'admin' ? 'admin' : 'master');
+      setView((currentView) => {
+        const allowed = normalized.role === 'admin'
+          ? ['master', 'admin', 'attendance', 'finance', 'debts']
+          : ['master'];
+        if (!preserveView) return normalized.role === 'admin' ? 'admin' : 'master';
+        return allowed.includes(currentView) ? currentView : allowed[0];
+      });
     } catch (loadError) {
       setError(loadError.message || 'Не удалось загрузить данные.');
       if (String(loadError.message).includes('unauthorized')) setLoginRequired(true);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready?.();
-    load();
+    load({ preserveView: false });
   }, []);
 
   const availableViews = useMemo(() => {
@@ -1556,6 +1566,11 @@ export default function App() {
       ) : null}
 
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
+      {isRefreshing ? (
+        <div className="loading-strip" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />Синхронизация данных...
+        </div>
+      ) : null}
       {!isLoading && VIEW_META[view] ? (
         <section className="view-intro" aria-labelledby="view-title">
           <p className="view-eyebrow">Maestro Barberia</p>
@@ -1563,7 +1578,13 @@ export default function App() {
           <p>{VIEW_META[view].description}</p>
         </section>
       ) : null}
-      {isLoading ? <div className="notice">Загрузка данных...</div> : <CurrentView data={data} reload={load} setError={setError} />}
+      {isLoading ? (
+        <div className="loading-state" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          <strong>Загружаем данные салона</strong>
+          <span>Проверяем Telegram-сессию и обновляем информацию.</span>
+        </div>
+      ) : <CurrentView data={data} reload={load} setError={setError} />}
 
       <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
     </main>
