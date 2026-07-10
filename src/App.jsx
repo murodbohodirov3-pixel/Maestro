@@ -1379,6 +1379,24 @@ function Rows({ rows, empty, render }) {
 
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+const VIEW_META = {
+  master: {
+    title: 'Рабочий день',
+    description: 'Смена, продажи и заработок за выбранный период.',
+  },
+  admin: {
+    title: 'Управление салоном',
+    description: 'Подтверждения, выручка и работа команды.',
+  },
+  attendance: {
+    title: 'Посещаемость',
+    description: 'Приходы мастеров, опоздания и штрафы.',
+  },
+  finance: {
+    title: 'Финансы салона',
+    description: 'Прибыль, расходы и вложения за выбранный период.',
+  },
+};
 
 function LoginGate({ error }) {
   return (
@@ -1547,6 +1565,13 @@ export default function App() {
       ) : null}
 
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
+      {!isLoading && VIEW_META[view] ? (
+        <section className="view-intro" aria-labelledby="view-title">
+          <p className="view-eyebrow">Maestro Barberia</p>
+          <h2 id="view-title">{VIEW_META[view].title}</h2>
+          <p>{VIEW_META[view].description}</p>
+        </section>
+      ) : null}
       {isLoading ? <div className="notice">Загрузка данных...</div> : <CurrentView data={data} reload={load} setError={setError} />}
 
       <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
