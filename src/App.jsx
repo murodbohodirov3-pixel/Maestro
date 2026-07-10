@@ -3,7 +3,12 @@ import Admin from './pages/Admin.jsx';
 import Debts from './pages/Debts.jsx';
 import Finance from './pages/Finance.jsx';
 import Master from './pages/Master.jsx';
-import { loadCurrentUser, saveTestTelegramId } from './lib/auth.js';
+import {
+  getTelegramInitData,
+  isDevLoginEnabled,
+  loadCurrentUser,
+  saveTestTelegramId,
+} from './lib/auth.js';
 import { supabase } from './lib/supabase.js';
 
 const pages = [
@@ -25,6 +30,8 @@ export default function App() {
     : [];
   const activePage = availablePages.find((page) => page.id === activePageId) || availablePages[0];
   const ActivePage = activePage?.component;
+  const canUseDevLogin = isDevLoginEnabled();
+  const hasTelegramInitData = Boolean(getTelegramInitData());
 
   const refreshCurrentUser = useCallback(async () => {
     setIsLoadingUser(true);
@@ -69,7 +76,7 @@ export default function App() {
       <header className="app-header">
         <div className="brand-mark">M</div>
         <div>
-          <h1>Maestro Barberia</h1>
+          <h1>это проверка от автора йоууу</h1>
           <p>React + Vite каркас. Бизнес-логика будет перенесена следующими этапами.</p>
         </div>
       </header>
@@ -101,17 +108,30 @@ export default function App() {
       ) : (
         <section className="access-card">
           <h2>Нет доступа</h2>
-          <p>Введите тестовый telegram_id для локальной проверки пользователя из app_users.</p>
-          <form className="login-form" onSubmit={handleTestLogin}>
-            <input
-              inputMode="numeric"
-              onChange={(event) => setTestTelegramId(event.target.value)}
-              placeholder="telegram_id"
-              type="text"
-              value={testTelegramId}
-            />
-            <button type="submit">Проверить</button>
-          </form>
+          {canUseDevLogin ? (
+            <>
+              <p>
+                Dev вход доступен только для owner. Master/admin/finance должны открывать
+                приложение через Telegram.
+              </p>
+              <form className="login-form" onSubmit={handleTestLogin}>
+                <input
+                  inputMode="numeric"
+                  onChange={(event) => setTestTelegramId(event.target.value)}
+                  placeholder="telegram_id owner"
+                  type="text"
+                  value={testTelegramId}
+                />
+                <button type="submit">Проверить</button>
+              </form>
+            </>
+          ) : (
+            <p>
+              {hasTelegramInitData
+                ? 'Пользователь не найден или неактивен.'
+                : 'Откройте приложение через Telegram.'}
+            </p>
+          )}
           {authError ? <p className="error-text">{authError}</p> : null}
         </section>
       )}
