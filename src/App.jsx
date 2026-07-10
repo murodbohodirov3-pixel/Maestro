@@ -5,7 +5,6 @@ import {
   clearWidgetAuth,
   getTelegramFirstName,
   needsTelegramLogin,
-  saveWidgetAuth,
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
@@ -1385,11 +1384,6 @@ function LoginGate({ error }) {
   useEffect(() => {
     if (!showWidget) return;
 
-    window.onMaestroTelegramAuth = (user) => {
-      saveWidgetAuth(user);
-      window.location.reload();
-    };
-
     const box = document.getElementById('tgLoginBox');
     if (!box || box.dataset.ready) return;
 
@@ -1399,7 +1393,10 @@ function LoginGate({ error }) {
     script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
     script.setAttribute('data-size', 'large');
     script.setAttribute('data-radius', '12');
-    script.setAttribute('data-onauth', 'window.onMaestroTelegramAuth(user)');
+    // iOS standalone PWAs do not reliably restore the popup callback used by
+    // data-onauth. Telegram redirects to this app instead, and
+    // captureTelegramRedirectAuth() verifies the returned data on load.
+    script.setAttribute('data-auth-url', window.location.origin + window.location.pathname);
     script.setAttribute('data-request-access', 'write');
     box.appendChild(script);
     box.dataset.ready = '1';
