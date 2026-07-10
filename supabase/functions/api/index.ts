@@ -3,7 +3,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const ADMIN_ID = 2502169;
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 const PAGE_SIZE = 1000;
@@ -62,6 +61,14 @@ async function hmac(keyData: Uint8Array, msg: string): Promise<Uint8Array> {
 
 const toHex = (bytes: Uint8Array) => [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 
+async function tokenHash(token: string) {
+  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))));
+}
+
+function newSessionToken() {
+  return toHex(crypto.getRandomValues(new Uint8Array(32)));
+}
+
 async function verifyMiniApp(initData: string): Promise<{ id: number; first_name?: string } | null> {
   try {
     const params = new URLSearchParams(initData);
@@ -111,16 +118,60 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
-    const { initData, tgAuth, action, payload = {} } = await req.json();
+    const { initData, tgAuth, sessionToken, action, payload = {} } = await req.json();
+    let appUserResult;
+    let issuedSessionToken: string | null = null;
 
-    let user = await verifyMiniApp(initData || '');
-    if (!user && tgAuth) user = await verifyWidget(tgAuth);
-    if (!user) return json({ error: 'unauthorized' }, 401);
+    if (sessionToken) {
+      const session = await sb
+        .from('app_sessions')
+        .select('user_id')
+        .eq('token_hash', await tokenHash(String(sessionToken)))
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
+      if (!session.error && session.data) {
+        appUserResult = await sb
+          .from('app_users')
+          .select('id, role, master_id, active')
+          .eq('id', session.data.user_id)
+          .maybeSingle();
+      }
+    }
 
-    const uid = user.id;
-    const isAdmin = uid === ADMIN_ID;
-    const masterMatch = await sb.from('masters').select('name').eq('telegram_id', uid).maybeSingle();
-    const myMaster: string | null = masterMatch.data ? masterMatch.data.name : null;
+    if (!appUserResult) {
+      let user = await verifyMiniApp(initData || '');
+      if (!user && tgAuth) user = await verifyWidget(tgAuth);
+      if (!user) return json({ error: 'unauthorized' }, 401);
+      appUserResult = await sb
+        .from('app_users')
+        .select('id, role, master_id, active')
+        .eq('telegram_id', user.id)
+        .maybeSingle();
+      if (!appUserResult.error && appUserResult.data) {
+        issuedSessionToken = newSessionToken();
+        await sb.from('app_sessions').insert({
+          user_id: appUserResult.data.id,
+          token_hash: await tokenHash(issuedSessionToken),
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+      }
+    }
+    if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
+    if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
+
+    console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
+
+    const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
+    let myMaster: string | null = null;
+    if (appUserResult.data.master_id) {
+      const masterMatch = await sb
+        .from('masters')
+        .select('name, active')
+        .eq('id', appUserResult.data.master_id)
+        .maybeSingle();
+      if (masterMatch.error) return json({ error: masterMatch.error.message }, 500);
+      if (masterMatch.data?.active) myMaster = masterMatch.data.name;
+    }
 
     if (!isAdmin && !myMaster) return json({ error: 'not_in_list' }, 403);
 
@@ -148,6 +199,7 @@ Deno.serve(async (req) => {
           expenses,
           debts,
           debt_payments,
+          sessionToken: issuedSessionToken,
         });
       }
 
@@ -158,7 +210,7 @@ Deno.serve(async (req) => {
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
-      return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance });
+      return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance, sessionToken: issuedSessionToken });
     }
 
     if (action === 'addSale') {
@@ -173,7 +225,7 @@ Deno.serve(async (req) => {
         cl: payload.cl || 0,
         is_new_client: payload.is_new_client,
         status: requiresOwnerApproval ? 'pending' : 'approved',
-        approved_by: requiresOwnerApproval ? null : String(uid),
+        approved_by: requiresOwnerApproval ? null : String(appUserResult.data.id),
         approved_at: requiresOwnerApproval ? null : new Date().toISOString(),
         comment: requiresOwnerApproval ? 'owner_approval_required' : null,
       });
@@ -201,14 +253,18 @@ Deno.serve(async (req) => {
         .from('sales')
         .update({
           status: payload.status,
-          approved_by: String(uid),
+          approved_by: String(appUserResult.data.id),
           approved_at: new Date().toISOString(),
           comment: payload.status === 'approved'
             ? 'owner_approval_approved'
             : 'owner_approval_rejected',
         })
         .eq('id', payload.id);
-      if (error) return json({ error: error.message }, 500);
+      if (error) {
+        console.error('[maestro-api] sale approval failed', { saleId: payload.id, error: error.message });
+        return json({ error: error.message }, 500);
+      }
+      console.log('[maestro-api] sale approval saved', { saleId: payload.id, status: payload.status });
       return json({ ok: true });
     }
 
@@ -332,6 +388,7 @@ Deno.serve(async (req) => {
 
     return json({ error: 'unknown_action' }, 400);
   } catch (error) {
+    console.error('[maestro-api] unhandled error', { action: 'unknown', error: String(error) });
     return json({ error: String(error) }, 500);
   }
 });
