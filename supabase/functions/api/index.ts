@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
         cl: payload.cl || 0,
         is_new_client: payload.is_new_client,
         status: requiresOwnerApproval ? 'pending' : 'approved',
-        approved_by: requiresOwnerApproval ? null : String(uid),
+        approved_by: requiresOwnerApproval ? null : String(appUserResult.data.id),
         approved_at: requiresOwnerApproval ? null : new Date().toISOString(),
         comment: requiresOwnerApproval ? 'owner_approval_required' : null,
       });
@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
         .from('sales')
         .update({
           status: payload.status,
-          approved_by: String(uid),
+          approved_by: String(appUserResult.data.id),
           approved_at: new Date().toISOString(),
           comment: payload.status === 'approved'
             ? 'owner_approval_approved'
