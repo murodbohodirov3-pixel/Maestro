@@ -3,7 +3,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const ADMIN_ID = 2502169;
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 const PAGE_SIZE = 1000;
@@ -77,6 +76,10 @@ async function verifyMiniApp(initData: string): Promise<{ id: number; first_name
     const computed = await hmac(secretKey, dataCheckString);
     if (toHex(computed) !== hash) return null;
 
+    const authDate = Number(params.get('auth_date'));
+    const now = Math.floor(Date.now() / 1000);
+    if (!Number.isFinite(authDate) || authDate > now + 60 || now - authDate > 24 * 60 * 60) return null;
+
     const user = params.get('user');
     return user ? JSON.parse(user) : null;
   } catch {
@@ -118,9 +121,25 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: 'unauthorized' }, 401);
 
     const uid = user.id;
-    const isAdmin = uid === ADMIN_ID;
-    const masterMatch = await sb.from('masters').select('name').eq('telegram_id', uid).maybeSingle();
-    const myMaster: string | null = masterMatch.data ? masterMatch.data.name : null;
+    const appUserResult = await sb
+      .from('app_users')
+      .select('id, role, master_id, active')
+      .eq('telegram_id', uid)
+      .maybeSingle();
+    if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
+    if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
+
+    const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
+    let myMaster: string | null = null;
+    if (appUserResult.data.master_id) {
+      const masterMatch = await sb
+        .from('masters')
+        .select('name, active')
+        .eq('id', appUserResult.data.master_id)
+        .maybeSingle();
+      if (masterMatch.error) return json({ error: masterMatch.error.message }, 500);
+      if (masterMatch.data?.active) myMaster = masterMatch.data.name;
+    }
 
     if (!isAdmin && !myMaster) return json({ error: 'not_in_list' }, 403);
 
