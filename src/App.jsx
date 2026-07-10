@@ -1580,7 +1580,11 @@ export default function App() {
       ) : null}
       {isLoading ? (
         <div className="loading-state" role="status" aria-live="polite">
-          <span className="spinner" aria-hidden="true" />
+          <div className="loading-emblem" aria-hidden="true">
+            <span className="loading-emblem-ring loading-emblem-ring-outer" />
+            <span className="loading-emblem-ring loading-emblem-ring-inner" />
+            <span className="loading-emblem-core">M</span>
+          </div>
           <strong>Загружаем данные салона</strong>
           <span>Проверяем Telegram-сессию и обновляем информацию.</span>
         </div>
