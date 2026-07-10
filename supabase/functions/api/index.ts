@@ -159,6 +159,8 @@ Deno.serve(async (req) => {
     if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
     if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
 
+    console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
+
     const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
     let myMaster: string | null = null;
     if (appUserResult.data.master_id) {
@@ -258,7 +260,11 @@ Deno.serve(async (req) => {
             : 'owner_approval_rejected',
         })
         .eq('id', payload.id);
-      if (error) return json({ error: error.message }, 500);
+      if (error) {
+        console.error('[maestro-api] sale approval failed', { saleId: payload.id, error: error.message });
+        return json({ error: error.message }, 500);
+      }
+      console.log('[maestro-api] sale approval saved', { saleId: payload.id, status: payload.status });
       return json({ ok: true });
     }
 
@@ -382,6 +388,7 @@ Deno.serve(async (req) => {
 
     return json({ error: 'unknown_action' }, 400);
   } catch (error) {
+    console.error('[maestro-api] unhandled error', { action: 'unknown', error: String(error) });
     return json({ error: String(error) }, 500);
   }
 });
