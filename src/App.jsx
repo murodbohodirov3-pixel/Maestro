@@ -1524,6 +1524,17 @@ export default function App() {
   }, [data.role]);
 
   if (loginRequired) return <LoginGate error={error} />;
+  if (isLoading) {
+    return (
+      <main className="loading-splash" role="status" aria-label="Загрузка">
+        <div className="loading-emblem" aria-hidden="true">
+          <span className="loading-emblem-ring loading-emblem-ring-outer" />
+          <span className="loading-emblem-ring loading-emblem-ring-inner" />
+          <span className="loading-emblem-core">M</span>
+        </div>
+      </main>
+    );
+  }
 
   const CurrentView = {
     master: MasterView,
@@ -1542,7 +1553,7 @@ export default function App() {
             <div className="mark">M</div>
             <div>
               <h1>Maestro Barberia</h1>
-              <p>{isLoading ? 'загрузка...' : data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
+              <p>{data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
             </div>
           </div>
         </div>
@@ -1571,24 +1582,14 @@ export default function App() {
           <span className="spinner" aria-hidden="true" />Синхронизация данных...
         </div>
       ) : null}
-      {!isLoading && VIEW_META[view] ? (
+      {VIEW_META[view] ? (
         <section className="view-intro" aria-labelledby="view-title">
           <p className="view-eyebrow">Maestro Barberia</p>
           <h2 id="view-title">{VIEW_META[view].title}</h2>
           <p>{VIEW_META[view].description}</p>
         </section>
       ) : null}
-      {isLoading ? (
-        <div className="loading-state" role="status" aria-live="polite">
-          <div className="loading-emblem" aria-hidden="true">
-            <span className="loading-emblem-ring loading-emblem-ring-outer" />
-            <span className="loading-emblem-ring loading-emblem-ring-inner" />
-            <span className="loading-emblem-core">M</span>
-          </div>
-          <strong>Загружаем данные салона</strong>
-          <span>Проверяем Telegram-сессию и обновляем информацию.</span>
-        </div>
-      ) : <CurrentView data={data} reload={load} setError={setError} />}
+      <CurrentView data={data} reload={load} setError={setError} />
 
       <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
     </main>
