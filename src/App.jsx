@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   callLegacyApi,
+  captureTelegramOAuthCode,
   captureTelegramRedirectAuth,
   clearWidgetAuth,
   getTelegramFirstName,
   needsTelegramLogin,
+  startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
@@ -1379,29 +1381,6 @@ const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
 
 function LoginGate({ error }) {
-  const [showWidget, setShowWidget] = useState(false);
-
-  useEffect(() => {
-    if (!showWidget) return;
-
-    const box = document.getElementById('tgLoginBox');
-    if (!box || box.dataset.ready) return;
-
-    const script = document.createElement('script');
-    script.async = true;
-    script.src = 'https://telegram.org/js/telegram-widget.js?22';
-    script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
-    script.setAttribute('data-size', 'large');
-    script.setAttribute('data-radius', '12');
-    // iOS standalone PWAs do not reliably restore the popup callback used by
-    // data-onauth. Telegram redirects to this app instead, and
-    // captureTelegramRedirectAuth() verifies the returned data on load.
-    script.setAttribute('data-auth-url', window.location.origin + window.location.pathname);
-    script.setAttribute('data-request-access', 'write');
-    box.appendChild(script);
-    box.dataset.ready = '1';
-  }, [showWidget]);
-
   return (
     <main className="login-gate">
       <div className="login-card">
@@ -1411,10 +1390,9 @@ function LoginGate({ error }) {
         <a className="btn login-primary" href={TELEGRAM_BOT_LINK} rel="noreferrer" target="_blank">
           Открыть в Telegram
         </a>
-        <button className="btn ghost" type="button" onClick={() => setShowWidget(true)}>
+        <button className="btn ghost" type="button" onClick={startTelegramOAuthLogin}>
           Войти на сайте через Telegram
         </button>
-        {showWidget ? <div id="tgLoginBox" /> : null}
         {error ? <p className="error">{error}</p> : null}
       </div>
     </main>
@@ -1484,6 +1462,7 @@ export default function App() {
     setError('');
 
     try {
+      await captureTelegramOAuthCode();
       captureTelegramRedirectAuth();
 
       if (needsTelegramLogin()) {

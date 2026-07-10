@@ -3,6 +3,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const TELEGRAM_OAUTH_CLIENT_ID = Deno.env.get('TELEGRAM_OAUTH_CLIENT_ID') || '8865126796';
+const TELEGRAM_LOGIN_CLIENT_SECRET = Deno.env.get('TELEGRAM_LOGIN_CLIENT_SECRET') || '';
+const TELEGRAM_ISSUER = 'https://oauth.telegram.org';
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY);
 const PAGE_SIZE = 1000;
@@ -69,6 +72,95 @@ function newSessionToken() {
   return toHex(crypto.getRandomValues(new Uint8Array(32)));
 }
 
+function fromBase64Url(value: string) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}
+
+function decodeJwtPart<T>(value: string): T {
+  return JSON.parse(new TextDecoder().decode(fromBase64Url(value))) as T;
+}
+
+let telegramJwksCache: { keys: JsonWebKey[] } | null = null;
+
+async function getTelegramJwks() {
+  if (telegramJwksCache) return telegramJwksCache;
+  const response = await fetch(`${TELEGRAM_ISSUER}/.well-known/jwks.json`);
+  if (!response.ok) throw new Error('telegram_jwks_unavailable');
+  telegramJwksCache = await response.json();
+  return telegramJwksCache;
+}
+
+async function verifyTelegramIdToken(idToken: string): Promise<Record<string, unknown>> {
+  const [encodedHeader, encodedPayload, encodedSignature] = idToken.split('.');
+  if (!encodedHeader || !encodedPayload || !encodedSignature) throw new Error('invalid_id_token');
+
+  const header = decodeJwtPart<{ alg?: string; kid?: string }>(encodedHeader);
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('unsupported_id_token_alg');
+
+  const jwks = await getTelegramJwks();
+  const jwk = jwks.keys.find((key) => key.kid === header.kid);
+  if (!jwk) throw new Error('telegram_jwk_not_found');
+
+  const key = await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  const valid = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    key,
+    fromBase64Url(encodedSignature),
+    new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
+  );
+  if (!valid) throw new Error('invalid_id_token_signature');
+
+  const payload = decodeJwtPart<Record<string, unknown>>(encodedPayload);
+  if (payload.iss !== TELEGRAM_ISSUER) throw new Error('invalid_id_token_issuer');
+  if (String(payload.aud) !== TELEGRAM_OAUTH_CLIENT_ID) throw new Error('invalid_id_token_audience');
+  if (typeof payload.exp !== 'number' || payload.exp * 1000 <= Date.now()) throw new Error('expired_id_token');
+
+  return payload;
+}
+
+async function exchangeTelegramOAuthCode(payload: Record<string, string>) {
+  if (!TELEGRAM_LOGIN_CLIENT_SECRET) throw new Error('telegram_oauth_not_configured');
+  if (!payload?.code || !payload?.codeVerifier || !payload?.redirectUri) throw new Error('invalid_oauth_payload');
+
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: payload.code,
+    redirect_uri: payload.redirectUri,
+    client_id: TELEGRAM_OAUTH_CLIENT_ID,
+    code_verifier: payload.codeVerifier,
+  });
+
+  const tokenResponse = await fetch(`${TELEGRAM_ISSUER}/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${btoa(`${TELEGRAM_OAUTH_CLIENT_ID}:${TELEGRAM_LOGIN_CLIENT_SECRET}`)}`,
+    },
+    body,
+  });
+  const tokenResult = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenResult.id_token) {
+    console.error('[maestro-api] telegram oauth token exchange failed', {
+      status: tokenResponse.status,
+      error: tokenResult.error || tokenResult.error_description || 'token_exchange_failed',
+    });
+    throw new Error('telegram_oauth_exchange_failed');
+  }
+
+  const verifiedToken = await verifyTelegramIdToken(String(tokenResult.id_token));
+  const telegramId = verifiedToken.id ?? verifiedToken.sub;
+  if (!telegramId) throw new Error('telegram_oauth_missing_user_id');
+
+  return { id: String(telegramId), first_name: verifiedToken.given_name ? String(verifiedToken.given_name) : undefined };
+}
+
 async function verifyMiniApp(initData: string): Promise<{ id: number; first_name?: string } | null> {
   try {
     const params = new URLSearchParams(initData);
@@ -121,6 +213,26 @@ Deno.serve(async (req) => {
     const { initData, tgAuth, sessionToken, action, payload = {} } = await req.json();
     let appUserResult;
     let issuedSessionToken: string | null = null;
+
+    if (action === 'telegramOAuth') {
+      const user = await exchangeTelegramOAuthCode(payload);
+      appUserResult = await sb
+        .from('app_users')
+        .select('id, role, master_id, active')
+        .eq('telegram_id', user.id)
+        .maybeSingle();
+      if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
+      if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
+
+      issuedSessionToken = newSessionToken();
+      await sb.from('app_sessions').insert({
+        user_id: appUserResult.data.id,
+        token_hash: await tokenHash(issuedSessionToken),
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+
+      return json({ ok: true, sessionToken: issuedSessionToken });
+    }
 
     if (sessionToken) {
       const session = await sb
