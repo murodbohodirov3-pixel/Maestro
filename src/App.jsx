@@ -549,7 +549,7 @@ function AdminView({ data, reload, setError }) {
         <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
       </div>
 
-      <div className="card wide">
+      <div className="card wide detailed-report-card">
         <SectionHeading label="Детальный отчёт по мастерам" range={range} />
         <Rows
           rows={[...sales].sort((left, right) => (

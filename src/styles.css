@@ -630,9 +630,9 @@ small {
 }
 
 .payout-total {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   margin-top: 8px;
   padding: 12px;
@@ -1375,6 +1375,15 @@ td:first-child {
   font-weight: 700;
 }
 
+.payout-total strong {
+  color: var(--ink);
+  font-size: clamp(22px, 6vw, 28px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.08;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .login-card img {
   width: 88px;
   height: 88px;
@@ -1591,6 +1600,59 @@ footer span {
 @media (max-width: 430px) {
   .view-intro {
     margin-top: var(--space-4);
+  }
+
+  .payout-total {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .payout-total span {
+    font-size: 12px;
+    line-height: 1.25;
+  }
+
+  .payout-total strong {
+    font-size: clamp(21px, 6.7vw, 26px);
+  }
+
+  .detailed-report-card .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .detailed-report-card .date-badge {
+    align-self: flex-start;
+  }
+
+  .detailed-sale {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .detailed-sale > div:first-child {
+    display: grid;
+    gap: 2px;
+  }
+
+  .detailed-sale > .detailed-sale-amounts {
+    display: grid;
+    width: 100%;
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+  }
+
+  .detailed-sale-amounts span {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .detailed-sale-delete {
+    margin: 0;
   }
 
   .tiles {
