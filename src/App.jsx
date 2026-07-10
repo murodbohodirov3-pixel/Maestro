@@ -5,6 +5,7 @@ import {
   clearWidgetAuth,
   getTelegramFirstName,
   needsTelegramLogin,
+  saveWidgetAuth,
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
@@ -1377,13 +1378,17 @@ function Rows({ rows, empty, render }) {
 
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
-const TELEGRAM_WIDGET_DOMAIN = 'maestro-pied-two.vercel.app';
 
 function LoginGate({ error }) {
   const [showWidget, setShowWidget] = useState(false);
 
   useEffect(() => {
     if (!showWidget) return;
+
+    window.onMaestroTelegramAuth = (user) => {
+      saveWidgetAuth(user);
+      window.location.reload();
+    };
 
     const box = document.getElementById('tgLoginBox');
     if (!box || box.dataset.ready) return;
@@ -1394,7 +1399,7 @@ function LoginGate({ error }) {
     script.setAttribute('data-telegram-login', TELEGRAM_BOT_USERNAME);
     script.setAttribute('data-size', 'large');
     script.setAttribute('data-radius', '12');
-    script.setAttribute('data-auth-url', `https://${TELEGRAM_WIDGET_DOMAIN}/`);
+    script.setAttribute('data-onauth', 'window.onMaestroTelegramAuth(user)');
     script.setAttribute('data-request-access', 'write');
     box.appendChild(script);
     box.dataset.ready = '1';
