@@ -1039,6 +1039,20 @@ td:first-child {
     var(--surface);
 }
 
+.debt-summary-card--combined,
+.debt-chart-card--combined {
+  grid-column: 1 / -1;
+}
+
+.debt-summary-usd,
+.debt-chart-heading b {
+  display: block;
+  margin-top: -9px;
+  margin-bottom: 14px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
 .debt-summary-card > span,
 .debt-summary-card small,
 .debt-chart-heading span,
@@ -1085,6 +1099,11 @@ td:first-child {
   font-variant-numeric: tabular-nums;
 }
 
+.debt-summary-card p small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .debt-chart-section {
   overflow: hidden;
 }
@@ -1104,6 +1123,15 @@ td:first-child {
 .debt-chart-heading strong {
   display: block;
   margin-top: 2px;
+}
+
+.debt-chart-currency + .debt-chart-currency {
+  margin-top: 12px;
+}
+
+.debt-chart-currency > span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .debt-chart {
@@ -1157,30 +1185,60 @@ td:first-child {
   margin-top: 12px;
 }
 
-.debt-mini-bars > div {
+.debt-mini-bars > button {
   display: grid;
   grid-template-rows: 128px 20px;
   align-items: end;
   gap: 5px;
   height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
   text-align: center;
 }
 
-.debt-mini-bars > div > span {
+.debt-mini-bars > button > span {
   display: block;
   min-height: 5px;
   border-radius: 6px 6px 2px 2px;
   background: linear-gradient(180deg, var(--brass), color-mix(in srgb, var(--brass) 65%, var(--cash)));
 }
 
-.debt-mini-bars > div.forecast > span {
+.debt-mini-bars > button.forecast > span {
   border: 2px dashed var(--brass);
   background: color-mix(in srgb, var(--brass) 12%, var(--surface));
+}
+
+.debt-mini-bars > button.selected > span {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .debt-mini-bars small {
   color: var(--muted);
   font-size: 10px;
+}
+
+.debt-chart-selection {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.debt-chart-selection span,
+.debt-chart-selection small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.debt-chart-selection strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
 }
 
 .debt-card-list {

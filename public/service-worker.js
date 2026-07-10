@@ -1,4 +1,4 @@
-const CACHE_NAME = 'maestro-pwa-v3';
+const CACHE_NAME = 'maestro-pwa-v4';
 const APP_SHELL = ['/', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (event) => {

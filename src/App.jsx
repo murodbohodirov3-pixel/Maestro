@@ -9,7 +9,7 @@ import {
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
-const APP_VERSION = 'debts-dashboard-v2';
+const APP_VERSION = 'debts-dashboard-v3';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -45,6 +45,14 @@ function money(value) {
 
 function usdMoney(value) {
   return `$${money(value)}`;
+}
+
+// These are payment plans only: they never change the debt amount, balance, or payment history.
+function debtPaymentPlan(debt) {
+  const counterparty = String(debt.counterparty || '').toLowerCase();
+  if (debt.currency === 'USD' && counterparty.includes('dyson')) return { monthly: 110, months: 2 };
+  if (debt.currency === 'UZS' && counterparty.includes('alif')) return { monthly: 2431392 };
+  return null;
 }
 
 function digitsOnly(value) {
@@ -1072,6 +1080,7 @@ function DebtsView({ data, reload, setError }) {
   const [message, setMessage] = useState('');
   const [form, setForm] = useState({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
   const [payments, setPayments] = useState({});
+  const [selectedDebtMonth, setSelectedDebtMonth] = useState(TODAY.slice(0, 7));
   const myDebts = data.debts.filter((debt) => debt.direction === 'i_owe');
   const activeDebts = myDebts.filter((debt) => !debt.is_closed).sort(newestFirst);
   const closedDebts = myDebts.filter((debt) => debt.is_closed).sort(newestFirst);
@@ -1099,14 +1108,23 @@ function DebtsView({ data, reload, setError }) {
       .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
   }
 
+  function plannedCurrencyPayment(currency) {
+    return myDebts
+      .filter((debt) => !debt.is_closed && debt.currency === currency)
+      .reduce((sum, debt) => {
+        const plan = debtPaymentPlan(debt);
+        const remaining = Math.max(0, Number(debt.amount) - paid(debt.id));
+        return sum + (plan ? Math.min(remaining, plan.monthly) : 0);
+      }, 0);
+  }
+
   const dashboard = ['USD', 'UZS'].map((currency) => {
     const currencyDebts = myDebts.filter((debt) => debt.currency === currency);
     const remaining = currencyDebts
       .filter((debt) => !debt.is_closed)
       .reduce((sum, debt) => sum + Math.max(0, Number(debt.amount) - paid(debt.id)), 0);
-    const previousMonths = [-3, -2, -1].map(shiftDebtMonth);
-    const average = previousMonths.reduce((sum, month) => sum + currencyPayments(currency, month), 0) / 3;
-    const forecast = Math.max(0, remaining - average);
+    const plannedPayment = plannedCurrencyPayment(currency);
+    const forecast = Math.max(0, remaining - plannedPayment);
     const chartMonths = [-5, -4, -3, -2, -1, 0].map(shiftDebtMonth);
     const points = chartMonths.map((month) => {
       const started = currencyDebts
@@ -1123,11 +1141,17 @@ function DebtsView({ data, reload, setError }) {
       currency,
       remaining,
       paidThisMonth: currencyPayments(currency, currentMonth),
-      average,
+      plannedPayment,
       forecast,
       points,
     };
   });
+  const dashboardByCurrency = Object.fromEntries(dashboard.map((item) => [item.currency, item]));
+  const selectedMonthIsForecast = selectedDebtMonth === shiftDebtMonth(1);
+  const selectedDebtPayments = {
+    UZS: selectedMonthIsForecast ? 0 : currencyPayments('UZS', selectedDebtMonth),
+    USD: selectedMonthIsForecast ? 0 : currencyPayments('USD', selectedDebtMonth),
+  };
 
   async function addDebt(event) {
     event.preventDefault();
@@ -1192,7 +1216,9 @@ function DebtsView({ data, reload, setError }) {
         .filter((payment) => String(payment.date).startsWith(month))
         .reduce((monthSum, payment) => monthSum + (Number(payment.amount) || 0), 0)
     ), 0) / 3;
-    const payoffMonths = average > 0 ? Math.ceil(remaining / average) : null;
+    const plan = debtPaymentPlan(debt);
+    const monthlyPayment = plan?.monthly || average;
+    const payoffMonths = monthlyPayment > 0 ? Math.ceil(remaining / monthlyPayment) : null;
     const showHistory = historyIds.includes(debt.id);
     const showPayment = openPaymentId === debt.id;
 
@@ -1217,7 +1243,7 @@ function DebtsView({ data, reload, setError }) {
         </div>
 
         <div className="debt-person-stats">
-          <div><span>Средний платёж</span><strong>{money(average)} {debt.currency} / мес.</strong></div>
+          <div><span>{plan ? 'Плановый платёж' : 'Средний платёж'}</span><strong>{money(monthlyPayment)} {debt.currency} / мес.{plan?.months ? ` · ${plan.months} мес.` : ''}</strong></div>
           <div><span>Последний платёж</span><strong>{debtPayments[0] ? `${money(debtPayments[0].amount)} · ${displayDate(debtPayments[0].date)}` : 'Пока нет'}</strong></div>
           <div><span>До погашения</span><strong>{debt.is_closed ? 'Погашен' : payoffMonths ? `≈ ${payoffMonths} мес.` : 'Нужны платежи'}</strong></div>
         </div>
@@ -1265,43 +1291,50 @@ function DebtsView({ data, reload, setError }) {
       {message ? <div className="notice success">{message}</div> : null}
 
       <div className="debt-summary-grid wide">
-        {dashboard.map((item) => (
-          <article className="debt-summary-card" key={item.currency}>
-            <span>Осталось выплатить · {item.currency}</span>
-            <strong>{item.currency === 'USD' ? usdMoney(item.remaining) : `${money(item.remaining)} сум`}</strong>
-            <div>
-              <p><span>Погашено в этом месяце</span><b>{money(item.paidThisMonth)} {item.currency}</b></p>
-              <p><span>Остаток через месяц</span><b>{money(item.forecast)} {item.currency}</b></p>
-            </div>
-            <small>Прогноз по среднему платежу за 3 месяца: {money(item.average)} {item.currency}</small>
-          </article>
-        ))}
+        <article className="debt-summary-card debt-summary-card--combined">
+          <span>Осталось выплатить</span>
+          <strong>{money(dashboardByCurrency.UZS.remaining)} сум</strong>
+          <b className="debt-summary-usd">{usdMoney(dashboardByCurrency.USD.remaining)}</b>
+          <div>
+            <p><span>Погашено в этом месяце</span><b>{money(dashboardByCurrency.UZS.paidThisMonth)} сум</b><small>{usdMoney(dashboardByCurrency.USD.paidThisMonth)}</small></p>
+            <p><span>Остаток через месяц</span><b>{money(dashboardByCurrency.UZS.forecast)} сум</b><small>{usdMoney(dashboardByCurrency.USD.forecast)}</small></p>
+          </div>
+          <small>Прогноз по плановым платежам: {money(dashboardByCurrency.UZS.plannedPayment)} сум · {usdMoney(dashboardByCurrency.USD.plannedPayment)}</small>
+        </article>
       </div>
 
       <div className="card wide">
         <div className="debt-section-heading">
-          <div><h2>Как уменьшается долг</h2><p>Шесть месяцев истории и следующий месяц по прогнозу.</p></div>
+          <div><h2>Как уменьшается долг</h2><p>Выберите свечу, чтобы увидеть сумму погашения за выбранный месяц.</p></div>
         </div>
         <div className="debt-charts">
-          {dashboard.map((item) => {
-            const maxValue = Math.max(...item.points.map((point) => point.value), 1);
-            return (
-              <article className="debt-chart-card" key={item.currency}>
-                <div className="debt-chart-heading">
-                  <div><span>Остаток · {item.currency}</span><strong>{money(item.remaining)} {item.currency}</strong></div>
-                  <small>последний — прогноз</small>
+          <article className="debt-chart-card debt-chart-card--combined">
+            <div className="debt-chart-heading">
+              <div><span>Остаток долгов</span><strong>{money(dashboardByCurrency.UZS.remaining)} сум</strong><b>{usdMoney(dashboardByCurrency.USD.remaining)}</b></div>
+              <small>последняя свеча — прогноз</small>
+            </div>
+            {dashboard.map((item) => {
+              const maxValue = Math.max(...item.points.map((point) => point.value), 1);
+              return (
+                <div className="debt-chart-currency" key={item.currency}>
+                  <span>{item.currency === 'UZS' ? 'Сумы' : 'USD'}</span>
+                  <div className="debt-mini-bars">
+                    {item.points.map((point) => (
+                      <button aria-label={`${debtMonthLabel(point.month)}: ${money(point.value)} ${item.currency}`} aria-pressed={selectedDebtMonth === point.month} className={`${point.forecast ? 'forecast ' : ''}${selectedDebtMonth === point.month ? 'selected' : ''}`} key={point.month} onClick={() => setSelectedDebtMonth(point.month)} type="button">
+                        <span title={`${money(point.value)} ${item.currency}`} style={{ height: `${Math.max(5, (point.value / maxValue) * 100)}%` }} />
+                        <small>{debtMonthLabel(point.month)}</small>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="debt-mini-bars">
-                  {item.points.map((point) => (
-                    <div className={point.forecast ? 'forecast' : ''} key={point.month}>
-                      <span title={`${money(point.value)} ${item.currency}`} style={{ height: `${Math.max(5, (point.value / maxValue) * 100)}%` }} />
-                      <small>{debtMonthLabel(point.month)}</small>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            );
-          })}
+              );
+            })}
+            <div className="debt-chart-selection">
+              <span>{selectedMonthIsForecast ? `Прогноз на ${debtMonthLabel(selectedDebtMonth)}` : `Погашено за ${debtMonthLabel(selectedDebtMonth)}`}</span>
+              <strong>{money(selectedDebtPayments.UZS)} сум</strong>
+              <small>{usdMoney(selectedDebtPayments.USD)}</small>
+            </div>
+          </article>
         </div>
       </div>
 
