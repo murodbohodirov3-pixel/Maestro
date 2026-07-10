@@ -1,4 +1,5 @@
 const TG_AUTH_KEY = 'tgAuth';
+const APP_SESSION_KEY = 'maestroSession';
 
 function getApiUrl() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -37,6 +38,11 @@ export function saveWidgetAuth(auth) {
 
 export function clearWidgetAuth() {
   localStorage.removeItem(TG_AUTH_KEY);
+  localStorage.removeItem(APP_SESSION_KEY);
+}
+
+function readSessionToken() {
+  return localStorage.getItem(APP_SESSION_KEY) || null;
 }
 
 export function captureTelegramRedirectAuth() {
@@ -60,7 +66,7 @@ export function captureTelegramRedirectAuth() {
 }
 
 export function needsTelegramLogin() {
-  return !hasTelegramMiniAppUser() && !readWidgetAuth();
+  return !hasTelegramMiniAppUser() && !readWidgetAuth() && !readSessionToken();
 }
 
 export async function callLegacyApi(action, payload = {}) {
@@ -75,6 +81,7 @@ export async function callLegacyApi(action, payload = {}) {
     body: JSON.stringify({
       initData: getTelegramInitData(),
       tgAuth: readWidgetAuth(),
+      sessionToken: readSessionToken(),
       action,
       payload,
     }),
@@ -83,8 +90,11 @@ export async function callLegacyApi(action, payload = {}) {
   const result = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 401) localStorage.removeItem(APP_SESSION_KEY);
     throw new Error(result?.error || `HTTP ${response.status}`);
   }
+
+  if (result?.sessionToken) localStorage.setItem(APP_SESSION_KEY, result.sessionToken);
 
   return result;
 }

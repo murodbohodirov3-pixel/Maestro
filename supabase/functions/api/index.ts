@@ -61,6 +61,14 @@ async function hmac(keyData: Uint8Array, msg: string): Promise<Uint8Array> {
 
 const toHex = (bytes: Uint8Array) => [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 
+async function tokenHash(token: string) {
+  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))));
+}
+
+function newSessionToken() {
+  return toHex(crypto.getRandomValues(new Uint8Array(32)));
+}
+
 async function verifyMiniApp(initData: string): Promise<{ id: number; first_name?: string } | null> {
   try {
     const params = new URLSearchParams(initData);
@@ -110,18 +118,44 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
   try {
-    const { initData, tgAuth, action, payload = {} } = await req.json();
+    const { initData, tgAuth, sessionToken, action, payload = {} } = await req.json();
+    let appUserResult;
+    let issuedSessionToken: string | null = null;
 
-    let user = await verifyMiniApp(initData || '');
-    if (!user && tgAuth) user = await verifyWidget(tgAuth);
-    if (!user) return json({ error: 'unauthorized' }, 401);
+    if (sessionToken) {
+      const session = await sb
+        .from('app_sessions')
+        .select('user_id')
+        .eq('token_hash', await tokenHash(String(sessionToken)))
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
+      if (!session.error && session.data) {
+        appUserResult = await sb
+          .from('app_users')
+          .select('id, role, master_id, active')
+          .eq('id', session.data.user_id)
+          .maybeSingle();
+      }
+    }
 
-    const uid = user.id;
-    const appUserResult = await sb
-      .from('app_users')
-      .select('id, role, master_id, active')
-      .eq('telegram_id', uid)
-      .maybeSingle();
+    if (!appUserResult) {
+      let user = await verifyMiniApp(initData || '');
+      if (!user && tgAuth) user = await verifyWidget(tgAuth);
+      if (!user) return json({ error: 'unauthorized' }, 401);
+      appUserResult = await sb
+        .from('app_users')
+        .select('id, role, master_id, active')
+        .eq('telegram_id', user.id)
+        .maybeSingle();
+      if (!appUserResult.error && appUserResult.data) {
+        issuedSessionToken = newSessionToken();
+        await sb.from('app_sessions').insert({
+          user_id: appUserResult.data.id,
+          token_hash: await tokenHash(issuedSessionToken),
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+      }
+    }
     if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
     if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
 
@@ -163,6 +197,7 @@ Deno.serve(async (req) => {
           expenses,
           debts,
           debt_payments,
+          sessionToken: issuedSessionToken,
         });
       }
 
@@ -173,7 +208,7 @@ Deno.serve(async (req) => {
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
-      return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance });
+      return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance, sessionToken: issuedSessionToken });
     }
 
     if (action === 'addSale') {
