@@ -1247,33 +1247,6 @@ td:first-child {
   border-radius: 20px;
 }
 
-.domain-help {
-  display: grid;
-  width: 100%;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 13px;
-  text-align: left;
-}
-
-.domain-help strong {
-  color: var(--ink);
-}
-
-.domain-help code {
-  width: 100%;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--brass);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
 footer {
   margin-top: 18px;
   text-align: center;
@@ -1479,10 +1452,6 @@ footer span {
     border-radius: 18px;
   }
 
-  .domain-help {
-    padding: 10px;
-    font-size: 12px;
-  }
 }
 
 @media (max-width: 380px) {

@@ -1413,11 +1413,6 @@ function LoginGate({ error }) {
           Войти на сайте через Telegram
         </button>
         {showWidget ? <div id="tgLoginBox" /> : null}
-        <div className="domain-help">
-          <strong>Если появляется Bot domain invalid</strong>
-          <span>В BotFather для @{TELEGRAM_BOT_USERNAME} нужно указать домен:</span>
-          <code>{TELEGRAM_WIDGET_DOMAIN}</code>
-        </div>
         {error ? <p className="error">{error}</p> : null}
       </div>
     </main>
