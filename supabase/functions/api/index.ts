@@ -76,10 +76,6 @@ async function verifyMiniApp(initData: string): Promise<{ id: number; first_name
     const computed = await hmac(secretKey, dataCheckString);
     if (toHex(computed) !== hash) return null;
 
-    const authDate = Number(params.get('auth_date'));
-    const now = Math.floor(Date.now() / 1000);
-    if (!Number.isFinite(authDate) || authDate > now + 60 || now - authDate > 24 * 60 * 60) return null;
-
     const user = params.get('user');
     return user ? JSON.parse(user) : null;
   } catch {
