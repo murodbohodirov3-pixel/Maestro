@@ -328,14 +328,31 @@ Deno.serve(async (req) => {
     if (action === 'addSale') {
       const master = isAdmin ? payload.master : myMaster;
       const requiresOwnerApproval = !isAdmin;
+      const cash = Math.max(0, Math.round(Number(payload.cash) || 0));
+      const card = Math.max(0, Math.round(Number(payload.card) || 0));
+      const qr = Math.max(0, Math.round(Number(payload.qr) || 0));
+      const clientsCount = Math.max(0, Math.trunc(Number(payload.clients_count ?? payload.cl) || 0));
+      const isNewClient = clientsCount === 0
+        ? null
+        : payload.is_new_client === true
+          ? true
+          : payload.is_new_client === false
+            ? false
+            : null;
+
+      if (!master || !payload.d || cash + card + qr <= 0) {
+        return json({ error: 'invalid_sale' }, 400);
+      }
+
       const { error } = await sb.from('sales').insert({
         master,
         d: payload.d,
-        cash: payload.cash || 0,
-        card: payload.card || 0,
-        qr: payload.qr || 0,
-        cl: payload.cl || 0,
-        is_new_client: payload.is_new_client,
+        cash,
+        card,
+        qr,
+        cl: clientsCount,
+        clients_count: clientsCount,
+        is_new_client: isNewClient,
         status: requiresOwnerApproval ? 'pending' : 'approved',
         approved_by: requiresOwnerApproval ? null : String(appUserResult.data.id),
         approved_at: requiresOwnerApproval ? null : new Date().toISOString(),

@@ -3,7 +3,6 @@ import {
   callLegacyApi,
   captureTelegramOAuthCode,
   captureTelegramRedirectAuth,
-  clearWidgetAuth,
   getTelegramFirstName,
   needsTelegramLogin,
   startTelegramOAuthLogin,
@@ -273,7 +272,7 @@ function MasterView({ data, reload, setError }) {
     if (!payType) return setError('Выберите способ оплаты.');
     if (!numericAmount || numericAmount <= 0) return setError('Введите сумму продажи.');
     if (!masterName) return setError('Сначала выберите мастера.');
-    if (isNewClient == null) return setError('Отметьте, клиент новый или постоянный.');
+    if (clientCount > 0 && isNewClient == null) return setError('Отметьте, клиент новый или постоянный.');
 
     const payload = {
       master: masterName,
@@ -282,7 +281,8 @@ function MasterView({ data, reload, setError }) {
       card: 0,
       qr: 0,
       cl: clientCount,
-      is_new_client: isNewClient,
+      clients_count: clientCount,
+      is_new_client: clientCount === 0 ? null : isNewClient,
       [payType]: numericAmount,
     };
 
@@ -408,6 +408,7 @@ function MasterView({ data, reload, setError }) {
           <button className={isNewClient === true ? 'on' : ''} type="button" onClick={() => setIsNewClient(true)}>Новый</button>
           <button className={isNewClient === false ? 'on' : ''} type="button" onClick={() => setIsNewClient(false)}>Постоянный</button>
         </div>
+        {clientCount === 0 ? <p className="hint">Продажа сохранится в выручке, но не увеличит число клиентов.</p> : null}
         <button className="btn" type="submit">Добавить</button>
         {message ? <p className="success">{message}</p> : null}
       </form>
@@ -1534,16 +1535,6 @@ export default function App() {
               <p>{isLoading ? 'загрузка...' : data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
             </div>
           </div>
-          <button
-            className="logout"
-            type="button"
-            onClick={() => {
-              clearWidgetAuth();
-              window.location.reload();
-            }}
-          >
-            Выйти
-          </button>
         </div>
         <ThemeControls theme={theme} setTheme={setTheme} dark={dark} setDark={setDark} />
       </header>
