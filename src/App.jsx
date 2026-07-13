@@ -9,7 +9,7 @@ import {
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
-const APP_VERSION = 'debts-dashboard-v3';
+const APP_VERSION = 'master-history-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -201,6 +201,21 @@ function getRange(period, customFrom, customTo, rows = [], key = 'd') {
 function inRange(value, from, to) {
   if (!value) return false;
   return (!from || value >= from) && (!to || value <= to);
+}
+
+function belongsToMaster(row, master) {
+  if (row.master_id != null && master.id != null) {
+    return String(row.master_id) === String(master.id);
+  }
+  return row.master === master.name;
+}
+
+function reportMastersForPeriod(data, sales, fines = []) {
+  return data.masters.filter((master) => (
+    master.active !== false
+    || sales.some((sale) => belongsToMaster(sale, master))
+    || fines.some((fine) => belongsToMaster(fine, master))
+  ));
 }
 
 function normalizeData(data) {
@@ -474,10 +489,11 @@ function AdminView({ data, reload, setError }) {
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
-  const masterSummaries = data.activeMasters.map((master) => {
-    const rows = sales.filter((sale) => sale.master === master.name);
+  const reportMasters = reportMastersForPeriod(data, sales, fines);
+  const masterSummaries = reportMasters.map((master) => {
+    const rows = sales.filter((sale) => belongsToMaster(sale, master));
     const masterRevenue = rows.reduce((sum, sale) => sum + saleTotal(sale), 0);
-    const masterFine = fines.filter((fine) => fine.master === master.name).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    const masterFine = fines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
     return { master, rows, revenue: masterRevenue, pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine) };
   });
   const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
@@ -822,10 +838,11 @@ function FinanceView({ data, reload, setError }) {
   const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const payouts = data.activeMasters.reduce((sum, master) => {
-    const rows = sales.filter((sale) => sale.master === master.name);
+  const reportMasters = reportMastersForPeriod(data, sales, fines);
+  const payouts = reportMasters.reduce((sum, master) => {
+    const rows = sales.filter((sale) => belongsToMaster(sale, master));
     const rev = rows.reduce((total, sale) => total + saleTotal(sale), 0);
-    const fine = fines.filter((item) => item.master === master.name).reduce((total, item) => total + (Number(item.amount) || 0), 0);
+    const fine = fines.filter((item) => belongsToMaster(item, master)).reduce((total, item) => total + (Number(item.amount) || 0), 0);
     return sum + Math.max(0, (rev * Number(master.pct || 40)) / 100 - fine);
   }, 0);
   const salon = revenue - payouts;
