@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.telegram-auth]
 verify_jwt = false
+
+[functions.agents-report]
+verify_jwt = false

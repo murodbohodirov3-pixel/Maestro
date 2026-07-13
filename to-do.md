@@ -3,6 +3,8 @@
 ## Active
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
+- [ ] Configure and deploy the separate Telegram agents Vercel project with its private environment variables.
+- [ ] Create the persistent OpenAI conversation and register the Telegram webhook after deployment.
 
 ## Completed
 
@@ -29,3 +31,4 @@
 - [x] Added a dedicated attendance view with period filters, punctuality colors, quick fines, and seven-day fine deletion protection.
 - [x] Formatted all active money inputs with grouped thousands while typing.
 - [x] Combined UZS and USD debt summaries/charts; added monthly payment-plan forecasts and selectable monthly repayment totals without changing debt balances.
+- [x] Added Stage 1 Telegram AI team: curated read-only reports, coordinator, specialists, diagnostic tools, direct report commands, and deployment documentation.
