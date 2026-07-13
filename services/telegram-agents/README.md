@@ -88,6 +88,11 @@ node scripts/create-conversation.mjs
 `https://<agents-domain>/api/telegram` через Telegram `setWebhook`, передав
 `TELEGRAM_WEBHOOK_SECRET` как `secret_token`.
 
+Для безопасной повторной регистрации используется `POST /api/setup-webhook`.
+Endpoint принимает только `x-maestro-content-secret`, проверяет, что токен
+принадлежит `@maestro_ai_team_bot`, и может назначить только фиксированный URL
+`https://maestro-telegram-agents.vercel.app/api/telegram`.
+
 ## Доступные данные и ограничения
 
 Уже доступны продажи, клиентские количества, новые/постоянные клиенты,
