@@ -20,7 +20,7 @@
     "website": null,
     "parking": null,
     "openingHours": {
-      "scope": "daily_needs_confirmation",
+      "scope": "confirmed_daily",
       "monday": { "opens": "09:00", "closes": "23:00" },
       "tuesday": { "opens": "09:00", "closes": "23:00" },
       "wednesday": { "opens": "09:00", "closes": "23:00" },
@@ -31,11 +31,11 @@
     }
   },
   "masters": [
-    { "id": 1, "nameRu": "Жавохир", "nameUz": "Javohir", "active": true, "serviceIds": [] },
-    { "id": 2, "nameRu": "Иброхим", "nameUz": "Ibrohim", "active": true, "serviceIds": [] },
-    { "id": 3, "nameRu": "Жавлон", "nameUz": "Javlon", "active": true, "serviceIds": [] },
-    { "id": 4, "nameRu": "Жамолиддин", "nameUz": "Jamoliddin", "active": true, "serviceIds": [] },
-    { "id": 6, "nameRu": "Мироншох", "nameUz": "Mironshoh", "active": true, "serviceIds": [] }
+    { "id": 1, "nameRu": "Жавохир", "nameUz": "Javohir", "active": true, "serviceIds": ["mens_haircut", "clipper_haircut", "kids_haircut_under_14", "mens_haircut_hair_coloring", "head_toning", "styling", "edging", "beard_modeling", "beard_modeling_coloring", "haircut_beard_modeling", "hair_coloring", "beard_coloring", "steam_face_cleansing", "face_mask", "waxing_one_zone", "complex_head_massage"] },
+    { "id": 2, "nameRu": "Иброхим", "nameUz": "Ibrohim", "active": true, "serviceIds": ["mens_haircut", "clipper_haircut", "kids_haircut_under_14", "mens_haircut_hair_coloring", "head_toning", "styling", "edging", "beard_modeling", "beard_modeling_coloring", "haircut_beard_modeling", "hair_coloring", "beard_coloring", "steam_face_cleansing", "face_mask", "waxing_one_zone", "complex_head_massage"] },
+    { "id": 3, "nameRu": "Жавлон", "nameUz": "Javlon", "active": true, "serviceIds": ["mens_haircut", "clipper_haircut", "kids_haircut_under_14", "mens_haircut_hair_coloring", "head_toning", "styling", "edging", "beard_modeling", "beard_modeling_coloring", "haircut_beard_modeling", "hair_coloring", "beard_coloring", "steam_face_cleansing", "face_mask", "waxing_one_zone", "complex_head_massage"] },
+    { "id": 4, "nameRu": "Жамолиддин", "nameUz": "Jamoliddin", "active": true, "serviceIds": ["mens_haircut", "clipper_haircut", "kids_haircut_under_14", "mens_haircut_hair_coloring", "head_toning", "styling", "edging", "beard_modeling", "beard_modeling_coloring", "haircut_beard_modeling", "hair_coloring", "beard_coloring", "steam_face_cleansing", "face_mask", "waxing_one_zone", "complex_head_massage"] },
+    { "id": 6, "nameRu": "Мироншох", "nameUz": "Mironshoh", "active": true, "serviceIds": ["mens_haircut", "clipper_haircut", "kids_haircut_under_14", "mens_haircut_hair_coloring", "head_toning", "styling", "edging", "beard_modeling", "beard_modeling_coloring", "haircut_beard_modeling", "hair_coloring", "beard_coloring", "steam_face_cleansing", "face_mask", "waxing_one_zone", "complex_head_massage"] }
   ],
   "services": [
     { "id": "mens_haircut", "category": "haircut", "nameRu": "Мужская стрижка", "nameUz": "Erkaklar soch turmagi", "priceUzs": 150000, "durationMinutes": 60, "active": true },
@@ -85,9 +85,7 @@
   },
   "translationStatus": "draft_needs_owner_approval",
   "unresolved": [
-    "confirm_opening_hours_apply_every_day",
     "confirm_promotion_duration",
-    "map_services_to_masters",
     "approve_uzbek_names_and_policy_texts",
     "confirm_public_customer_telegram_or_new_bot",
     "confirm_prepayment_policy",

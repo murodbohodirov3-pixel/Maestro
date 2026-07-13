@@ -13,7 +13,8 @@ test("current owner-supplied catalog is structurally valid", async () => {
   const result = validateKnowledgeBase(await fixture());
   assert.deepEqual(result.errors, []);
   assert.ok(result.blockers.some((item) => item.includes("promotion duration")));
-  assert.ok(result.blockers.some((item) => item.includes("Жавохир")));
+  assert.ok(!result.blockers.some((item) => item.includes("opening hours")));
+  assert.ok(!result.blockers.some((item) => item.includes("no confirmed services")));
 });
 
 test("duplicate service ids are rejected", async () => {
@@ -28,7 +29,6 @@ test("approved status cannot hide unresolved operational gaps", async () => {
   data.status = "approved";
   data.unresolved = [];
   const result = validateKnowledgeBase(data);
-  assert.ok(result.blockers.some((item) => item.includes("opening hours")));
   assert.ok(result.blockers.some((item) => item.includes("promotion duration")));
-  assert.ok(result.blockers.some((item) => item.includes("no confirmed services")));
+  assert.ok(result.blockers.some((item) => item.includes("Uzbek")));
 });

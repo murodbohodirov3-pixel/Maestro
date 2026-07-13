@@ -22,11 +22,11 @@ Names are verified from live Supabase. Customer-facing spelling, languages, spec
 
 | Internal ID | Display name | RU spelling approved | UZ spelling approved | Languages | Specialties | Service IDs |
 |---:|---|---|---|---|---|---|
-| 1 | Жавохир | yes | Javohir — draft | pending | pending | pending |
-| 2 | Иброхим | yes | Ibrohim — draft | pending | pending | pending |
-| 3 | Жавлон | yes | Javlon — draft | pending | pending | pending |
-| 4 | Жамолиддин | yes | Jamoliddin — draft | pending | pending | pending |
-| 6 | Мироншох | yes | Mironshoh — draft | pending | pending | pending |
+| 1 | Жавохир | yes | Javohir — draft | pending | all services | all 16 active services |
+| 2 | Иброхим | yes | Ibrohim — draft | pending | all services | all 16 active services |
+| 3 | Жавлон | yes | Javlon — draft | pending | all services | all 16 active services |
+| 4 | Жамолиддин | yes | Jamoliddin — draft | pending | all services | all 16 active services |
+| 6 | Мироншох | yes | Mironshoh — draft | pending | all services | all 16 active services |
 
 Inactive masters remain in historical finance data but must not be offered to customers.
 
@@ -48,13 +48,13 @@ The staff shift time cannot be treated as customer opening hours.
 
 | Day | Opens | Closes | Last booking | Notes |
 |---|---:|---:|---:|---|
-| Monday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Tuesday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Wednesday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Thursday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Friday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Saturday | 09:00 | 23:00 | pending | daily scope needs confirmation |
-| Sunday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Monday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Tuesday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Wednesday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Thursday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Friday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Saturday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
+| Sunday | 09:00 | 23:00 | pending | owner-confirmed daily schedule |
 
 ## 5. Service catalog — required
 
@@ -108,7 +108,7 @@ Required checks:
 | Card transfer | yes | owner, 2026-07-13 |
 | QR/Paynet | yes | owner, 2026-07-13 |
 | Prepayment required | pending | pending |
-| Active promotions | Стрижка + маска + массаж головы — 150 000 сум | active, owner confirmed 2026-07-13; duration pending; valid until withdrawn |
+| Active promotions | Стрижка + маска + массаж головы — 150 000 сум | active, owner confirmed 2026-07-13; duration pending; no expiry, valid until withdrawn |
 | Gift certificates | pending / none | pending |
 
 The agent may mention a promotion only when an expiry date and approval source are present.
