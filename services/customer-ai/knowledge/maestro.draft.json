@@ -18,7 +18,10 @@
     "instagram": "https://www.instagram.com/maestro.barberia/",
     "telegram": null,
     "website": null,
-    "parking": null,
+    "parking": {
+      "available": true,
+      "details": null
+    },
     "openingHours": {
       "scope": "confirmed_daily",
       "monday": { "opens": "09:00", "closes": "23:00" },
@@ -68,6 +71,14 @@
     }
   ],
   "payments": ["cash", "card_transfer", "qr_paynet"],
+  "prepayment": {
+    "required": false
+  },
+  "customerTelegram": {
+    "strategy": "new_separate_test_bot",
+    "username": null,
+    "productionWritesEnabled": false
+  },
   "policies": {
     "lateArrival": {
       "penalty": "none",
@@ -83,12 +94,12 @@
     "discountRequest": "handoff_to_admin",
     "nonStandardService": "handoff_to_admin"
   },
+  "childServiceRules": {
+    "maximumAgeInclusive": 14,
+    "additionalRestrictions": "none"
+  },
   "translationStatus": "draft_needs_owner_approval",
   "unresolved": [
-    "approve_uzbek_names_and_policy_texts",
-    "confirm_public_customer_telegram_or_new_bot",
-    "confirm_prepayment_policy",
-    "confirm_parking_information",
-    "confirm_child_service_rules_beyond_age_limit"
+    "approve_uzbek_names_and_policy_texts"
   ]
 }

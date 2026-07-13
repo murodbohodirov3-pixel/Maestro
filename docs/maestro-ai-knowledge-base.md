@@ -40,7 +40,7 @@ Inactive masters remain in historical finance data but must not be offered to cu
 | Customer Telegram | pending | pending |
 | Instagram | https://www.instagram.com/maestro.barberia/ | owner, 2026-07-13 |
 | Website | none supplied | owner, 2026-07-13 |
-| Parking instructions | pending | pending |
+| Parking instructions | parking available; detailed directions not supplied | owner, 2026-07-13 |
 
 ## 4. Opening hours — required
 
@@ -107,9 +107,11 @@ Required checks:
 | Cash | yes | owner, 2026-07-13 |
 | Card transfer | yes | owner, 2026-07-13 |
 | QR/Paynet | yes | owner, 2026-07-13 |
-| Prepayment required | pending | pending |
+| Prepayment required | no | owner, 2026-07-13 |
 | Active promotions | Стрижка + маска + массаж головы — 150 000 сум, 60 minutes | active, owner confirmed 2026-07-13; no expiry, valid until withdrawn |
 | Gift certificates | pending / none | pending |
+
+For the child haircut, the only condition is age up to and including 14; there are no additional restrictions. The customer channel will be a new separate test Telegram bot with production writes disabled.
 
 The agent may mention a promotion only when an expiry date and approval source are present.
 

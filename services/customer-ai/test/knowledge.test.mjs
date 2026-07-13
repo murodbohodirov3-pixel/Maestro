@@ -15,6 +15,8 @@ test("current owner-supplied catalog is structurally valid", async () => {
   assert.ok(!result.blockers.some((item) => item.includes("promotion duration")));
   assert.ok(!result.blockers.some((item) => item.includes("opening hours")));
   assert.ok(!result.blockers.some((item) => item.includes("no confirmed services")));
+  assert.ok(!result.blockers.some((item) => item.includes("prepayment")));
+  assert.ok(!result.blockers.some((item) => item.includes("parking")));
 });
 
 test("duplicate service ids are rejected", async () => {

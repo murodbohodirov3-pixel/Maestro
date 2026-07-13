@@ -66,6 +66,12 @@ export function validateKnowledgeBase(data) {
   add(data?.policies?.lateArrival?.penalty === "none", "late-arrival penalty must be none");
   add(data?.policies?.cancellation?.penalty === "none", "cancellation penalty must be none");
   add(Array.isArray(data?.payments) && data.payments.length > 0, "at least one payment method is required");
+  add(data?.prepayment?.required === false, "prepayment must be explicitly confirmed as not required");
+  add(data?.business?.parking?.available === true, "parking availability must be explicitly confirmed");
+  add(data?.childServiceRules?.maximumAgeInclusive === 14, "child haircut maximum age must be 14");
+  add(data?.childServiceRules?.additionalRestrictions === "none", "child haircut additional restrictions must be explicit");
+  add(data?.customerTelegram?.strategy === "new_separate_test_bot", "customer Telegram must use a separate test bot");
+  add(data?.customerTelegram?.productionWritesEnabled === false, "test bot production writes must be disabled");
 
   if (data?.business?.openingHours?.scope !== "confirmed_daily") {
     blockers.push("opening hours are not confirmed as daily");
