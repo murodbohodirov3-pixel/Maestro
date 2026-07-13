@@ -3,7 +3,7 @@
 ## Active
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
-- [ ] Configure and deploy the separate Telegram agents Vercel project with its private environment variables.
+- [ ] Add `AGENTS_REPORT_SECRET` in Supabase; configure and deploy the separate Telegram agents Vercel project with its private environment variables.
 - [ ] Create the persistent OpenAI conversation and register the Telegram webhook after deployment.
 
 ## Completed
