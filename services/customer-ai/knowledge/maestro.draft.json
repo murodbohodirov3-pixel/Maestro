@@ -61,7 +61,7 @@
       "nameRu": "Стрижка + маска + массаж головы",
       "nameUz": "Soch turmagi + niqob + bosh massaji",
       "priceUzs": 150000,
-      "durationMinutes": null,
+      "durationMinutes": 60,
       "active": true,
       "validity": "until_withdrawn",
       "lastConfirmedAt": "2026-07-13"
@@ -85,7 +85,6 @@
   },
   "translationStatus": "draft_needs_owner_approval",
   "unresolved": [
-    "confirm_promotion_duration",
     "approve_uzbek_names_and_policy_texts",
     "confirm_public_customer_telegram_or_new_bot",
     "confirm_prepayment_policy",

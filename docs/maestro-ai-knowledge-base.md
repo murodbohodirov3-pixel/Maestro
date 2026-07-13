@@ -108,7 +108,7 @@ Required checks:
 | Card transfer | yes | owner, 2026-07-13 |
 | QR/Paynet | yes | owner, 2026-07-13 |
 | Prepayment required | pending | pending |
-| Active promotions | Стрижка + маска + массаж головы — 150 000 сум | active, owner confirmed 2026-07-13; duration pending; no expiry, valid until withdrawn |
+| Active promotions | Стрижка + маска + массаж головы — 150 000 сум, 60 minutes | active, owner confirmed 2026-07-13; no expiry, valid until withdrawn |
 | Gift certificates | pending / none | pending |
 
 The agent may mention a promotion only when an expiry date and approval source are present.
