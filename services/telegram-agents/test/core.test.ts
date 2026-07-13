@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatBusinessSummary, normalizeUserRequest } from "../src/commands.ts";
 import { buildInstagramProductionBrief } from "../src/instagram.ts";
+import { coordinatorPrompt } from "../src/agents.ts";
 import { buildFunctionCallOutputs, type FunctionCall } from "../src/openai.ts";
 import { formatDraft, parseJobId } from "../src/content-workflow.ts";
 import { secureEqual, splitText } from "../src/telegram.ts";
@@ -116,4 +117,11 @@ test("every OpenAI function call receives an output while execution stays capped
   assert.deepEqual(executed, [0, 1, 2, 3]);
   assert.match(outputs[4].output, /tool_call_limit/);
   assert.equal(outputs[5].call_id, "call-5");
+});
+
+test("coordinator asks and waits instead of inventing a final plan", () => {
+  assert.match(coordinatorPrompt, /максимум три самых важных вопроса/);
+  assert.match(coordinatorPrompt, /ЗАВЕРШИ ответ/);
+  assert.match(coordinatorPrompt, /НЕ доказывает, что мастер сам привёл/);
+  assert.match(coordinatorPrompt, /Сначала предложи способ измерения/);
 });
