@@ -73,12 +73,17 @@ For large restoration work, maintain `to-do.md` in the project root:
   - `debt_payments`
   - `settings`
 - Current known local Edge Function:
-  - `supabase/functions/telegram-auth`
-- Current known remote Edge Function:
+  - `supabase/functions/api`
+  - `supabase/functions/agents-report`
+  - `supabase/functions/agents-content`
+- Current verified remote Edge Functions (2026-07-13):
   - `api`
+  - `telegram-auth`
+  - `agents-report`
+  - `agents-content`
 - Current known remote Edge Function list may differ from local files. Always compare before deploying or editing functions.
 - `telegram-auth` may intentionally use `verify_jwt = false` only because it must verify Telegram `initData` itself. Do not disable JWT verification for other functions without a clear security reason.
-- Critical security note: RLS was observed disabled on the public Maestro tables. Do not silently enable RLS without policies because that can break the app. When a data feature is added, evaluate RLS and policies, explain the risk, and propose a migration plan.
+- Critical security note: on 2026-07-13 RLS was verified enabled on every current public Maestro table, with no `pg_policies` rows. The browser does not query these tables directly; the server-side `api` Edge Function uses its server secret and is the current data gateway. Do not disable RLS, add broad policies, or change grants without an audited migration and end-to-end authorization tests.
 - Never place `SUPABASE_SERVICE_ROLE_KEY`, Telegram bot tokens, or other server secrets in frontend code, Vercel client env vars, or committed files.
 
 ## Verification

@@ -3,9 +3,14 @@
 ## Active
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
-- [ ] Sign in to Supabase secrets, add `AGENTS_REPORT_SECRET` and `AGENTS_CONTENT_SECRET`, then finish the private Vercel variables for the deployed `maestro-telegram-agents` project.
-- [ ] Create the persistent OpenAI conversation and register the Telegram webhook after deployment.
+- [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.
 - [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
+
+### Maestro AI client administrator
+
+- [x] Stage 1: inspect and map the live Maestro, Supabase, Telegram, and Vercel paths without changing production data.
+- [ ] Stage 2: approve the exact business knowledge base (contacts, hours, services, prices, durations, policies, payments, FAQ, RU/UZ tone).
+- [ ] Stage 3: launch a separate test-only customer Telegram administrator; do not reuse the owner analytics bot or mutate schedule data.
 
 ## Completed
 
@@ -35,3 +40,5 @@
 - [x] Added Stage 1 Telegram AI team: curated read-only reports, coordinator, specialists, diagnostic tools, direct report commands, and deployment documentation.
 - [x] Added the Instagram producer: weekly content planning, production-ready Reels/post packages, Higgsfield prompts, owner approval guardrails, commands, and tests.
 - [x] Connected the owner's Higgsfield Pro account and added durable content jobs, explicit approval/cancellation, status tracking, and a local Seedance 2.0 worker that avoids separate Cloud API billing.
+- [x] Verified the live Supabase project is healthy, all current public tables have RLS enabled, and remote functions `api`, `telegram-auth`, `agents-report`, and `agents-content` are active.
+- [x] Verified the owner-agent public health endpoint reports Telegram, owner restriction, OpenAI, persistent conversation, Maestro reports, and content jobs configured; unauthenticated webhook requests return 401.
