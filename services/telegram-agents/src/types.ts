@@ -10,6 +10,7 @@ export type SpecialistName =
   | "analyst"
   | "finance"
   | "marketing"
+  | "instagram_producer"
   | "crm"
   | "operations"
   | "technical"

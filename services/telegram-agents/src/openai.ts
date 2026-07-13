@@ -1,5 +1,6 @@
 import { coordinatorPrompt, specialistPrompts } from "./agents.js";
 import { getConfig } from "./config.js";
+import { buildInstagramProductionBrief } from "./instagram.js";
 import { getMaestroReport } from "./maestro.js";
 import type { ReportAction, SpecialistName } from "./types.js";
 
@@ -64,12 +65,31 @@ const tools: ToolDefinition[] = [
       properties: {
         specialist: {
           type: "string",
-          enum: ["analyst", "finance", "marketing", "crm", "operations", "technical", "controller"]
+          enum: ["analyst", "finance", "marketing", "instagram_producer", "crm", "operations", "technical", "controller"]
         },
         question: { type: "string", minLength: 5, maxLength: 1000 },
         days: { type: "integer", minimum: 1, maximum: 365 }
       },
       required: ["specialist", "question", "days"],
+      additionalProperties: false
+    }
+  },
+  {
+    type: "function",
+    name: "prepare_instagram_content",
+    description: "Подготовить обязательную структуру готового Reels, поста, карусели или Stories для Maestro; для видео сформировать задание Higgsfield без запуска платной генерации",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: {
+        contentType: { type: "string", enum: ["reel", "post", "carousel", "stories"] },
+        goal: { type: "string", enum: ["views", "clients", "revenue", "retention"] },
+        topic: { type: "string", minLength: 3, maxLength: 300 },
+        offer: { type: "string", minLength: 1, maxLength: 300 },
+        audience: { type: "string", minLength: 3, maxLength: 300 },
+        days: { type: "integer", minimum: 1, maximum: 30 }
+      },
+      required: ["contentType", "goal", "topic", "offer", "audience", "days"],
       additionalProperties: false
     }
   }
@@ -149,6 +169,17 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     return consultSpecialist(specialist, String(args.question || ""), days);
   }
 
+  if (name === "prepare_instagram_content") {
+    return buildInstagramProductionBrief({
+      contentType: String(args.contentType) as "reel" | "post" | "carousel" | "stories",
+      goal: String(args.goal) as "views" | "clients" | "revenue" | "retention",
+      topic: String(args.topic || ""),
+      offer: String(args.offer || "без неподтверждённой акции"),
+      audience: String(args.audience || "мужчины в зоне обслуживания Maestro"),
+      days
+    });
+  }
+
   throw new Error(`Unknown tool: ${name}`);
 }
 
@@ -175,6 +206,7 @@ function specialistReports(specialist: SpecialistName): ReportAction[] {
   switch (specialist) {
     case "finance": return ["business_summary", "finance_report", "debt_summary"];
     case "marketing":
+    case "instagram_producer":
     case "crm": return ["business_summary", "master_performance", "data_capabilities"];
     case "operations": return ["master_performance", "attendance_report"];
     case "technical": return ["data_capabilities"];

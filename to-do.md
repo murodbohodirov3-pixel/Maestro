@@ -5,6 +5,7 @@
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 - [ ] Add `AGENTS_REPORT_SECRET` in Supabase; configure and deploy the separate Telegram agents Vercel project with its private environment variables.
 - [ ] Create the persistent OpenAI conversation and register the Telegram webhook after deployment.
+- [ ] Connect the owner's Higgsfield account through the official MCP flow, then enable credit-spending generation only behind explicit Telegram approval and job-status tracking.
 
 ## Completed
 
@@ -32,3 +33,4 @@
 - [x] Formatted all active money inputs with grouped thousands while typing.
 - [x] Combined UZS and USD debt summaries/charts; added monthly payment-plan forecasts and selectable monthly repayment totals without changing debt balances.
 - [x] Added Stage 1 Telegram AI team: curated read-only reports, coordinator, specialists, diagnostic tools, direct report commands, and deployment documentation.
+- [x] Added the Instagram producer: weekly content planning, production-ready Reels/post packages, Higgsfield prompts, owner approval guardrails, commands, and tests.
