@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatBusinessSummary, normalizeUserRequest } from "../src/commands.ts";
 import { buildInstagramProductionBrief } from "../src/instagram.ts";
+import { buildFunctionCallOutputs, type FunctionCall } from "../src/openai.ts";
 import { formatDraft, parseJobId } from "../src/content-workflow.ts";
 import { secureEqual, splitText } from "../src/telegram.ts";
 import type { ContentJob } from "../src/types.ts";
@@ -96,4 +97,23 @@ test("content commands reject missing or unsafe job ids", () => {
   assert.equal(parseJobId("/approve 12"), 12);
   assert.throws(() => parseJobId("/approve"), /Укажите номер задания/);
   assert.throws(() => parseJobId("/approve -1"), /Укажите номер задания/);
+});
+
+test("every OpenAI function call receives an output while execution stays capped", async () => {
+  const calls: FunctionCall[] = Array.from({ length: 6 }, (_, index) => ({
+    type: "function_call",
+    call_id: `call-${index}`,
+    name: "test_tool",
+    arguments: JSON.stringify({ index })
+  }));
+  const executed: number[] = [];
+  const outputs = await buildFunctionCallOutputs(calls, async (_name, args) => {
+    executed.push(Number(args.index));
+    return { ok: true };
+  }, 4);
+
+  assert.equal(outputs.length, 6);
+  assert.deepEqual(executed, [0, 1, 2, 3]);
+  assert.match(outputs[4].output, /tool_call_limit/);
+  assert.equal(outputs[5].call_id, "call-5");
 });

@@ -4,7 +4,7 @@ import { buildInstagramProductionBrief } from "./instagram.js";
 import { getMaestroReport } from "./maestro.js";
 import type { ReelDraft, ReportAction, SpecialistName } from "./types.js";
 
-interface FunctionCall {
+export interface FunctionCall {
   type: "function_call";
   call_id: string;
   name: string;
@@ -165,17 +165,30 @@ export async function runCoordinator(userText: string): Promise<string> {
     );
     if (calls.length === 0) return extractText(response);
 
-    const outputs = await Promise.all(calls.slice(0, 4).map(async (call) => ({
-      type: "function_call_output",
-      call_id: call.call_id,
-      output: JSON.stringify(await executeTool(call.name, parseArguments(call.arguments)))
-    })));
+    const outputs = await buildFunctionCallOutputs(calls, executeTool, 4);
 
     input = outputs;
     if (!config.conversationId) previousResponseId = response.id;
   }
 
   throw new Error("Coordinator exceeded tool-call limit");
+}
+
+export async function buildFunctionCallOutputs(
+  calls: FunctionCall[],
+  executor: (name: string, args: Record<string, unknown>) => Promise<unknown>,
+  limit: number
+) {
+  return await Promise.all(calls.map(async (call, index) => ({
+    type: "function_call_output",
+    call_id: call.call_id,
+    output: JSON.stringify(index < limit
+      ? await executor(call.name, parseArguments(call.arguments))
+      : {
+          error: "tool_call_limit",
+          message: `За один раунд разрешено не более ${limit} внутренних действий.`
+        })
+  })));
 }
 
 export async function createReelDraft(topic: string): Promise<ReelDraft> {
