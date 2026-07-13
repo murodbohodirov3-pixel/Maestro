@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { validateKnowledgeBase } from "../scripts/validate-knowledge.mjs";
 
-const fixtureUrl = new URL("../knowledge/maestro.draft.json", import.meta.url);
+const fixtureUrl = new URL("../knowledge/maestro.approved.json", import.meta.url);
 
 async function fixture() {
   return JSON.parse(await readFile(fixtureUrl, "utf8"));
@@ -17,6 +17,7 @@ test("current owner-supplied catalog is structurally valid", async () => {
   assert.ok(!result.blockers.some((item) => item.includes("no confirmed services")));
   assert.ok(!result.blockers.some((item) => item.includes("prepayment")));
   assert.ok(!result.blockers.some((item) => item.includes("parking")));
+  assert.deepEqual(result.blockers, []);
 });
 
 test("duplicate service ids are rejected", async () => {
@@ -30,6 +31,7 @@ test("approved status cannot hide unresolved operational gaps", async () => {
   const data = await fixture();
   data.status = "approved";
   data.unresolved = [];
+  data.translationStatus = "draft_needs_owner_approval";
   const result = validateKnowledgeBase(data);
   assert.ok(result.blockers.some((item) => item.includes("Uzbek")));
 });

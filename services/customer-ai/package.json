@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:knowledge": "node scripts/validate-knowledge.mjs knowledge/maestro.draft.json",
+    "check:knowledge": "node scripts/validate-knowledge.mjs knowledge/maestro.approved.json",
     "test": "node --test test/*.test.mjs",
     "verify": "npm run check:knowledge && npm test"
   }

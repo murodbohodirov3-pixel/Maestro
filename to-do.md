@@ -9,7 +9,7 @@
 ### Maestro AI client administrator
 
 - [x] Stage 1: inspect and map the live Maestro, Supabase, Telegram, and Vercel paths without changing production data.
-- [ ] Stage 2: approve the exact business knowledge base; all owner-dependent business facts are confirmed. Remaining blocker: final approval of Uzbek wording.
+- [x] Stage 2: exact RU/UZ business knowledge base approved; 24 bilingual FAQ scenarios and the machine approval gate pass.
 - [ ] Stage 3: launch a separate test-only customer Telegram administrator; do not reuse the owner analytics bot or mutate schedule data.
 
 ## Completed
