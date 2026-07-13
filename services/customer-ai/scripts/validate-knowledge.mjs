@@ -71,6 +71,7 @@ export function validateKnowledgeBase(data) {
   add(data?.childServiceRules?.maximumAgeInclusive === 14, "child haircut maximum age must be 14");
   add(data?.childServiceRules?.additionalRestrictions === "none", "child haircut additional restrictions must be explicit");
   add(data?.customerTelegram?.strategy === "new_separate_test_bot", "customer Telegram must use a separate test bot");
+  add(data?.customerTelegram?.username === "Maestroadmin_bot", "customer Telegram username must be Maestroadmin_bot");
   add(data?.customerTelegram?.productionWritesEnabled === false, "test bot production writes must be disabled");
 
   if (data?.business?.openingHours?.scope !== "confirmed_daily") {

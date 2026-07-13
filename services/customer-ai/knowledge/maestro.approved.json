@@ -76,7 +76,7 @@
   },
   "customerTelegram": {
     "strategy": "new_separate_test_bot",
-    "username": null,
+    "username": "Maestroadmin_bot",
     "productionWritesEnabled": false
   },
   "policies": {

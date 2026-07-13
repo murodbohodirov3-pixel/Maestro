@@ -37,7 +37,7 @@ Inactive masters remain in historical finance data but must not be offered to cu
 | Full customer-facing address | Chinobod ko'chasi, 8, Tashkent | owner, 2026-07-13 |
 | Map link | https://maps.google.com/?q=41.3512479308835,69.2895722812834 | production coordinates |
 | Public telephone | +998 20 014 30 00 | owner, 2026-07-13 |
-| Customer Telegram | new separate test bot; username assigned during Stage 3 | approved strategy, 2026-07-13 |
+| Customer Telegram | https://t.me/Maestroadmin_bot | owner-supplied test bot, 2026-07-13 |
 | Instagram | https://www.instagram.com/maestro.barberia/ | owner, 2026-07-13 |
 | Website | none supplied | owner, 2026-07-13 |
 | Parking instructions | parking available; detailed directions not supplied | owner, 2026-07-13 |
