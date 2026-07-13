@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "status": "draft",
+  "effectiveDate": "2026-07-13",
+  "lastOwnerConfirmation": "2026-07-13",
+  "business": {
+    "name": "Maestro Barberia",
+    "city": "Tashkent",
+    "timezone": "Asia/Tashkent",
+    "languages": ["ru", "uz"],
+    "address": "Chinobod ko'chasi, 8, Tashkent",
+    "coordinates": {
+      "latitude": 41.3512479308835,
+      "longitude": 69.2895722812834
+    },
+    "mapUrl": "https://maps.google.com/?q=41.3512479308835,69.2895722812834",
+    "phone": "+998200143000",
+    "instagram": "https://www.instagram.com/maestro.barberia/",
+    "telegram": null,
+    "website": null,
+    "parking": null,
+    "openingHours": {
+      "scope": "daily_needs_confirmation",
+      "monday": { "opens": "09:00", "closes": "23:00" },
+      "tuesday": { "opens": "09:00", "closes": "23:00" },
+      "wednesday": { "opens": "09:00", "closes": "23:00" },
+      "thursday": { "opens": "09:00", "closes": "23:00" },
+      "friday": { "opens": "09:00", "closes": "23:00" },
+      "saturday": { "opens": "09:00", "closes": "23:00" },
+      "sunday": { "opens": "09:00", "closes": "23:00" }
+    }
+  },
+  "masters": [
+    { "id": 1, "nameRu": "Жавохир", "nameUz": "Javohir", "active": true, "serviceIds": [] },
+    { "id": 2, "nameRu": "Иброхим", "nameUz": "Ibrohim", "active": true, "serviceIds": [] },
+    { "id": 3, "nameRu": "Жавлон", "nameUz": "Javlon", "active": true, "serviceIds": [] },
+    { "id": 4, "nameRu": "Жамолиддин", "nameUz": "Jamoliddin", "active": true, "serviceIds": [] },
+    { "id": 6, "nameRu": "Мироншох", "nameUz": "Mironshoh", "active": true, "serviceIds": [] }
+  ],
+  "services": [
+    { "id": "mens_haircut", "category": "haircut", "nameRu": "Мужская стрижка", "nameUz": "Erkaklar soch turmagi", "priceUzs": 150000, "durationMinutes": 60, "active": true },
+    { "id": "clipper_haircut", "category": "haircut", "nameRu": "Мужская стрижка под машинку", "nameUz": "Mashinkada erkaklar soch olish", "priceUzs": 100000, "durationMinutes": 40, "active": true },
+    { "id": "kids_haircut_under_14", "category": "haircut", "nameRu": "Детская стрижка до 14 лет", "nameUz": "14 yoshgacha bolalar soch turmagi", "priceUzs": 100000, "durationMinutes": 60, "active": true },
+    { "id": "mens_haircut_hair_coloring", "category": "combo", "nameRu": "Мужская стрижка + окраска волос", "nameUz": "Erkaklar soch turmagi + soch bo'yash", "priceUzs": 200000, "durationMinutes": 100, "active": true },
+    { "id": "head_toning", "category": "coloring", "nameRu": "Тонировка головы", "nameUz": "Sochni tonlash", "priceUzs": 100000, "durationMinutes": 30, "active": true },
+    { "id": "styling", "category": "haircut", "nameRu": "Укладка", "nameUz": "Soch turmaklash", "priceUzs": 60000, "durationMinutes": 30, "active": true },
+    { "id": "edging", "category": "haircut", "nameRu": "Окантовка", "nameUz": "Soch chetlarini tekislash", "priceUzs": 70000, "durationMinutes": 40, "active": true },
+    { "id": "beard_modeling", "category": "beard", "nameRu": "Моделирование бороды", "nameUz": "Soqolni modellashtirish", "priceUzs": 70000, "durationMinutes": 30, "active": true },
+    { "id": "beard_modeling_coloring", "category": "beard", "nameRu": "Моделирование бороды + окраска бороды", "nameUz": "Soqolni modellashtirish + bo'yash", "priceUzs": 100000, "durationMinutes": 60, "active": true },
+    { "id": "haircut_beard_modeling", "category": "combo", "nameRu": "Стрижка + моделирование бороды", "nameUz": "Soch turmagi + soqolni modellashtirish", "priceUzs": 180000, "durationMinutes": 90, "active": true },
+    { "id": "hair_coloring", "category": "coloring", "nameRu": "Окраска волос", "nameUz": "Soch bo'yash", "priceUzs": 80000, "durationMinutes": 30, "active": true },
+    { "id": "beard_coloring", "category": "coloring", "nameRu": "Окраска бороды", "nameUz": "Soqol bo'yash", "priceUzs": 80000, "durationMinutes": 30, "active": true },
+    { "id": "steam_face_cleansing", "category": "face_care", "nameRu": "Чистка лица паровым аппаратом (скраб + маска)", "nameUz": "Yuzni bug' apparati bilan tozalash (skrab + niqob)", "priceUzs": 100000, "durationMinutes": 40, "active": true },
+    { "id": "face_mask", "category": "face_care", "nameRu": "Чистка лица (маска)", "nameUz": "Yuzni tozalash (niqob)", "priceUzs": 35000, "durationMinutes": 20, "active": true },
+    { "id": "waxing_one_zone", "category": "face_care", "nameRu": "Удаление воском — 1 зона", "nameUz": "Mum bilan tozalash — 1 zona", "priceUzs": 20000, "durationMinutes": 15, "active": true },
+    { "id": "complex_head_massage", "category": "massage", "nameRu": "Комплексный массаж головы", "nameUz": "Kompleks bosh massaji", "priceUzs": 60000, "durationMinutes": 15, "active": true }
+  ],
+  "promotions": [
+    {
+      "id": "haircut_mask_head_massage_150k",
+      "nameRu": "Стрижка + маска + массаж головы",
+      "nameUz": "Soch turmagi + niqob + bosh massaji",
+      "priceUzs": 150000,
+      "durationMinutes": null,
+      "active": true,
+      "validity": "until_withdrawn",
+      "lastConfirmedAt": "2026-07-13"
+    }
+  ],
+  "payments": ["cash", "card_transfer", "qr_paynet"],
+  "policies": {
+    "lateArrival": {
+      "penalty": "none",
+      "textRu": "За опоздание наказаний и штрафов нет. Если вы задерживаетесь, пожалуйста, сообщите администратору.",
+      "textUz": "Kechikish uchun jarima yoki jazo yo'q. Kechikayotgan bo'lsangiz, administratorga xabar bering."
+    },
+    "cancellation": {
+      "penalty": "none",
+      "textRu": "За отмену записи наказаний и штрафов нет. Сообщите администратору, и он поможет подобрать другое время.",
+      "textUz": "Yozuvni bekor qilish uchun jarima yoki jazo yo'q. Administratorga xabar bering, u boshqa vaqtni tanlashga yordam beradi."
+    },
+    "refundOrComplaint": "handoff_to_admin",
+    "discountRequest": "handoff_to_admin",
+    "nonStandardService": "handoff_to_admin"
+  },
+  "translationStatus": "draft_needs_owner_approval",
+  "unresolved": [
+    "confirm_opening_hours_apply_every_day",
+    "confirm_promotion_duration",
+    "map_services_to_masters",
+    "approve_uzbek_names_and_policy_texts",
+    "confirm_public_customer_telegram_or_new_bot",
+    "confirm_prepayment_policy",
+    "confirm_parking_information",
+    "confirm_child_service_rules_beyond_age_limit"
+  ]
+}

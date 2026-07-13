@@ -12,7 +12,7 @@ This is the single approval document for Stage 2. A customer agent must not laun
 | City | Tashkent | production settings/project context | verified |
 | Timezone | Asia/Tashkent | production reporting contract | verified |
 | Salon coordinates | 41.3512479308835, 69.2895722812834 | `public.settings` | verified for attendance only |
-| Approximate address | 8 Chinobod ko'chasi, Yunusobod | reverse lookup of coordinates | must be owner-confirmed |
+| Customer-facing address | Chinobod ko'chasi, 8, Tashkent | owner, 2026-07-13 | verified |
 | Staff shift start | 10:10 | `public.settings.shift_start` | not confirmed as customer opening time |
 | Customer languages | Russian, Uzbek | agreed Maestro AI plan | verified requirement |
 
@@ -22,11 +22,11 @@ Names are verified from live Supabase. Customer-facing spelling, languages, spec
 
 | Internal ID | Display name | RU spelling approved | UZ spelling approved | Languages | Specialties | Service IDs |
 |---:|---|---|---|---|---|---|
-| 1 | Жавохир | pending | pending | pending | pending | pending |
-| 2 | Иброхим | pending | pending | pending | pending | pending |
-| 3 | Жавлон | pending | pending | pending | pending | pending |
-| 4 | Жамолиддин | pending | pending | pending | pending | pending |
-| 6 | Мироншох | pending | pending | pending | pending | pending |
+| 1 | Жавохир | yes | Javohir — draft | pending | pending | pending |
+| 2 | Иброхим | yes | Ibrohim — draft | pending | pending | pending |
+| 3 | Жавлон | yes | Javlon — draft | pending | pending | pending |
+| 4 | Жамолиддин | yes | Jamoliddin — draft | pending | pending | pending |
+| 6 | Мироншох | yes | Mironshoh — draft | pending | pending | pending |
 
 Inactive masters remain in historical finance data but must not be offered to customers.
 
@@ -34,12 +34,12 @@ Inactive masters remain in historical finance data but must not be offered to cu
 
 | Field | Approved value | Source/date |
 |---|---|---|
-| Full customer-facing address | pending | pending |
-| Google/2GIS/Yandex map link | pending | pending |
-| Public telephone | pending | pending |
+| Full customer-facing address | Chinobod ko'chasi, 8, Tashkent | owner, 2026-07-13 |
+| Map link | https://maps.google.com/?q=41.3512479308835,69.2895722812834 | production coordinates |
+| Public telephone | +998 20 014 30 00 | owner, 2026-07-13 |
 | Customer Telegram | pending | pending |
-| Instagram | pending | pending |
-| Website | pending / none | pending |
+| Instagram | https://www.instagram.com/maestro.barberia/ | owner, 2026-07-13 |
+| Website | none supplied | owner, 2026-07-13 |
 | Parking instructions | pending | pending |
 
 ## 4. Opening hours — required
@@ -48,13 +48,13 @@ The staff shift time cannot be treated as customer opening hours.
 
 | Day | Opens | Closes | Last booking | Notes |
 |---|---:|---:|---:|---|
-| Monday | pending | pending | pending | |
-| Tuesday | pending | pending | pending | |
-| Wednesday | pending | pending | pending | |
-| Thursday | pending | pending | pending | |
-| Friday | pending | pending | pending | |
-| Saturday | pending | pending | pending | |
-| Sunday | pending | pending | pending | |
+| Monday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Tuesday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Wednesday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Thursday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Friday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Saturday | 09:00 | 23:00 | pending | daily scope needs confirmation |
+| Sunday | 09:00 | 23:00 | pending | daily scope needs confirmation |
 
 ## 5. Service catalog — required
 
@@ -62,7 +62,22 @@ One row per sellable service. Prices must be exact integers in UZS; “from” p
 
 | Stable ID | Name RU | Name UZ | Price UZS | Duration min | Active | Description/conditions |
 |---|---|---|---:|---:|---|---|
-| pending | pending | pending | pending | pending | pending | pending |
+| mens_haircut | Мужская стрижка | Erkaklar soch turmagi — draft | 150000 | 60 | yes | |
+| clipper_haircut | Мужская стрижка под машинку | Mashinkada erkaklar soch olish — draft | 100000 | 40 | yes | |
+| kids_haircut_under_14 | Детская стрижка до 14 лет | 14 yoshgacha bolalar soch turmagi — draft | 100000 | 60 | yes | age limit confirmed |
+| mens_haircut_hair_coloring | Мужская стрижка + окраска волос | Erkaklar soch turmagi + soch bo'yash — draft | 200000 | 100 | yes | |
+| head_toning | Тонировка головы | Sochni tonlash — draft | 100000 | 30 | yes | |
+| styling | Укладка | Soch turmaklash — draft | 60000 | 30 | yes | |
+| edging | Окантовка | Soch chetlarini tekislash — draft | 70000 | 40 | yes | |
+| beard_modeling | Моделирование бороды | Soqolni modellashtirish — draft | 70000 | 30 | yes | |
+| beard_modeling_coloring | Моделирование бороды + окраска бороды | Soqolni modellashtirish + bo'yash — draft | 100000 | 60 | yes | |
+| haircut_beard_modeling | Стрижка + моделирование бороды | Soch turmagi + soqolni modellashtirish — draft | 180000 | 90 | yes | |
+| hair_coloring | Окраска волос | Soch bo'yash — draft | 80000 | 30 | yes | |
+| beard_coloring | Окраска бороды | Soqol bo'yash — draft | 80000 | 30 | yes | |
+| steam_face_cleansing | Чистка лица паровым аппаратом (скраб + маска) | Yuzni bug' apparati bilan tozalash (skrab + niqob) — draft | 100000 | 40 | yes | |
+| face_mask | Чистка лица (маска) | Yuzni tozalash (niqob) — draft | 35000 | 20 | yes | |
+| waxing_one_zone | Удаление воском — 1 зона | Mum bilan tozalash — 1 zona — draft | 20000 | 15 | yes | |
+| complex_head_massage | Комплексный массаж головы | Kompleks bosh massaji — draft | 60000 | 15 | yes | |
 
 Required checks:
 
@@ -76,8 +91,8 @@ Required checks:
 
 | Policy | Approved RU text | Approved UZ text | Agent action |
 |---|---|---|---|
-| Late arrival | pending | pending | pending |
-| Cancellation | pending | pending | pending |
+| Late arrival | Штрафов и наказаний нет; попросить сообщить администратору | Draft translation prepared | inform / hand off if rescheduling is needed |
+| Cancellation | Штрафов и наказаний нет; помочь подобрать другое время | Draft translation prepared | hand off until booking workflow exists |
 | Rescheduling | pending | pending | pending |
 | No-show | pending | pending | pending |
 | Refund/complaint | pending | pending | always hand off |
@@ -89,11 +104,11 @@ Required checks:
 
 | Field | Approved value | Expiry/source |
 |---|---|---|
-| Cash | pending | pending |
-| Card | pending | pending |
-| QR/Paynet | pending | pending |
+| Cash | yes | owner, 2026-07-13 |
+| Card transfer | yes | owner, 2026-07-13 |
+| QR/Paynet | yes | owner, 2026-07-13 |
 | Prepayment required | pending | pending |
-| Active promotions | pending / none | pending |
+| Active promotions | Стрижка + маска + массаж головы — 150 000 сум | active, owner confirmed 2026-07-13; duration pending; valid until withdrawn |
 | Gift certificates | pending / none | pending |
 
 The agent may mention a promotion only when an expiry date and approval source are present.

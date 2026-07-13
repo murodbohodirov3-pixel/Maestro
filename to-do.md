@@ -9,14 +9,14 @@
 ### Maestro AI client administrator
 
 - [x] Stage 1: inspect and map the live Maestro, Supabase, Telegram, and Vercel paths without changing production data.
-- [ ] Stage 2: approve the exact business knowledge base; strict draft and approval gate are prepared in `docs/maestro-ai-knowledge-base.md`, authoritative contacts/prices/rules are still required.
+- [ ] Stage 2: approve the exact business knowledge base; owner-supplied catalog is stored in `services/customer-ai/knowledge/maestro.draft.json` and structurally validated. Remaining blockers: daily-hours confirmation, promotion duration, master/service mapping, Uzbek wording, and a few operational FAQ rules.
 - [ ] Stage 3: launch a separate test-only customer Telegram administrator; do not reuse the owner analytics bot or mutate schedule data.
 
 ## Completed
 
 - [x] Confirmed break point: `4130f28` replaced working HTML with React/Vite.
 - [x] Confirmed remote Supabase function `api` is active and contains legacy actions.
-- [x] Confirmed RLS is disabled and must not be enabled without policies.
+- [x] Confirmed RLS was disabled during the original restoration; later verified the staged RLS migrations enabled it on all current public tables without public policies.
 - [x] Added React legacy shell that loads and mutates data through Edge Function `api`.
 - [x] Restored Telegram Mini App / Login Widget auth flow in React.
 - [x] Added local source copy for `supabase/functions/api`.
