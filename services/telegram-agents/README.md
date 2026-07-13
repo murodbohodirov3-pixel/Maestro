@@ -48,7 +48,7 @@ Vercel CLI через `npx vercel dev`; CLI намеренно не включё
 ## Переменные Vercel
 
 Создайте отдельный Vercel project с Root Directory
-`services/telegram-agents` и добавьте:
+`services/telegram-agents` (создан: `maestro-telegram-agents`) и добавьте:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
@@ -59,11 +59,14 @@ Vercel CLI через `npx vercel dev`; CLI намеренно не включё
 - `OPENAI_CONVERSATION_ID`
 - `MAESTRO_SUPABASE_URL`
 - `MAESTRO_REPORT_SECRET`
+- `MAESTRO_CONTENT_SECRET`
 
 В Supabase secrets добавляется только:
 
 - `AGENTS_REPORT_SECRET` — то же случайное значение, что
   `MAESTRO_REPORT_SECRET` в Vercel.
+- `AGENTS_CONTENT_SECRET` — то же случайное значение, что
+  `MAESTRO_CONTENT_SECRET` в Vercel и локальном исполнителе.
 
 Не добавляйте service role или Telegram token во frontend `.env` Maestro.
 
@@ -101,19 +104,34 @@ node scripts/create-conversation.mjs
 точный промпт для Higgsfield, а `/instagram` — недельный план с тремя
 приоритетными роликами.
 
-Автоматический запуск генерации пока намеренно не включён. Официальный
-Higgsfield MCP требует входа через аккаунт Higgsfield, генерации выполняются
-асинхронно и расходуют кредиты. После подключения аккаунта платный вызов должен
-проходить через отдельное явное подтверждение владельца; до этого агент обязан
-писать `черновик`, а не `ролик создан`.
+Платная генерация защищена отдельным подтверждением. `/reel <тема>` создаёт
+структурированный черновик в `agent_content_jobs`, `/approve <id>` разрешает
+расход кредитов, `/cancel <id>` отменяет его, а `/content [id]` показывает
+статус и ссылку на результат. До подтверждения Higgsfield не запускается.
+
+Оплаченный пользовательский Higgsfield Pro и Higgsfield Cloud API имеют разные
+балансы. Чтобы не покупать Cloud-кредиты второй раз, генерация запускается на
+компьютере владельца через уже авторизованный официальный CLI:
+
+```powershell
+cd services/telegram-agents
+$env:OWNER_TELEGRAM_ID="..."
+$env:MAESTRO_SUPABASE_URL="https://ivowbhraaistxvoymxpf.supabase.co"
+$env:MAESTRO_CONTENT_SECRET="..."
+npm.cmd run content:run -- 12
+```
+
+Число `12` — номер подтверждённого задания. Исполнитель принимает только статус
+`approved`, переводит его в `generating`, ждёт Seedance 2.0 и сохраняет итоговый
+URL либо безопасное сообщение об ошибке. Команда `/content 12` покажет результат.
 
 ## Следующие этапы
 
 1. Проверить неделю реальных диалогов и исправить слабые диагностические ответы.
 2. Добавить отдельное хранилище задач, KPI и экспериментов, не затрагивая
    рабочие таблицы Maestro.
-3. Подключить Higgsfield MCP после входа владельца в аккаунт и реализовать
-   подтверждение каждого платного запуска с журналом статусов.
+3. После первого ручного теста установить локальный исполнитель как фоновую
+   задачу Windows, чтобы подтверждённые ролики запускались без команды в консоли.
 4. Подключить клиентскую CRM и маркетинговые источники с отдельным согласием и
    политиками доступа.
 5. Добавлять действия только через явное подтверждение владельца и журнал

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { formatBusinessSummary, normalizeUserRequest } from "../src/commands.ts";
 import { buildInstagramProductionBrief } from "../src/instagram.ts";
+import { formatDraft, parseJobId } from "../src/content-workflow.ts";
 import { secureEqual, splitText } from "../src/telegram.ts";
+import type { ContentJob } from "../src/types.ts";
 
 test("secureEqual compares secrets without accepting prefixes", () => {
   assert.equal(secureEqual("correct-secret", "correct-secret"), true);
@@ -58,4 +60,40 @@ test("Instagram brief requires owner approval before spending credits", () => {
   assert.equal(brief.status, "draft_waiting_for_owner_approval");
   assert.equal(brief.productionRules.aspectRatio, "9:16");
   assert.equal(brief.approval.required, true);
+});
+
+test("content draft exposes approval but never claims generation started", () => {
+  const job: ContentJob = {
+    id: 12,
+    owner_telegram_id: "123456",
+    kind: "reel",
+    status: "draft",
+    topic: "до и после",
+    goal: "clients",
+    concept: "Показать аккуратное преображение клиента",
+    hook: "Смотрите до конца",
+    shot_list: ["До", "Процесс", "После"],
+    voiceover: "",
+    on_screen_text: ["Maestro"],
+    higgsfield_prompt: "Vertical cinematic barber transformation",
+    negative_prompt: "distorted hands",
+    cover_text: "До / После",
+    caption: "Запишитесь в Maestro",
+    cta: "Напишите нам",
+    stories: ["Тизер"],
+    kpi: "Записи из Instagram",
+    provider: "higgsfield",
+    created_at: "2026-07-13T00:00:00Z",
+    updated_at: "2026-07-13T00:00:00Z"
+  };
+  const result = formatDraft(job);
+  assert.match(result, /ЧЕРНОВИК/);
+  assert.match(result, /Higgsfield ещё не запущен/);
+  assert.match(result, /\/approve 12/);
+});
+
+test("content commands reject missing or unsafe job ids", () => {
+  assert.equal(parseJobId("/approve 12"), 12);
+  assert.throws(() => parseJobId("/approve"), /Укажите номер задания/);
+  assert.throws(() => parseJobId("/approve -1"), /Укажите номер задания/);
 });

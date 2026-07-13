@@ -3,9 +3,9 @@
 ## Active
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
-- [ ] Add `AGENTS_REPORT_SECRET` in Supabase; configure and deploy the separate Telegram agents Vercel project with its private environment variables.
+- [ ] Sign in to Supabase secrets, add `AGENTS_REPORT_SECRET` and `AGENTS_CONTENT_SECRET`, then finish the private Vercel variables for the deployed `maestro-telegram-agents` project.
 - [ ] Create the persistent OpenAI conversation and register the Telegram webhook after deployment.
-- [ ] Connect the owner's Higgsfield account through the official MCP flow, then enable credit-spending generation only behind explicit Telegram approval and job-status tracking.
+- [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
 
 ## Completed
 
@@ -34,3 +34,4 @@
 - [x] Combined UZS and USD debt summaries/charts; added monthly payment-plan forecasts and selectable monthly repayment totals without changing debt balances.
 - [x] Added Stage 1 Telegram AI team: curated read-only reports, coordinator, specialists, diagnostic tools, direct report commands, and deployment documentation.
 - [x] Added the Instagram producer: weekly content planning, production-ready Reels/post packages, Higgsfield prompts, owner approval guardrails, commands, and tests.
+- [x] Connected the owner's Higgsfield Pro account and added durable content jobs, explicit approval/cancellation, status tracking, and a local Seedance 2.0 worker that avoids separate Cloud API billing.

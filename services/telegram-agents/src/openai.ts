@@ -2,7 +2,7 @@ import { coordinatorPrompt, specialistPrompts } from "./agents.js";
 import { getConfig } from "./config.js";
 import { buildInstagramProductionBrief } from "./instagram.js";
 import { getMaestroReport } from "./maestro.js";
-import type { ReportAction, SpecialistName } from "./types.js";
+import type { ReelDraft, ReportAction, SpecialistName } from "./types.js";
 
 interface FunctionCall {
   type: "function_call";
@@ -27,6 +27,39 @@ interface ToolDefinition {
   strict: true;
   parameters: Record<string, unknown>;
 }
+
+const reelDraftTool: ToolDefinition = {
+  type: "function",
+  name: "submit_reel_draft",
+  description: "Вернуть полностью готовый производственный пакет Reels для сохранения и подтверждения владельцем",
+  strict: true,
+  parameters: {
+    type: "object",
+    properties: {
+      kind: { type: "string", enum: ["reel"] },
+      topic: { type: "string", minLength: 3, maxLength: 300 },
+      goal: { type: "string", enum: ["views", "clients", "revenue", "retention"] },
+      concept: { type: "string", minLength: 10, maxLength: 2000 },
+      hook: { type: "string", minLength: 3, maxLength: 1000 },
+      shotList: { type: "array", minItems: 3, maxItems: 12, items: { type: "string", minLength: 3, maxLength: 1000 } },
+      voiceover: { type: "string", maxLength: 3000 },
+      onScreenText: { type: "array", maxItems: 12, items: { type: "string", maxLength: 300 } },
+      higgsfieldPrompt: { type: "string", minLength: 30, maxLength: 12000 },
+      negativePrompt: { type: "string", maxLength: 3000 },
+      coverText: { type: "string", minLength: 2, maxLength: 120 },
+      caption: { type: "string", minLength: 10, maxLength: 3000 },
+      cta: { type: "string", minLength: 2, maxLength: 500 },
+      stories: { type: "array", minItems: 1, maxItems: 6, items: { type: "string", maxLength: 500 } },
+      kpi: { type: "string", minLength: 5, maxLength: 1000 }
+    },
+    required: [
+      "kind", "topic", "goal", "concept", "hook", "shotList", "voiceover",
+      "onScreenText", "higgsfieldPrompt", "negativePrompt", "coverText", "caption",
+      "cta", "stories", "kpi"
+    ],
+    additionalProperties: false
+  }
+};
 
 const periodParameters = {
   type: "object",
@@ -145,6 +178,30 @@ export async function runCoordinator(userText: string): Promise<string> {
   throw new Error("Coordinator exceeded tool-call limit");
 }
 
+export async function createReelDraft(topic: string): Promise<ReelDraft> {
+  const evidence = await Promise.all([
+    getMaestroReport({ action: "business_summary", days: 30 }),
+    getMaestroReport({ action: "data_capabilities" })
+  ]);
+  const config = getConfig();
+  const response = await createResponse({
+    model: config.specialistModel,
+    instructions: `${specialistPrompts.instagram_producer}
+Подготовь один реалистичный Reels для Maestro. Не выдумывай цены, скидки, отзывы или статистику.
+Higgsfield prompt пиши по-английски. Остальные тексты — по-русски. Генерацию не запускай.`,
+    input: `Тема владельца: ${topic || "привлечение новых клиентов"}\n\nДоступные факты Maestro:\n${JSON.stringify(evidence)}`,
+    tools: [reelDraftTool],
+    toolChoice: { type: "function", name: "submit_reel_draft" }
+  });
+  const call = (response.output || []).find(
+    (item): item is FunctionCall => item.type === "function_call"
+      && "name" in item
+      && item.name === "submit_reel_draft"
+  );
+  if (!call) throw new Error("Instagram producer returned no draft");
+  return parseArguments(call.arguments) as unknown as ReelDraft;
+}
+
 async function executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   const days = clampDays(args.days);
   const reportActions: Record<string, ReportAction> = {
@@ -222,6 +279,7 @@ async function createResponse(options: {
   tools?: ToolDefinition[];
   conversation?: string;
   previousResponseId?: string;
+  toolChoice?: Record<string, unknown>;
 }): Promise<ResponseData> {
   const config = getConfig();
   const body: Record<string, unknown> = {
@@ -233,6 +291,7 @@ async function createResponse(options: {
   if (options.tools) body.tools = options.tools;
   if (options.conversation) body.conversation = options.conversation;
   if (options.previousResponseId) body.previous_response_id = options.previousResponseId;
+  if (options.toolChoice) body.tool_choice = options.toolChoice;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",

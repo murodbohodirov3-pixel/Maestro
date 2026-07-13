@@ -1,4 +1,5 @@
 import { handleDirectCommand, normalizeUserRequest } from "../src/commands.js";
+import { handleContentCommand } from "../src/content-workflow.js";
 import { getConfig } from "../src/config.js";
 import { runCoordinator } from "../src/openai.js";
 import { secureEqual, sendTelegramMessage, sendTyping } from "../src/telegram.js";
@@ -49,7 +50,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     await sendTyping(chatId);
-    const directAnswer = await handleDirectCommand(text);
+    const contentAnswer = await handleContentCommand(text);
+    const directAnswer = contentAnswer ?? await handleDirectCommand(text);
     const answer = directAnswer ?? await runCoordinator(normalizeUserRequest(text));
     await sendTelegramMessage(chatId, answer);
     return res.status(200).json({ ok: true });

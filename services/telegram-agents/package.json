@@ -6,7 +6,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "verify": "npm run check && npm run test"
+    "verify": "npm run check && npm run test",
+    "content:run": "node scripts/process-content-job.mjs"
   },
   "dependencies": {},
   "devDependencies": {

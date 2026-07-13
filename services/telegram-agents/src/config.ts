@@ -8,6 +8,8 @@ export interface AppConfig {
   conversationId?: string;
   maestroReportUrl: string;
   maestroReportSecret: string;
+  maestroContentUrl: string;
+  maestroContentSecret: string;
 }
 
 function required(name: string): string {
@@ -28,7 +30,9 @@ export function getConfig(): AppConfig {
     specialistModel: process.env.OPENAI_SPECIALIST_MODEL?.trim() || "gpt-5.4-mini",
     conversationId: process.env.OPENAI_CONVERSATION_ID?.trim() || undefined,
     maestroReportUrl: `${maestroUrl}/functions/v1/agents-report`,
-    maestroReportSecret: required("MAESTRO_REPORT_SECRET")
+    maestroReportSecret: required("MAESTRO_REPORT_SECRET"),
+    maestroContentUrl: `${maestroUrl}/functions/v1/agents-content`,
+    maestroContentSecret: required("MAESTRO_CONTENT_SECRET")
   };
 }
 
@@ -38,6 +42,7 @@ export function configuredFeatures(): Record<string, boolean> {
     owner: Boolean(process.env.OWNER_TELEGRAM_ID),
     openai: Boolean(process.env.OPENAI_API_KEY),
     persistentConversation: Boolean(process.env.OPENAI_CONVERSATION_ID),
-    maestroReports: Boolean(process.env.MAESTRO_SUPABASE_URL && process.env.MAESTRO_REPORT_SECRET)
+    maestroReports: Boolean(process.env.MAESTRO_SUPABASE_URL && process.env.MAESTRO_REPORT_SECRET),
+    contentJobs: Boolean(process.env.MAESTRO_SUPABASE_URL && process.env.MAESTRO_CONTENT_SECRET)
   };
 }

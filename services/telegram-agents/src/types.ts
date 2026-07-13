@@ -58,3 +58,48 @@ export type MaestroReport = Record<string, unknown> & {
   period?: MetricPeriod;
   caveats?: string[];
 };
+
+export interface ReelDraft {
+  kind: "reel";
+  topic: string;
+  goal: "views" | "clients" | "revenue" | "retention";
+  concept: string;
+  hook: string;
+  shotList: string[];
+  voiceover: string;
+  onScreenText: string[];
+  higgsfieldPrompt: string;
+  negativePrompt: string;
+  coverText: string;
+  caption: string;
+  cta: string;
+  stories: string[];
+  kpi: string;
+}
+
+export interface ContentJob {
+  id: number;
+  owner_telegram_id: string;
+  kind: "reel";
+  status: "draft" | "approved" | "generating" | "completed" | "failed" | "cancelled";
+  topic: string;
+  goal: ReelDraft["goal"];
+  concept: string;
+  hook: string;
+  shot_list: string[];
+  voiceover: string;
+  on_screen_text: string[];
+  higgsfield_prompt: string;
+  negative_prompt: string;
+  cover_text: string;
+  caption: string;
+  cta: string;
+  stories: string[];
+  kpi: string;
+  provider: "higgsfield";
+  provider_job_id?: string | null;
+  result_url?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
