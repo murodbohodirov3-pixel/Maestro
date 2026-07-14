@@ -50,6 +50,25 @@ async function fetchAllRows(
   }
 }
 
+async function fetchAppointments(filters: Record<string, string | number> = {}) {
+  const rows: Record<string, unknown>[] = [];
+  const fromDate = `${tashkentDate(-60)}T00:00:00+05:00`;
+  const toDate = `${tashkentDate(180)}T00:00:00+05:00`;
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let query = sb.from('appointments').select('*');
+    for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
+    const { data, error } = await query
+      .gte('starts_at', fromDate)
+      .lt('starts_at', toDate)
+      .order('starts_at', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
+}
+
 async function hmac(keyData: Uint8Array, msg: string): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -274,7 +293,9 @@ Deno.serve(async (req) => {
     console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
 
     const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
+    const canManageCalendar = ['owner', 'admin'].includes(appUserResult.data.role);
     let myMaster: string | null = null;
+    let myMasterId: number | null = null;
     if (appUserResult.data.master_id) {
       const masterMatch = await sb
         .from('masters')
@@ -282,7 +303,10 @@ Deno.serve(async (req) => {
         .eq('id', appUserResult.data.master_id)
         .maybeSingle();
       if (masterMatch.error) return json({ error: masterMatch.error.message }, 500);
-      if (masterMatch.data?.active) myMaster = masterMatch.data.name;
+      if (masterMatch.data?.active) {
+        myMaster = masterMatch.data.name;
+        myMasterId = Number(appUserResult.data.master_id);
+      }
     }
 
     if (!isAdmin && !myMaster) return json({ error: 'not_in_list' }, 403);
@@ -292,13 +316,17 @@ Deno.serve(async (req) => {
       const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
 
       if (isAdmin) {
-        const [sales, fines, attendance, expenses, debts, debt_payments] = await Promise.all([
+        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules] = await Promise.all([
           fetchAllRows('sales', 'd'),
           fetchAllRows('fines', 'id'),
           fetchAllRows('attendance', 'id'),
           fetchAllRows('expenses', 'date'),
           fetchAllRows('debts', 'id'),
           fetchAllRows('debt_payments', 'date'),
+          canManageCalendar ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
+          canManageCalendar ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
+          canManageCalendar ? fetchAppointments() : Promise.resolve([]),
+          canManageCalendar ? fetchAllRows('master_schedule_rules', 'iso_weekday') : Promise.resolve([]),
         ]);
 
         return json({
@@ -311,18 +339,41 @@ Deno.serve(async (req) => {
           expenses,
           debts,
           debt_payments,
+          booking_services,
+          master_day_statuses,
+          appointments,
+          master_schedule_rules,
+          appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
         });
       }
 
-      const [sales, fines, attendance] = await Promise.all([
+      const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules] = await Promise.all([
         fetchAllRows('sales', 'd', { master: myMaster }),
         fetchAllRows('fines', 'id', { master: myMaster }),
         fetchAllRows('attendance', 'id', { master: myMaster }),
+        fetchAllRows('booking_services', 'id'),
+        fetchAllRows('master_day_statuses', 'work_date', { master_id: myMasterId! }),
+        fetchAppointments({ master_id: myMasterId! }),
+        fetchAllRows('master_schedule_rules', 'iso_weekday', { master_id: myMasterId! }),
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
-      return json({ role: 'master', me: myMaster, masters: meOnly, settings, sales, fines, attendance, sessionToken: issuedSessionToken });
+      return json({
+        role: 'master',
+        appRole: appUserResult.data.role,
+        me: myMaster,
+        masters: meOnly,
+        settings,
+        sales,
+        fines,
+        attendance,
+        booking_services,
+        master_day_statuses,
+        appointments,
+        master_schedule_rules,
+        sessionToken: issuedSessionToken,
+      });
     }
 
     if (action === 'addSale') {
@@ -427,6 +478,56 @@ Deno.serve(async (req) => {
       const master = isAdmin ? payload.master : myMaster;
       await sb.from('attendance').delete().eq('master', master).eq('d', payload.d);
       return json({ ok: true });
+    }
+
+    if (action === 'setMasterDayOff') {
+      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      const masterId = Number(payload.master_id);
+      if (!Number.isInteger(masterId) || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.work_date || ''))) {
+        return json({ error: 'invalid_day_off_request' }, 400);
+      }
+      const { data: result, error } = await sb.rpc('maestro_set_master_day_off', {
+        p_master_id: masterId,
+        p_work_date: payload.work_date,
+        p_enabled: payload.enabled === true,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, result?.error === 'appointments_exist' ? 409 : 400);
+      return json(result);
+    }
+
+    if (action === 'addAppointment') {
+      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      const { data: result, error } = await sb.rpc('maestro_create_appointment', {
+        p_master_id: Number(payload.master_id),
+        p_service_id: String(payload.service_id || ''),
+        p_starts_at: payload.starts_at,
+        p_client_name: String(payload.client_name || ''),
+        p_client_phone: payload.client_phone ? String(payload.client_phone) : null,
+        p_notes: payload.notes ? String(payload.notes) : null,
+        p_status: payload.status === 'pending' ? 'pending' : 'confirmed',
+        p_source: 'admin',
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) {
+        const conflict = ['slot_already_booked', 'master_day_off'].includes(result?.error);
+        return json(result, conflict ? 409 : 400);
+      }
+      return json(result);
+    }
+
+    if (action === 'setAppointmentStatus') {
+      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      const { data: result, error } = await sb.rpc('maestro_set_appointment_status', {
+        p_appointment_id: payload.id,
+        p_status: payload.status,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, result?.error === 'appointment_not_found' ? 404 : 400);
+      return json(result);
     }
 
     if (action === 'addFine') {

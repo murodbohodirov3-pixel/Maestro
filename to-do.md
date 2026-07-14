@@ -12,6 +12,13 @@
 - [x] Stage 2: exact RU/UZ business knowledge base approved; 24 bilingual FAQ scenarios and the machine approval gate pass.
 - [ ] Stage 3: launch a separate test-only customer Telegram administrator; do not reuse the owner analytics bot or mutate schedule data.
 
+### Calendar and booking system
+
+- [x] Design the protected calendar schema, service catalog, day-off status, appointment audit trail, and database-level overlap prevention.
+- [x] Add the owner/admin calendar UI, each master's private calendar, appointment status controls, and the «Выходной» button in attendance.
+- [ ] Apply the reviewed production migration, deploy the `api` function and frontend, then run owner/master end-to-end checks.
+- [ ] Configure each master's weekly working hours before exposing real availability to the customer bot.
+
 ## Completed
 
 - [x] Confirmed break point: `4130f28` replaced working HTML with React/Vite.

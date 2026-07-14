@@ -164,7 +164,9 @@ export async function callLegacyApi(action, payload = {}) {
 
   if (!response.ok) {
     if (response.status === 401) localStorage.removeItem(APP_SESSION_KEY);
-    throw new Error(result?.error || `HTTP ${response.status}`);
+    const error = new Error(result?.error || `HTTP ${response.status}`);
+    error.details = result;
+    throw error;
   }
 
   if (result?.sessionToken) localStorage.setItem(APP_SESSION_KEY, result.sessionToken);

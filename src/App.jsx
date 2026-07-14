@@ -9,7 +9,7 @@ import {
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
 
-const APP_VERSION = 'master-history-v1';
+const APP_VERSION = 'calendar-foundation-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -203,6 +203,28 @@ function inRange(value, from, to) {
   return (!from || value >= from) && (!to || value <= to);
 }
 
+function tashkentDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function appointmentTime(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleTimeString('ru-RU', {
+    timeZone: 'Asia/Tashkent',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function belongsToMaster(row, master) {
   if (row.master_id != null && master.id != null) {
     return String(row.master_id) === String(master.id);
@@ -225,6 +247,7 @@ function normalizeData(data) {
 
   return {
     role: data.role || 'unknown',
+    appRole: data.appRole || data.role || 'unknown',
     me: data.me || '',
     masters,
     byName,
@@ -232,6 +255,10 @@ function normalizeData(data) {
     sales: data.sales || [],
     fines: data.fines || [],
     attendance: data.attendance || [],
+    bookingServices: data.booking_services || [],
+    dayStatuses: data.master_day_statuses || [],
+    appointments: data.appointments || [],
+    scheduleRules: data.master_schedule_rules || [],
     expenses: data.expenses || [],
     debts: data.debts || [],
     debtPayments: data.debt_payments || [],
@@ -624,6 +651,7 @@ function AttendanceView({ data, reload, setError }) {
   });
   const [message, setMessage] = useState('');
   const [savingFineKey, setSavingFineKey] = useState('');
+  const [savingDayOffKey, setSavingDayOffKey] = useState('');
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredAttendance = data.attendance
     .filter((item) => inRange(rowDate(item), range.from, range.to))
@@ -673,6 +701,35 @@ function AttendanceView({ data, reload, setError }) {
     if (arrived) await callLegacyApi('setAttendance', { master, d: date, arrived });
     else await callLegacyApi('delAttendance', { master, d: date });
     await reload();
+  }
+
+  async function toggleDayOff(master, date, enabled) {
+    const masterRecord = data.masters.find((item) => item.name === master);
+    if (!masterRecord?.id) return setError('Не найден master_id для выбранного мастера.');
+    if (enabled && !confirm(`Отметить ${master} как выходного за ${displayDate(date)}? Календарь дня будет закрыт для новых записей.`)) return;
+    const key = `${masterRecord.id}-${date}`;
+    setSavingDayOffKey(key);
+    setError('');
+    setMessage('');
+    try {
+      await callLegacyApi('setMasterDayOff', {
+        master_id: masterRecord.id,
+        work_date: date,
+        enabled,
+      });
+      setMessage(enabled ? `Выходной установлен: ${master}.` : `Выходной отменён: ${master}.`);
+      await reload();
+    } catch (dayOffError) {
+      const conflicts = dayOffError.details?.appointments || [];
+      if (dayOffError.message === 'appointments_exist') {
+        const times = conflicts.map((appointment) => appointmentTime(appointment.starts_at)).join(', ');
+        setError(`Выходной не установлен: есть активные записи${times ? ` на ${times}` : ''}. Сначала перенесите или отмените их.`);
+      } else {
+        setError(dayOffError.message || 'Не удалось изменить выходной.');
+      }
+    } finally {
+      setSavingDayOffKey('');
+    }
   }
 
   async function createFine(master, date, amount) {
@@ -727,9 +784,13 @@ function AttendanceView({ data, reload, setError }) {
         />
         <div className="attendance-list">
           {attendanceRows.length ? attendanceRows.map((item) => {
+            const masterRecord = data.masters.find((master) => master.name === item.master);
+            const dayOff = data.dayStatuses.some((day) => (
+              String(day.master_id) === String(masterRecord?.id) && day.work_date === rowDate(item)
+            ));
             const arrived = displayTime(item.arrived || item.arrived_at);
             const lateBy = arrived ? minutesLate(arrived, shiftStart) : 0;
-            const status = !arrived ? 'missing' : lateBy > 0 ? 'late' : 'on-time';
+            const status = dayOff ? 'day-off' : !arrived ? 'missing' : lateBy > 0 ? 'late' : 'on-time';
             const fineKey = `${item.master}-${rowDate(item)}`;
             const quickFineExists = data.fines.some((fine) => (
               fine.master === item.master
@@ -743,7 +804,9 @@ function AttendanceView({ data, reload, setError }) {
                   <strong>{item.master}</strong>
                   <span>{displayDate(rowDate(item))}</span>
                   <span>
-                    {!arrived
+                    {dayOff
+                      ? 'выходной · календарь закрыт'
+                      : !arrived
                       ? 'нет отметки'
                       : lateBy > 0
                         ? `опоздал на ${lateBy} мин`
@@ -755,8 +818,19 @@ function AttendanceView({ data, reload, setError }) {
                     aria-label={`Время прихода ${item.master} ${displayDate(rowDate(item))}`}
                     type="time"
                     defaultValue={arrived}
+                    disabled={dayOff}
                     onBlur={(event) => saveAttendance(item.master, rowDate(item), event.target.value)}
                   />
+                  <button
+                    className={`day-off-button ${dayOff ? 'active' : ''}`}
+                    disabled={savingDayOffKey === `${masterRecord?.id}-${rowDate(item)}`}
+                    type="button"
+                    onClick={() => toggleDayOff(item.master, rowDate(item), !dayOff)}
+                  >
+                    {savingDayOffKey === `${masterRecord?.id}-${rowDate(item)}`
+                      ? 'Сохраняю…'
+                      : dayOff ? 'Отменить выходной' : 'Выходной'}
+                  </button>
                   {status === 'late' ? (
                     <button
                       className="fine-button"
@@ -820,6 +894,180 @@ function AttendanceView({ data, reload, setError }) {
         }} />
         {message ? <p className="success">{message}</p> : null}
       </form>
+    </section>
+  );
+}
+
+const APPOINTMENT_STATUS_LABELS = {
+  pending: 'Ожидает',
+  confirmed: 'Подтверждена',
+  completed: 'Завершена',
+  cancelled: 'Отменена',
+  no_show: 'Неявка',
+};
+
+function CalendarView({ data, reload, setError }) {
+  const canManage = ['owner', 'admin'].includes(data.appRole);
+  const ownMaster = data.masters.find((master) => master.name === data.me);
+  const [date, setDate] = useState(TODAY);
+  const [selectedMaster, setSelectedMaster] = useState(canManage ? 'all' : String(ownMaster?.id || ''));
+  const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    master_id: String(ownMaster?.id || data.activeMasters[0]?.id || ''),
+    service_id: data.bookingServices[0]?.id || '',
+    time: '10:00',
+    client_name: '',
+    client_phone: '',
+    notes: '',
+    status: 'confirmed',
+  });
+
+  const visibleMasters = canManage
+    ? data.activeMasters.filter((master) => selectedMaster === 'all' || String(master.id) === selectedMaster)
+    : data.activeMasters.filter((master) => String(master.id) === String(ownMaster?.id));
+  const visibleIds = new Set(visibleMasters.map((master) => String(master.id)));
+  const appointments = data.appointments
+    .filter((appointment) => (
+      visibleIds.has(String(appointment.master_id)) && tashkentDate(appointment.starts_at) === date
+    ))
+    .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
+
+  function isDayOff(masterId) {
+    return data.dayStatuses.some((day) => (
+      String(day.master_id) === String(masterId) && day.work_date === date && day.status === 'day_off'
+    ));
+  }
+
+  function moveDate(days) {
+    const next = new Date(`${date}T12:00:00`);
+    next.setDate(next.getDate() + days);
+    setDate(localDate(next));
+  }
+
+  async function addAppointment(event) {
+    event.preventDefault();
+    if (!form.master_id || !form.service_id || !form.time || !form.client_name.trim()) {
+      return setError('Выберите мастера, услугу, время и укажите имя клиента.');
+    }
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await callLegacyApi('addAppointment', {
+        ...form,
+        master_id: Number(form.master_id),
+        starts_at: `${date}T${form.time}:00+05:00`,
+      });
+      setMessage('Запись добавлена в календарь.');
+      setForm((current) => ({ ...current, client_name: '', client_phone: '', notes: '' }));
+      await reload();
+    } catch (appointmentError) {
+      const labels = {
+        slot_already_booked: 'Это время пересекается с другой активной записью.',
+        master_day_off: 'У мастера выходной — запись на этот день закрыта.',
+      };
+      setError(labels[appointmentError.message] || appointmentError.message || 'Не удалось создать запись.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setAppointmentStatus(appointment, status) {
+    setError('');
+    setMessage('');
+    await callLegacyApi('setAppointmentStatus', { id: appointment.id, status });
+    setMessage(`Статус изменён: ${APPOINTMENT_STATUS_LABELS[status]}.`);
+    await reload();
+  }
+
+  async function toggleCalendarDayOff(master, enabled) {
+    if (enabled && !confirm(`Поставить выходной ${master.name} на ${displayDate(date)}?`)) return;
+    setError('');
+    setMessage('');
+    try {
+      await callLegacyApi('setMasterDayOff', { master_id: master.id, work_date: date, enabled });
+      setMessage(enabled ? `Календарь ${master.name} закрыт на весь день.` : `Выходной ${master.name} отменён.`);
+      await reload();
+    } catch (dayOffError) {
+      if (dayOffError.message === 'appointments_exist') {
+        const times = (dayOffError.details?.appointments || []).map((item) => appointmentTime(item.starts_at)).join(', ');
+        setError(`Сначала перенесите или отмените активные записи${times ? `: ${times}` : ''}.`);
+      } else setError(dayOffError.message || 'Не удалось изменить выходной.');
+    }
+  }
+
+  return (
+    <section className="view-grid calendar-view">
+      <div className="card wide calendar-toolbar">
+        <div className="calendar-date-nav">
+          <button className="btn ghost" type="button" onClick={() => moveDate(-1)}>←</button>
+          <label>Дата<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <button className="btn ghost" type="button" onClick={() => moveDate(1)}>→</button>
+        </div>
+        {canManage ? (
+          <label>Мастер
+            <select value={selectedMaster} onChange={(event) => setSelectedMaster(event.target.value)}>
+              <option value="all">Все мастера</option>
+              {data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      {visibleMasters.map((master) => {
+        const masterAppointments = appointments.filter((appointment) => String(appointment.master_id) === String(master.id));
+        const dayOff = isDayOff(master.id);
+        return (
+          <article className={`card calendar-master-card ${dayOff ? 'day-off' : ''}`} key={master.id}>
+            <div className="calendar-master-heading">
+              <div><h2>{master.name}</h2><span>{displayDate(date)}</span></div>
+              {dayOff ? <strong className="calendar-day-off-badge">Выходной</strong> : null}
+              {canManage ? (
+                <button className={`day-off-button ${dayOff ? 'active' : ''}`} type="button" onClick={() => toggleCalendarDayOff(master, !dayOff)}>
+                  {dayOff ? 'Отменить выходной' : 'Выходной'}
+                </button>
+              ) : null}
+            </div>
+            {dayOff ? <p className="hint">Дневной календарь закрыт для новых записей.</p> : null}
+            <div className="calendar-appointments">
+              {masterAppointments.length ? masterAppointments.map((appointment) => (
+                <div className={`calendar-appointment status-${appointment.status}`} key={appointment.id}>
+                  <time>{appointmentTime(appointment.starts_at)}–{appointmentTime(appointment.ends_at)}</time>
+                  <div>
+                    <strong>{appointment.client_name}</strong>
+                    <span>{appointment.service_name} · {money(appointment.price_uzs)} сум</span>
+                    {appointment.client_phone ? <span>{appointment.client_phone}</span> : null}
+                  </div>
+                  <b>{APPOINTMENT_STATUS_LABELS[appointment.status] || appointment.status}</b>
+                  {canManage && ['pending', 'confirmed'].includes(appointment.status) ? (
+                    <div className="calendar-appointment-actions">
+                      {appointment.status === 'pending' ? <button type="button" onClick={() => setAppointmentStatus(appointment, 'confirmed')}>Подтвердить</button> : null}
+                      <button type="button" onClick={() => setAppointmentStatus(appointment, 'completed')}>Завершить</button>
+                      <button className="danger" type="button" onClick={() => setAppointmentStatus(appointment, 'cancelled')}>Отменить</button>
+                    </div>
+                  ) : null}
+                </div>
+              )) : <p className="hint">Записей на этот день нет.</p>}
+            </div>
+          </article>
+        );
+      })}
+
+      {canManage ? (
+        <form className="card calendar-new-form" onSubmit={addAppointment}>
+          <h2>Новая запись</h2>
+          <label>Мастер<select value={form.master_id} onChange={(event) => setForm({ ...form, master_id: event.target.value })}>{data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</select></label>
+          <label>Услуга<select value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })}>{data.bookingServices.filter((service) => service.active !== false).map((service) => <option key={service.id} value={service.id}>{service.name_ru} · {money(service.price_uzs)} сум</option>)}</select></label>
+          <label>Время<input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
+          <label>Имя клиента<input maxLength="120" value={form.client_name} onChange={(event) => setForm({ ...form, client_name: event.target.value })} /></label>
+          <label>Телефон<input inputMode="tel" value={form.client_phone} onChange={(event) => setForm({ ...form, client_phone: event.target.value })} /></label>
+          <label>Комментарий<input maxLength="500" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+          <label>Статус<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="confirmed">Подтверждена</option><option value="pending">Ожидает подтверждения</option></select></label>
+          <button className="btn" disabled={saving || !data.bookingServices.length} type="submit">{saving ? 'Сохраняю…' : 'Добавить запись'}</button>
+        </form>
+      ) : null}
+      {message ? <p className="notice success">{message}</p> : null}
     </section>
   );
 }
@@ -1443,6 +1691,10 @@ const VIEW_META = {
     title: 'Посещаемость',
     description: 'Приходы мастеров, опоздания и штрафы.',
   },
+  calendar: {
+    title: 'Календарь записей',
+    description: 'Личные и общие записи, статусы клиентов и выходные мастеров.',
+  },
   finance: {
     title: 'Финансы салона',
     description: 'Прибыль, расходы и вложения за выбранный период.',
@@ -1548,8 +1800,8 @@ export default function App() {
       setLoginRequired(false);
       setView((currentView) => {
         const allowed = normalized.role === 'admin'
-          ? ['master', 'admin', 'attendance', 'finance', 'debts']
-          : ['master'];
+          ? ['master', 'admin', 'attendance', ...(normalized.appRole === 'finance' ? [] : ['calendar']), 'finance', 'debts']
+          : ['master', 'calendar'];
         if (!preserveView) return normalized.role === 'admin' ? 'admin' : 'master';
         return allowed.includes(currentView) ? currentView : allowed[0];
       });
@@ -1568,10 +1820,10 @@ export default function App() {
   }, []);
 
   const availableViews = useMemo(() => {
-    if (data.role === 'admin') return ['master', 'admin', 'attendance', 'finance', 'debts'];
-    if (data.role === 'master') return ['master'];
+    if (data.role === 'admin') return ['master', 'admin', 'attendance', ...(data.appRole === 'finance' ? [] : ['calendar']), 'finance', 'debts'];
+    if (data.role === 'master') return ['master', 'calendar'];
     return [];
-  }, [data.role]);
+  }, [data.appRole, data.role]);
 
   if (loginRequired) return <LoginGate error={error} />;
   if (isLoading) {
@@ -1590,6 +1842,7 @@ export default function App() {
     master: MasterView,
     admin: AdminView,
     attendance: AttendanceView,
+    calendar: CalendarView,
     finance: FinanceView,
     debts: DebtsView,
   }[view] || MasterView;
@@ -1616,6 +1869,7 @@ export default function App() {
             ['master', 'Мастер'],
             ['admin', 'Админ'],
             ['attendance', 'Посещаемость'],
+            ['calendar', 'Календарь'],
             ['finance', 'Финансы'],
             ['debts', 'Долги'],
           ].filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
