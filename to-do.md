@@ -18,7 +18,8 @@
 - [x] Add the owner/admin calendar UI, each master's private calendar, appointment status controls, and the «Выходной» button in attendance.
 - [x] Apply the reviewed production migration and deploy the `api` function and frontend.
 - [ ] Run authenticated owner/master end-to-end checks without creating fake production appointments.
-- [ ] Configure each master's weekly working hours before exposing real availability to the customer bot.
+- [x] Configure all five masters' daily working hours and verify real availability generation.
+- [ ] Connect the approved customer bot to calendar availability and protected appointment creation.
 
 ## Completed
 
