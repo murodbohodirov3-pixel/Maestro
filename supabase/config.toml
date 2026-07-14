@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.agents-report]
 verify_jwt = false
+
+[functions.customer-availability]
+verify_jwt = false

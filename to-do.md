@@ -19,7 +19,8 @@
 - [x] Apply the reviewed production migration and deploy the `api` function and frontend.
 - [ ] Run authenticated owner/master end-to-end checks without creating fake production appointments.
 - [x] Configure all five masters' daily working hours and verify real availability generation.
-- [ ] Connect the approved customer bot to calendar availability and protected appointment creation.
+- [x] Connect the approved customer bot to the read-only production availability contract.
+- [ ] After explicit approval, add idempotent protected creation of pending appointments from the customer bot.
 
 ## Completed
 
