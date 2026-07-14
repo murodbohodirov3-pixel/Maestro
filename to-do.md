@@ -16,7 +16,8 @@
 
 - [x] Design the protected calendar schema, service catalog, day-off status, appointment audit trail, and database-level overlap prevention.
 - [x] Add the owner/admin calendar UI, each master's private calendar, appointment status controls, and the «Выходной» button in attendance.
-- [ ] Apply the reviewed production migration, deploy the `api` function and frontend, then run owner/master end-to-end checks.
+- [x] Apply the reviewed production migration and deploy the `api` function and frontend.
+- [ ] Run authenticated owner/master end-to-end checks without creating fake production appointments.
 - [ ] Configure each master's weekly working hours before exposing real availability to the customer bot.
 
 ## Completed
