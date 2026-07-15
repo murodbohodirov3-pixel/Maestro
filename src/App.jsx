@@ -8,8 +8,9 @@ import {
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
 import { saleClientsCount } from './utils/calculations.js';
+import { downloadClientWorkbook } from './utils/clientExport.js';
 
-const APP_VERSION = 'calendar-foundation-v1';
+const APP_VERSION = 'crm-export-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -259,6 +260,7 @@ function normalizeData(data) {
     dayStatuses: data.master_day_statuses || [],
     appointments: data.appointments || [],
     scheduleRules: data.master_schedule_rules || [],
+    clients: data.clients || [],
     expenses: data.expenses || [],
     debts: data.debts || [],
     debtPayments: data.debt_payments || [],
@@ -1075,6 +1077,119 @@ function CalendarView({ data, reload, setError }) {
   );
 }
 
+const CLIENT_STATUS_LABELS = {
+  lead: 'Лид',
+  active: 'Активный',
+  inactive: 'Неактивный',
+  blocked: 'Заблокирован',
+};
+
+const CLIENT_CONSENT_LABELS = {
+  unknown: 'Не запрошено',
+  granted: 'Разрешено',
+  denied: 'Запрещено',
+};
+
+function ClientsView({ data, setError }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const clients = [...data.clients].sort((left, right) => (
+    String(right.last_contact_at || '').localeCompare(String(left.last_contact_at || ''))
+  ));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredClients = clients.filter((client) => {
+    const matchesQuery = !normalizedQuery || [
+      client.full_name,
+      client.phone_e164,
+      client.telegram_username,
+    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery));
+    if (!matchesQuery) return false;
+    if (filter === 'return') return client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45;
+    if (filter === 'marketing') return client.eligible_for_marketing === true;
+    return true;
+  });
+  const returningClients = clients.filter((client) => (
+    client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45
+  )).length;
+  const marketingClients = clients.filter((client) => client.eligible_for_marketing === true).length;
+
+  function exportClients() {
+    setError('');
+    try {
+      downloadClientWorkbook(clients);
+    } catch (exportError) {
+      setError(exportError.message || 'Не удалось подготовить Excel-файл.');
+    }
+  }
+
+  return (
+    <section className="view-grid clients-view">
+      <div className="card wide clients-toolbar">
+        <div>
+          <h2>Клиентская база</h2>
+          <p className="hint">Имена, телефоны и история посещений. Рассылки разрешены только клиентам с подтверждённым согласием.</p>
+        </div>
+        <button className="btn" disabled={!clients.length} onClick={exportClients} type="button">
+          Скачать всю базу .xlsx
+        </button>
+      </div>
+
+      <div className="tiles wide">
+        <Tile label="Всего клиентов" value={clients.length} />
+        <Tile label="Активные" value={clients.filter((client) => client.lifecycle_status === 'active').length} />
+        <Tile label="Давно не были" value={returningClients} hint="45 дней и более" />
+        <Tile label="Можно уведомлять" value={marketingClients} hint="есть согласие" />
+      </div>
+
+      <div className="card wide clients-filters">
+        <label>
+          Поиск
+          <input
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Имя, телефон или Telegram"
+            type="search"
+            value={query}
+          />
+        </label>
+        <label>
+          Список
+          <select onChange={(event) => setFilter(event.target.value)} value={filter}>
+            <option value="all">Все клиенты</option>
+            <option value="return">Давно не были</option>
+            <option value="marketing">Можно уведомлять</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="card wide">
+        <div className="section-title">
+          <h2>Клиенты</h2>
+          <span>{filteredClients.length} из {clients.length}</span>
+        </div>
+        <Rows
+          empty="Клиенты по выбранному фильтру не найдены."
+          rows={filteredClients}
+          render={(client) => (
+            <article className="client-row" key={client.id}>
+              <div className="client-main">
+                <strong>{client.full_name}</strong>
+                <a href={`tel:${client.phone_e164}`}>{client.phone_e164}</a>
+                {client.telegram_username ? <span>@{String(client.telegram_username).replace(/^@/, '')}</span> : null}
+              </div>
+              <div className="client-meta">
+                <span>{CLIENT_STATUS_LABELS[client.lifecycle_status] || client.lifecycle_status}</span>
+                <span>Визитов: {Number(client.visit_count) || 0}</span>
+                <span>Последний визит: {client.last_visit_at ? displayDateTime(client.last_visit_at) : 'ещё не был'}</span>
+                <span>Рассылка: {CLIENT_CONSENT_LABELS[client.marketing_consent] || 'Не запрошено'}</span>
+              </div>
+            </article>
+          )}
+        />
+      </div>
+    </section>
+  );
+}
+
 function FinanceView({ data, reload, setError }) {
   const [period, setPeriod] = useState('day');
   const [customFrom, setCustomFrom] = useState('');
@@ -1698,6 +1813,10 @@ const VIEW_META = {
     title: 'Календарь записей',
     description: 'Личные и общие записи, статусы клиентов и выходные мастеров.',
   },
+  clients: {
+    title: 'Клиенты и CRM',
+    description: 'Контакты, история посещений, согласия на уведомления и выгрузка в Excel.',
+  },
   finance: {
     title: 'Финансы салона',
     description: 'Прибыль, расходы и вложения за выбранный период.',
@@ -1803,7 +1922,7 @@ export default function App() {
       setLoginRequired(false);
       setView((currentView) => {
         const allowed = normalized.role === 'admin'
-          ? ['master', 'admin', 'attendance', ...(normalized.appRole === 'finance' ? [] : ['calendar']), 'finance', 'debts']
+          ? ['master', 'admin', 'attendance', ...(normalized.appRole === 'finance' ? [] : ['calendar']), ...(['owner', 'admin'].includes(normalized.appRole) ? ['clients'] : []), 'finance', 'debts']
           : ['master', 'calendar'];
         if (!preserveView) return normalized.role === 'admin' ? 'admin' : 'master';
         return allowed.includes(currentView) ? currentView : allowed[0];
@@ -1823,7 +1942,7 @@ export default function App() {
   }, []);
 
   const availableViews = useMemo(() => {
-    if (data.role === 'admin') return ['master', 'admin', 'attendance', ...(data.appRole === 'finance' ? [] : ['calendar']), 'finance', 'debts'];
+    if (data.role === 'admin') return ['master', 'admin', 'attendance', ...(data.appRole === 'finance' ? [] : ['calendar']), ...(['owner', 'admin'].includes(data.appRole) ? ['clients'] : []), 'finance', 'debts'];
     if (data.role === 'master') return ['master', 'calendar'];
     return [];
   }, [data.appRole, data.role]);
@@ -1846,6 +1965,7 @@ export default function App() {
     admin: AdminView,
     attendance: AttendanceView,
     calendar: CalendarView,
+    clients: ClientsView,
     finance: FinanceView,
     debts: DebtsView,
   }[view] || MasterView;
@@ -1873,6 +1993,7 @@ export default function App() {
             ['admin', 'Админ'],
             ['attendance', 'Посещаемость'],
             ['calendar', 'Календарь'],
+            ['clients', 'Клиенты'],
             ['finance', 'Финансы'],
             ['debts', 'Долги'],
           ].filter(([id]) => availableViews.includes(id)).map(([id, label]) => (

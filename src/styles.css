@@ -672,6 +672,40 @@ small {
 .calendar-appointment-actions button.danger { color: var(--fine); }
 .calendar-new-form { align-self: start; }
 
+.clients-toolbar,
+.clients-filters,
+.client-row,
+.client-main,
+.client-meta {
+  display: flex;
+  gap: 12px;
+}
+.clients-toolbar,
+.client-row { justify-content: space-between; }
+.clients-toolbar { align-items: center; }
+.clients-toolbar h2,
+.clients-toolbar p { margin: 0; }
+.clients-toolbar p { margin-top: 5px; }
+.clients-filters { align-items: end; }
+.clients-filters label { flex: 1 1 220px; }
+.client-row {
+  align-items: center;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+.client-row:last-child { border-bottom: 0; }
+.client-main { flex-direction: column; gap: 3px; min-width: 180px; }
+.client-main a { color: var(--brass); font-weight: 750; text-decoration: none; }
+.client-main span,
+.client-meta span { color: var(--muted); font-size: 12px; }
+.client-meta { justify-content: flex-end; flex-wrap: wrap; text-align: right; }
+.client-meta span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
 @media (max-width: 680px) {
   .calendar-toolbar,
   .calendar-master-heading { align-items: stretch; flex-direction: column; }
@@ -679,6 +713,11 @@ small {
   .calendar-appointment { grid-template-columns: 78px minmax(0, 1fr); }
   .calendar-appointment > b,
   .calendar-appointment-actions { grid-column: 2; }
+  .clients-toolbar,
+  .clients-filters,
+  .client-row { align-items: stretch; flex-direction: column; }
+  .clients-filters label { flex-basis: auto; }
+  .client-meta { justify-content: flex-start; text-align: left; }
 }
 
 .detailed-sale-amounts {

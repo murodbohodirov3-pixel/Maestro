@@ -16,6 +16,7 @@
 
 - [x] Design the protected calendar schema, service catalog, day-off status, appointment audit trail, and database-level overlap prevention.
 - [x] Add the owner/admin calendar UI, each master's private calendar, appointment status controls, and the «Выходной» button in attendance.
+- [x] Add an owner/admin-only CRM view with client search, return-client filters, consent visibility, and Excel export.
 - [x] Apply the reviewed production migration and deploy the `api` function and frontend.
 - [ ] Run authenticated owner/master end-to-end checks without creating fake production appointments.
 - [x] Configure all five masters' daily working hours and verify real availability generation.

@@ -294,6 +294,7 @@ Deno.serve(async (req) => {
 
     const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
     const canManageCalendar = ['owner', 'admin'].includes(appUserResult.data.role);
+    const canManageClients = ['owner', 'admin'].includes(appUserResult.data.role);
     let myMaster: string | null = null;
     let myMasterId: number | null = null;
     if (appUserResult.data.master_id) {
@@ -316,7 +317,7 @@ Deno.serve(async (req) => {
       const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
 
       if (isAdmin) {
-        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules] = await Promise.all([
+        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients] = await Promise.all([
           fetchAllRows('sales', 'd'),
           fetchAllRows('fines', 'id'),
           fetchAllRows('attendance', 'id'),
@@ -327,6 +328,7 @@ Deno.serve(async (req) => {
           canManageCalendar ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
           canManageCalendar ? fetchAppointments() : Promise.resolve([]),
           canManageCalendar ? fetchAllRows('master_schedule_rules', 'iso_weekday') : Promise.resolve([]),
+          canManageClients ? fetchAllRows('client_export', 'last_contact_at') : Promise.resolve([]),
         ]);
 
         return json({
@@ -343,6 +345,7 @@ Deno.serve(async (req) => {
           master_day_statuses,
           appointments,
           master_schedule_rules,
+          clients,
           appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
         });
