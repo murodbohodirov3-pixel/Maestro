@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.customer-availability]
 verify_jwt = false
+
+[functions.customer-booking-approval]
+verify_jwt = false
