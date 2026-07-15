@@ -498,15 +498,18 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'addAppointment') {
-      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      const appointmentMasterId = canManageCalendar
+        ? Number(payload.master_id)
+        : myMasterId;
+      if (!appointmentMasterId) return json({ error: 'forbidden' }, 403);
       const { data: result, error } = await sb.rpc('maestro_create_appointment', {
-        p_master_id: Number(payload.master_id),
+        p_master_id: appointmentMasterId,
         p_service_id: String(payload.service_id || ''),
         p_starts_at: payload.starts_at,
         p_client_name: String(payload.client_name || ''),
         p_client_phone: payload.client_phone ? String(payload.client_phone) : null,
         p_notes: payload.notes ? String(payload.notes) : null,
-        p_status: payload.status === 'pending' ? 'pending' : 'confirmed',
+        p_status: canManageCalendar && payload.status === 'pending' ? 'pending' : 'confirmed',
         p_source: 'admin',
         p_actor_user_id: appUserResult.data.id,
       });
@@ -519,7 +522,19 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'setAppointmentStatus') {
-      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      if (!canManageCalendar) {
+        if (!myMasterId) return json({ error: 'forbidden' }, 403);
+        const existingAppointment = await sb
+          .from('appointments')
+          .select('id,master_id')
+          .eq('id', payload.id)
+          .maybeSingle();
+        if (existingAppointment.error) return json({ error: existingAppointment.error.message }, 500);
+        if (!existingAppointment.data) return json({ error: 'appointment_not_found' }, 404);
+        if (Number(existingAppointment.data.master_id) !== myMasterId) {
+          return json({ error: 'forbidden' }, 403);
+        }
+      }
       const { data: result, error } = await sb.rpc('maestro_set_appointment_status', {
         p_appointment_id: payload.id,
         p_status: payload.status,

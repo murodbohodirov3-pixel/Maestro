@@ -58,13 +58,16 @@ Deno.serve(async (request) => {
 
   try {
     const input = await request.json() as Record<string, unknown>;
-    const serviceId = String(input.service_id ?? "").trim();
+    const requestedServiceIds = Array.isArray(input.service_ids)
+      ? input.service_ids.map((value) => String(value).trim()).filter(Boolean)
+      : [String(input.service_id ?? "").trim()].filter(Boolean);
+    const serviceIds = [...new Set(requestedServiceIds)];
     const workDate = String(input.date ?? "").trim();
     const masterId = input.master_id == null || input.master_id === ""
       ? null
       : Number(input.master_id);
 
-    if (!serviceId || serviceId.length > 80 || !validDate(workDate)) {
+    if (!serviceIds.length || serviceIds.length > 10 || serviceIds.some((id) => id.length > 80) || !validDate(workDate)) {
       return json({ ok: false, status: "invalid_request" }, 400);
     }
     if (masterId != null && (!Number.isSafeInteger(masterId) || masterId <= 0)) {
@@ -81,25 +84,30 @@ Deno.serve(async (request) => {
     const db = createClient(required("SUPABASE_URL"), getSecretKey(), {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const [{ data: service, error: serviceError }, { data: masters, error: mastersError }] = await Promise.all([
+    const [{ data: serviceRows, error: serviceError }, { data: masters, error: mastersError }] = await Promise.all([
       db.from("booking_services")
         .select("id,name_ru,name_uz,price_uzs,duration_minutes")
-        .eq("id", serviceId)
-        .eq("active", true)
-        .maybeSingle(),
+        .in("id", serviceIds)
+        .eq("active", true),
       db.from("masters").select("id,name").eq("active", true).order("id"),
     ]);
     if (serviceError) throw serviceError;
     if (mastersError) throw mastersError;
-    if (!service) return json({ ok: false, status: "unknown_service" }, 404);
+    if (!serviceRows || serviceRows.length !== serviceIds.length) {
+      return json({ ok: false, status: "unknown_service" }, 404);
+    }
+    const servicesById = new Map(serviceRows.map((service) => [service.id, service]));
+    const services = serviceIds.map((id) => servicesById.get(id)!);
+    const totalDurationMinutes = services.reduce((sum, service) => sum + Number(service.duration_minutes), 0);
+    const totalPriceUzs = services.reduce((sum, service) => sum + Number(service.price_uzs), 0);
 
     const allowedMasters = (masters ?? []).filter((master) => masterId == null || Number(master.id) === masterId);
     if (masterId != null && !allowedMasters.length) {
       return json({ ok: false, status: "unknown_master" }, 404);
     }
 
-    const { data: slots, error: slotsError } = await db.rpc("maestro_get_available_slots", {
-      p_service_id: serviceId,
+    const { data: slots, error: slotsError } = await db.rpc("maestro_get_available_slots_for_duration", {
+      p_duration_minutes: totalDurationMinutes,
       p_work_date: workDate,
       p_master_id: masterId,
       p_step_minutes: 15,
@@ -122,7 +130,10 @@ Deno.serve(async (request) => {
       status: visibleSlots.length ? "available" : "no_slots",
       date: workDate,
       timezone: "Asia/Tashkent",
-      service,
+      service: services.length === 1 ? services[0] : null,
+      services,
+      total_duration_minutes: totalDurationMinutes,
+      total_price_uzs: totalPriceUzs,
       slots: visibleSlots,
     });
   } catch (error) {

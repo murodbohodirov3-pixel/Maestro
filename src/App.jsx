@@ -909,6 +909,7 @@ const APPOINTMENT_STATUS_LABELS = {
 function CalendarView({ data, reload, setError }) {
   const canManage = ['owner', 'admin'].includes(data.appRole);
   const ownMaster = data.masters.find((master) => master.name === data.me);
+  const canCreateOwnAppointment = Boolean(ownMaster?.id);
   const [date, setDate] = useState(TODAY);
   const [selectedMaster, setSelectedMaster] = useState(canManage ? 'all' : String(ownMaster?.id || ''));
   const [message, setMessage] = useState('');
@@ -1040,7 +1041,7 @@ function CalendarView({ data, reload, setError }) {
                     {appointment.client_phone ? <span>{appointment.client_phone}</span> : null}
                   </div>
                   <b>{APPOINTMENT_STATUS_LABELS[appointment.status] || appointment.status}</b>
-                  {canManage && ['pending', 'confirmed'].includes(appointment.status) ? (
+                  {(canManage || String(appointment.master_id) === String(ownMaster?.id)) && ['pending', 'confirmed'].includes(appointment.status) ? (
                     <div className="calendar-appointment-actions">
                       {appointment.status === 'pending' ? <button type="button" onClick={() => setAppointmentStatus(appointment, 'confirmed')}>Подтвердить</button> : null}
                       <button type="button" onClick={() => setAppointmentStatus(appointment, 'completed')}>Завершить</button>
@@ -1054,16 +1055,18 @@ function CalendarView({ data, reload, setError }) {
         );
       })}
 
-      {canManage ? (
+      {canManage || canCreateOwnAppointment ? (
         <form className="card calendar-new-form" onSubmit={addAppointment}>
           <h2>Новая запись</h2>
-          <label>Мастер<select value={form.master_id} onChange={(event) => setForm({ ...form, master_id: event.target.value })}>{data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</select></label>
+          {canManage ? (
+            <label>Мастер<select value={form.master_id} onChange={(event) => setForm({ ...form, master_id: event.target.value })}>{data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</select></label>
+          ) : <label>Барбер<input value={ownMaster?.name || ''} readOnly /></label>}
           <label>Услуга<select value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })}>{data.bookingServices.filter((service) => service.active !== false).map((service) => <option key={service.id} value={service.id}>{service.name_ru} · {money(service.price_uzs)} сум</option>)}</select></label>
           <label>Время<input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
           <label>Имя клиента<input maxLength="120" value={form.client_name} onChange={(event) => setForm({ ...form, client_name: event.target.value })} /></label>
           <label>Телефон<input inputMode="tel" value={form.client_phone} onChange={(event) => setForm({ ...form, client_phone: event.target.value })} /></label>
           <label>Комментарий<input maxLength="500" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
-          <label>Статус<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="confirmed">Подтверждена</option><option value="pending">Ожидает подтверждения</option></select></label>
+          {canManage ? <label>Статус<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="confirmed">Подтверждена</option><option value="pending">Ожидает подтверждения</option></select></label> : null}
           <button className="btn" disabled={saving || !data.bookingServices.length} type="submit">{saving ? 'Сохраняю…' : 'Добавить запись'}</button>
         </form>
       ) : null}
