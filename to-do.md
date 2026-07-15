@@ -22,6 +22,9 @@
 - [x] Configure all five masters' daily working hours and verify real availability generation.
 - [x] Connect the approved customer bot to the read-only production availability contract.
 - [ ] After explicit approval, add idempotent protected creation of pending appointments from the customer bot.
+- [x] Keep administrator confirmation as the permanent booking gate; do not enable automatic customer-bot booking.
+- [x] Add the protected production notification ledger and claim/complete/fail contract for bot-created appointments.
+- [ ] Verify the live 24-hour, 2-hour, and post-visit feedback delivery cycle before closing Maestro AI stage 8.
 
 ## Completed
 

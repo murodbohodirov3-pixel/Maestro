@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.customer-booking-approval]
 verify_jwt = false
+
+[functions.customer-notifications]
+verify_jwt = false
