@@ -948,8 +948,8 @@ function CalendarView({ data, reload, setError }) {
 
   async function addAppointment(event) {
     event.preventDefault();
-    if (!form.master_id || !form.service_id || !form.time || !form.client_name.trim()) {
-      return setError('Выберите мастера, услугу, время и укажите имя клиента.');
+    if (!form.master_id || !form.service_id || !form.time || !form.client_name.trim() || !form.client_phone.trim()) {
+      return setError('Выберите мастера, услугу, время и укажите имя и телефон клиента.');
     }
     setSaving(true);
     setError('');
@@ -1064,7 +1064,7 @@ function CalendarView({ data, reload, setError }) {
           <label>Услуга<select value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })}>{data.bookingServices.filter((service) => service.active !== false).map((service) => <option key={service.id} value={service.id}>{service.name_ru} · {money(service.price_uzs)} сум</option>)}</select></label>
           <label>Время<input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
           <label>Имя клиента<input maxLength="120" value={form.client_name} onChange={(event) => setForm({ ...form, client_name: event.target.value })} /></label>
-          <label>Телефон<input inputMode="tel" value={form.client_phone} onChange={(event) => setForm({ ...form, client_phone: event.target.value })} /></label>
+          <label>Телефон<input inputMode="tel" required value={form.client_phone} onChange={(event) => setForm({ ...form, client_phone: event.target.value })} /></label>
           <label>Комментарий<input maxLength="500" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
           {canManage ? <label>Статус<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="confirmed">Подтверждена</option><option value="pending">Ожидает подтверждения</option></select></label> : null}
           <button className="btn" disabled={saving || !data.bookingServices.length} type="submit">{saving ? 'Сохраняю…' : 'Добавить запись'}</button>
