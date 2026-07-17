@@ -957,6 +957,68 @@ small {
   -webkit-overflow-scrolling: touch;
 }
 
+.revenue-chart {
+  min-width: 0;
+}
+
+.chart-period-summary,
+.chart-selected-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.chart-period-summary {
+  margin: 10px 0 8px;
+}
+
+.chart-period-summary > div,
+.chart-selected-comparison > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.chart-period-summary i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--brass);
+}
+
+.chart-period-summary .chart-legend-previous {
+  opacity: 0.35;
+}
+
+.chart-period-summary span,
+.chart-selected-comparison span,
+.chart-tap-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-period-summary strong,
+.chart-selected-comparison strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-selected-comparison {
+  margin-top: 9px;
+}
+
+.chart-tap-hint {
+  margin: 8px 0 0;
+  text-align: center;
+}
+
 .chart svg {
   display: block;
   max-width: none;
@@ -1149,7 +1211,13 @@ table {
 }
 
 .master-table {
-  min-width: 500px;
+  min-width: 640px;
+}
+
+.master-comparison-range {
+  margin: -4px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .master-sort {
@@ -1186,6 +1254,31 @@ table {
 
 .master-table td:first-child small {
   margin-top: 3px;
+}
+
+.master-metric-value,
+.master-period-change {
+  display: block;
+}
+
+.master-period-change {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.master-period-change.positive {
+  color: #2f9e58;
+}
+
+.master-period-change.negative {
+  color: #c94b4b;
+}
+
+.master-period-change span {
+  color: var(--muted);
+  font-weight: 650;
 }
 
 .master-top-row td {

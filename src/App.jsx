@@ -10,7 +10,7 @@ import {
 import { saleClientsCount } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
-const APP_VERSION = 'analytics-overview-v1';
+const APP_VERSION = 'analytics-comparison-v2';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -233,14 +233,18 @@ function previousRange(range, period) {
   return { from: localDate(previousFrom), to: localDate(previousTo) };
 }
 
-function comparisonToPrevious(current, previous) {
+function percentageDifference(current, previous) {
   const currentValue = Number(current) || 0;
   const previousValue = Number(previous) || 0;
-  const percent = previousValue
+  return previousValue
     ? Math.round(((currentValue - previousValue) / Math.abs(previousValue)) * 100)
     : currentValue ? 100 : 0;
+}
+
+function comparisonToPrevious(current, previous, comparisonRange) {
+  const percent = percentageDifference(current, previous);
   return {
-    secondary: `${percent > 0 ? '+' : ''}${percent}% к прошлому периоду`,
+    secondary: `${percent > 0 ? '+' : ''}${percent}% к периоду — ${displayRange(comparisonRange)}`,
     secondaryTone: percent > 0 ? 'positive' : percent < 0 ? 'negative' : '',
   };
 }
@@ -390,6 +394,16 @@ function PaymentBreakdownBar({ cash, card, qr }) {
   );
 }
 
+function MasterMetricComparison({ current, previous }) {
+  const percent = percentageDifference(current, previous);
+  const tone = percent > 0 ? 'positive' : percent < 0 ? 'negative' : '';
+  return (
+    <small className={`master-period-change ${tone}`}>
+      {percent > 0 ? '+' : ''}{percent}% <span>· было {money(previous)}</span>
+    </small>
+  );
+}
+
 function OverviewView({ data }) {
   const monthRange = currentMonthRange();
   const todaySales = data.sales.filter((sale) => isCountedSale(sale) && rowDate(sale) === TODAY);
@@ -400,7 +414,12 @@ function OverviewView({ data }) {
   const todayRevenue = todaySales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const monthRevenue = monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
-  const openDebts = totalOpenDebtsByCurrency(data);
+  const salonRemainder = monthRevenue - payouts;
+  const fineTotal = monthFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+  const operatingExpenses = data.expenses
+    .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), monthRange.from, monthRange.to))
+    .reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const netProfit = salonRemainder - operatingExpenses;
   const pendingSales = getPendingSales(data.sales);
 
   return (
@@ -410,8 +429,9 @@ function OverviewView({ data }) {
         <div className="tiles overview-tiles">
           <Tile label="Выручка сегодня" value={`${money(todayRevenue)} сум`} tone="total" />
           <Tile label="Выручка за месяц" value={`${money(monthRevenue)} сум`} />
-          <Tile label="К выплате мастерам" value={`${money(payouts)} сум`} tone="salon" />
-          <Tile label="Открытые долги" value={`${money(openDebts.UZS)} сум`} secondary={usdMoney(openDebts.USD)} danger />
+          <Tile label="Остаток салону" value={`${money(salonRemainder)} сум`} tone="salon" />
+          <Tile label="Штрафы за месяц" value={`${money(fineTotal)} сум`} />
+          <Tile label="Чистая прибыль" value={`${money(netProfit)} сум`} tone="total" danger={netProfit < 0} />
           <Tile label="Ждут подтверждения" value={pendingSales.length} />
         </div>
       </div>
@@ -672,12 +692,26 @@ function AdminView({ data, reload, setError }) {
     qr: totals.qr + (Number(sale.qr) || 0),
   }), { cash: 0, card: 0, qr: 0 });
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
-  const reportMasters = reportMastersForPeriod(data, sales, fines);
+  const reportMasters = reportMastersForPeriod(
+    data,
+    [...sales, ...previousSales],
+    [...fines, ...previousFines],
+  );
   const masterSummaries = reportMasters.map((master) => {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
     const masterRevenue = rows.reduce((sum, sale) => sum + saleTotal(sale), 0);
     const masterFine = fines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
-    return { master, rows, revenue: masterRevenue, pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine) };
+    const previousRows = previousSales.filter((sale) => belongsToMaster(sale, master));
+    const previousRevenue = previousRows.reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const previousFine = previousFines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    return {
+      master,
+      rows,
+      revenue: masterRevenue,
+      pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine),
+      previousRevenue,
+      previousPay: Math.max(0, previousRevenue * Number(master.pct || 40) / 100 - previousFine),
+    };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
   const topMasterName = topMaster?.revenue > 0 ? topMaster.master.name : null;
@@ -692,7 +726,7 @@ function AdminView({ data, reload, setError }) {
   const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
   const previousPayout = masterPayoutForPeriod(data, previousSales, previousFines);
-  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous) : {};
+  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
 
   async function setSaleApproval(id, status) {
     setError('');
@@ -777,6 +811,7 @@ function AdminView({ data, reload, setError }) {
 
       <div className="card wide">
         <h2>По мастерам</h2>
+        {priorRange ? <p className="master-comparison-range">Сравнение к периоду — {displayRange(priorRange)}</p> : null}
         <div className="master-table-wrap">
           <table className="master-table">
             <thead>
@@ -795,7 +830,7 @@ function AdminView({ data, reload, setError }) {
               </tr>
             </thead>
             <tbody>
-              {sortedMasterSummaries.map(({ master, rows, revenue: masterRevenue, pay }) => (
+              {sortedMasterSummaries.map(({ master, rows, revenue: masterRevenue, pay, previousRevenue: masterPreviousRevenue, previousPay }) => (
                 <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
                   <td>
                     <div className="master-name-line">
@@ -804,8 +839,14 @@ function AdminView({ data, reload, setError }) {
                     </div>
                     <small>{rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</small>
                   </td>
-                  <td>{money(masterRevenue)} сум</td>
-                  <td><strong>{money(pay)} сум</strong></td>
+                  <td>
+                    <span className="master-metric-value">{money(masterRevenue)} сум</span>
+                    {priorRange ? <MasterMetricComparison current={masterRevenue} previous={masterPreviousRevenue} /> : null}
+                  </td>
+                  <td>
+                    <strong className="master-metric-value">{money(pay)} сум</strong>
+                    {priorRange ? <MasterMetricComparison current={pay} previous={previousPay} /> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1433,7 +1474,7 @@ function FinanceView({ data, reload, setError }) {
   const previousPayouts = masterPayoutForPeriod(data, previousSales, previousFines);
   const previousSalon = previousRevenue - previousPayouts;
   const previousIshxonaExpenses = previousExpenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
-  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous) : {};
+  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
   const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
   const visibleExpenseTotal = visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
 
@@ -1612,6 +1653,8 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
     if (day in previousTotals) previousTotals[day] += saleTotal(sale);
   });
   const previousValues = days.map((_, index) => previousTotals[previousDays[index]] || 0);
+  const currentTotal = values.reduce((sum, value) => sum + value, 0);
+  const previousTotal = previousValues.reduce((sum, value) => sum + value, 0);
   const max = Math.max(1, ...values, ...previousValues);
   const barWidth = Math.max(14, Math.min(38, Math.floor(480 / Math.max(1, days.length))));
   const gap = 6;
@@ -1619,6 +1662,8 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   const labelEvery = Math.max(1, Math.ceil(days.length / 10));
   const selectedIndex = days.indexOf(selectedDay);
   const selectedValue = selectedIndex >= 0 ? values[selectedIndex] : 0;
+  const selectedPreviousDay = selectedIndex >= 0 ? previousDays[selectedIndex] : null;
+  const selectedPreviousValue = selectedIndex >= 0 ? previousValues[selectedIndex] : 0;
   const selectedHeight = Math.round((selectedValue / max) * 100);
   const selectedCenter = selectedIndex >= 0
     ? 10 + selectedIndex * (barWidth + gap) + barWidth / 2
@@ -1628,8 +1673,15 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   const tooltipY = Math.max(2, 120 - selectedHeight - 40);
 
   return (
-    <div className="chart" aria-label="Выручка по дням">
-      <svg height="150" viewBox={`0 0 ${width} 150`} width={width}>
+    <div className="revenue-chart" aria-label="Выручка по дням">
+      <div className="chart-period-summary">
+        <div><i className="chart-legend-current" /><span>{displayRange({ from, to })}</span><strong>{money(currentTotal)} сум</strong></div>
+        {previousFrom && previousTo ? (
+          <div><i className="chart-legend-previous" /><span>{displayRange({ from: previousFrom, to: previousTo })}</span><strong>{money(previousTotal)} сум</strong></div>
+        ) : null}
+      </div>
+      <div className="chart">
+        <svg height="150" viewBox={`0 0 ${width} 150`} width={width}>
         {days.map((day, index) => {
           const height = Math.round((values[index] / max) * 100);
           const previousHeight = Math.round((previousValues[index] / max) * 100);
@@ -1637,7 +1689,7 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
           const isSelected = selectedDay === day;
           return (
             <g
-              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум`}
+              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум${previousDays[index] ? `; ${displayDate(previousDays[index])}: ${money(previousValues[index])} сум` : ''}`}
               className={`chart-bar ${isSelected ? 'selected' : ''}`}
               key={day}
               onClick={() => setSelectedDay((current) => current === day ? null : day)}
@@ -1700,7 +1752,14 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
             </text>
           </g>
         ) : null}
-      </svg>
+        </svg>
+      </div>
+      {selectedIndex >= 0 ? (
+        <div className="chart-selected-comparison" aria-live="polite">
+          <div><span>{displayDate(selectedDay)} · текущий</span><strong>{money(selectedValue)} сум</strong></div>
+          {selectedPreviousDay ? <div><span>{displayDate(selectedPreviousDay)} · прошлый</span><strong>{money(selectedPreviousValue)} сум</strong></div> : null}
+        </div>
+      ) : <p className="chart-tap-hint">Нажмите на столбец, чтобы сравнить конкретные дни.</p>}
     </div>
   );
 }
@@ -2087,13 +2146,10 @@ function viewIdsForUser(data) {
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
-      'master',
       'admin',
       'attendance',
-      ...(data.appRole === 'finance' ? [] : ['calendar']),
-      ...(canSeeOverview ? ['clients'] : []),
       'finance',
-      'debts',
+      'master',
     ];
   }
   if (data.role === 'master') return ['master', 'calendar'];
@@ -2263,16 +2319,19 @@ export default function App() {
 
       {availableViews.length ? (
         <nav className="seg nav">
-          {[
-            ['overview', 'Обзор'],
+          {(data.role === 'master' ? [
             ['master', 'Мастер'],
+            ['calendar', 'Календарь'],
+          ] : [
+            ['overview', 'Обзор'],
             ['admin', 'Админ'],
             ['attendance', 'Посещаемость'],
+            ['finance', 'Финансы'],
             ['calendar', 'Календарь'],
             ['clients', 'Клиенты'],
-            ['finance', 'Финансы'],
             ['debts', 'Долги'],
-          ].filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
+            ['master', 'Мастер'],
+          ]).filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
             <button className={`${view === id ? 'on ' : ''}${id === 'admin' && pendingSalesCount ? 'has-nav-badge' : ''}`} key={id} type="button" onClick={() => setView(id)}>
               {label}
               {id === 'admin' && pendingSalesCount ? (

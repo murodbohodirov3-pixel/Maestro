@@ -57,3 +57,4 @@
 - [x] Verified the live Supabase project is healthy, all current public tables have RLS enabled, and remote functions `api`, `telegram-auth`, `agents-report`, and `agents-content` are active.
 - [x] Verified the owner-agent public health endpoint reports Telegram, owner restriction, OpenAI, persistent conversation, Maestro reports, and content jobs configured; unauthenticated webhook requests return 401.
 - [x] Upgraded analytics UX with previous-period comparisons, dual-series revenue charts, owner overview, pending badges, sortable master performance, average check, payment mix, and debt payoff dates.
+- [x] Stabilized paginated reads and refined analytics with dated comparisons, chart/master figures, owner profit overview, and staged hidden navigation tabs.

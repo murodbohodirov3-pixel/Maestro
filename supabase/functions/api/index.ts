@@ -40,9 +40,12 @@ async function fetchAllRows(
     let query = sb.from(table).select('*');
     for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
 
-    const { data, error } = await query
-      .order(orderColumn, { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
+    let orderedQuery = query.order(orderColumn, { ascending: true });
+    if (orderColumn !== 'id') {
+      orderedQuery = orderedQuery.order('id', { ascending: true });
+    }
+
+    const { data, error } = await orderedQuery.range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
 
     rows.push(...(data ?? []));
@@ -62,6 +65,7 @@ async function fetchAppointments(filters: Record<string, string | number> = {}) 
       .gte('starts_at', fromDate)
       .lt('starts_at', toDate)
       .order('starts_at', { ascending: true })
+      .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
