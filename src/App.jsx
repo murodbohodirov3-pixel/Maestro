@@ -10,7 +10,7 @@ import {
 import { saleClientsCount } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
-const APP_VERSION = 'crm-export-v1';
+const APP_VERSION = 'analytics-overview-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -48,6 +48,16 @@ function usdMoney(value) {
   return `$${money(value)}`;
 }
 
+function futureMonthLabel(monthsAhead) {
+  const [year, month] = TODAY.split('-').map(Number);
+  return new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })
+    .format(new Date(year, month - 1 + monthsAhead, 1));
+}
+
+function averageCheck(revenue, clientCount) {
+  return clientCount > 0 ? money(revenue / clientCount) : '—';
+}
+
 // These are payment plans only: they never change the debt amount, balance, or payment history.
 function debtPaymentPlan(debt) {
   const counterparty = String(debt.counterparty || '').toLowerCase();
@@ -71,6 +81,10 @@ function saleTotal(sale) {
 
 function isPendingOwnerApproval(sale) {
   return sale.status === 'pending' && sale.comment === 'owner_approval_required';
+}
+
+function getPendingSales(sales) {
+  return sales.filter(isPendingOwnerApproval);
 }
 
 function isRejectedByOwner(sale) {
@@ -199,6 +213,38 @@ function getRange(period, customFrom, customTo, rows = [], key = 'd') {
   return { from: customFrom || TODAY, to: customTo || customFrom || TODAY };
 }
 
+function previousRange(range, period) {
+  if (!range?.from || !range?.to || period === 'all') return null;
+  const from = new Date(`${range.from}T12:00:00`);
+  const to = new Date(`${range.to}T12:00:00`);
+
+  if (period === 'month') {
+    return {
+      from: localDate(new Date(from.getFullYear(), from.getMonth() - 1, 1)),
+      to: localDate(new Date(from.getFullYear(), from.getMonth(), 0)),
+    };
+  }
+
+  const durationDays = Math.round((to - from) / 86400000) + 1;
+  const previousTo = new Date(from);
+  previousTo.setDate(previousTo.getDate() - 1);
+  const previousFrom = new Date(previousTo);
+  previousFrom.setDate(previousFrom.getDate() - durationDays + 1);
+  return { from: localDate(previousFrom), to: localDate(previousTo) };
+}
+
+function comparisonToPrevious(current, previous) {
+  const currentValue = Number(current) || 0;
+  const previousValue = Number(previous) || 0;
+  const percent = previousValue
+    ? Math.round(((currentValue - previousValue) / Math.abs(previousValue)) * 100)
+    : currentValue ? 100 : 0;
+  return {
+    secondary: `${percent > 0 ? '+' : ''}${percent}% к прошлому периоду`,
+    secondaryTone: percent > 0 ? 'positive' : percent < 0 ? 'negative' : '',
+  };
+}
+
 function inRange(value, from, to) {
   if (!value) return false;
   return (!from || value >= from) && (!to || value <= to);
@@ -239,6 +285,30 @@ function reportMastersForPeriod(data, sales, fines = []) {
     || sales.some((sale) => belongsToMaster(sale, master))
     || fines.some((fine) => belongsToMaster(fine, master))
   ));
+}
+
+function masterPayoutForPeriod(data, sales, fines = []) {
+  return reportMastersForPeriod(data, sales, fines).reduce((sum, master) => {
+    const rows = sales.filter((sale) => belongsToMaster(sale, master));
+    const revenue = rows.reduce((total, sale) => total + saleTotal(sale), 0);
+    const fineTotal = fines.filter((fine) => belongsToMaster(fine, master)).reduce((total, fine) => total + (Number(fine.amount) || 0), 0);
+    return sum + Math.max(0, revenue * Number(master.pct || 40) / 100 - fineTotal);
+  }, 0);
+}
+
+function totalOpenDebtsByCurrency(data) {
+  const paidByDebt = data.debtPayments.reduce((totals, payment) => {
+    const key = String(payment.debt_id);
+    totals[key] = (totals[key] || 0) + (Number(payment.amount) || 0);
+    return totals;
+  }, {});
+  return data.debts
+    .filter((debt) => debt.direction === 'i_owe' && !debt.is_closed)
+    .reduce((totals, debt) => {
+      const currency = debt.currency === 'USD' ? 'USD' : 'UZS';
+      totals[currency] += Math.max(0, (Number(debt.amount) || 0) - (paidByDebt[String(debt.id)] || 0));
+      return totals;
+    }, { UZS: 0, USD: 0 });
 }
 
 function normalizeData(data) {
@@ -284,6 +354,71 @@ function MoneyInput({ value, onChange, ...props }) {
   );
 }
 
+function PaymentBreakdownBar({ cash, card, qr }) {
+  const [isReady, setIsReady] = useState(false);
+  const values = [Number(cash) || 0, Number(card) || 0, Number(qr) || 0];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const items = [
+    { key: 'cash', label: 'Наличные', value: values[0] },
+    { key: 'card', label: 'Карта', value: values[1] },
+    { key: 'qr', label: 'QR Paynet', value: values[2] },
+  ].map((item) => ({ ...item, percent: total ? (item.value / total) * 100 : 0 }));
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setIsReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <div className="payment-breakdown" aria-label="Разбивка выручки по способам оплаты">
+      <div className="payment-breakdown-track">
+        {items.map((item) => (
+          <span
+            className={`payment-breakdown-segment payment-breakdown-${item.key}`}
+            key={item.key}
+            style={{ flexBasis: isReady ? `${item.percent}%` : '0%' }}
+            title={`${item.label}: ${money(item.value)} сум (${Math.round(item.percent)}%)`}
+          />
+        ))}
+      </div>
+      <div className="payment-breakdown-labels">
+        {items.map((item) => (
+          <span key={item.key}><i className={`payment-breakdown-dot payment-breakdown-${item.key}`} />{item.label} <strong>{Math.round(item.percent)}%</strong></span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OverviewView({ data }) {
+  const monthRange = currentMonthRange();
+  const todaySales = data.sales.filter((sale) => isCountedSale(sale) && rowDate(sale) === TODAY);
+  const monthSales = data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), monthRange.from, monthRange.to),
+  );
+  const monthFines = data.fines.filter((fine) => inRange(rowDate(fine), monthRange.from, monthRange.to));
+  const todayRevenue = todaySales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const monthRevenue = monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
+  const openDebts = totalOpenDebtsByCurrency(data);
+  const pendingSales = getPendingSales(data.sales);
+
+  return (
+    <section className="view-grid">
+      <div className="card wide overview-card">
+        <SectionHeading label="Главное сегодня" range={{ from: TODAY, to: TODAY }} />
+        <div className="tiles overview-tiles">
+          <Tile label="Выручка сегодня" value={`${money(todayRevenue)} сум`} tone="total" />
+          <Tile label="Выручка за месяц" value={`${money(monthRevenue)} сум`} />
+          <Tile label="К выплате мастерам" value={`${money(payouts)} сум`} tone="salon" />
+          <Tile label="Открытые долги" value={`${money(openDebts.UZS)} сум`} secondary={usdMoney(openDebts.USD)} danger />
+          <Tile label="Ждут подтверждения" value={pendingSales.length} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MasterView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
   const [payType, setPayType] = useState(null);
@@ -306,6 +441,12 @@ function MasterView({ data, reload, setError }) {
   );
   const visibleFines = data.fines.filter((fine) => fine.master === masterName && inRange(rowDate(fine), range.from, range.to));
   const revenue = visibleSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const visibleClients = visibleSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const paymentTotals = visibleSales.reduce((totals, sale) => ({
+    cash: totals.cash + (Number(sale.cash) || 0),
+    card: totals.card + (Number(sale.card) || 0),
+    qr: totals.qr + (Number(sale.qr) || 0),
+  }), { cash: 0, card: 0, qr: 0 });
   const fineTotal = visibleFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
   const pay = Math.max(0, (revenue * pct) / 100 - fineTotal);
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
@@ -495,11 +636,10 @@ function MasterView({ data, reload, setError }) {
           <Tile label="Выручка" value={money(revenue)} />
           <Tile label="Мой %" value={`${pct}%`} />
           <Tile label="Штрафы" value={`-${money(fineTotal)}`} danger />
-          <Tile label="Клиентов" value={visibleSales.reduce((sum, sale) => sum + clients(sale), 0)} />
-          <Tile label="Наличные" value={money(visibleSales.reduce((sum, sale) => sum + (Number(sale.cash) || 0), 0))} />
-          <Tile label="Карта" value={money(visibleSales.reduce((sum, sale) => sum + (Number(sale.card) || 0), 0))} />
-          <Tile label="QR Paynet" value={money(visibleSales.reduce((sum, sale) => sum + (Number(sale.qr) || 0), 0))} />
+          <Tile label="Клиентов" value={visibleClients} />
+          <Tile label="Средний чек" value={averageCheck(revenue, visibleClients)} />
         </div>
+        <PaymentBreakdownBar cash={paymentTotals.cash} card={paymentTotals.card} qr={paymentTotals.qr} />
       </div>
     </section>
   );
@@ -510,13 +650,27 @@ function AdminView({ data, reload, setError }) {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [message, setMessage] = useState('');
+  const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
   const range = getRange(period, customFrom, customTo, data.sales);
-  const pendingSales = data.sales.filter(isPendingOwnerApproval);
+  const priorRange = previousRange(range, period);
+  const pendingSales = getPendingSales(data.sales);
   const sales = data.sales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
+  const previousSales = priorRange ? data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), priorRange.from, priorRange.to),
+  ) : [];
+  const previousFines = priorRange ? data.fines.filter(
+    (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
+  ) : [];
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const totalClients = sales.reduce((sum, sale) => sum + clients(sale), 0);
+  const paymentTotals = sales.reduce((totals, sale) => ({
+    cash: totals.cash + (Number(sale.cash) || 0),
+    card: totals.card + (Number(sale.card) || 0),
+    qr: totals.qr + (Number(sale.qr) || 0),
+  }), { cash: 0, card: 0, qr: 0 });
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const reportMasters = reportMastersForPeriod(data, sales, fines);
   const masterSummaries = reportMasters.map((master) => {
@@ -525,8 +679,20 @@ function AdminView({ data, reload, setError }) {
     const masterFine = fines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
     return { master, rows, revenue: masterRevenue, pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine) };
   });
+  const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
+  const topMasterName = topMaster?.revenue > 0 ? topMaster.master.name : null;
+  const sortedMasterSummaries = [...masterSummaries].sort((left, right) => {
+    const multiplier = masterSort.direction === 'asc' ? 1 : -1;
+    if (masterSort.key === 'name') return left.master.name.localeCompare(right.master.name, 'ru') * multiplier;
+    return (left[masterSort.key] - right[masterSort.key]) * multiplier;
+  });
   const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
   const salonRemainder = revenue - totalMasterPayout;
+  const previousRevenue = previousSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
+  const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const previousPayout = masterPayoutForPeriod(data, previousSales, previousFines);
+  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous) : {};
 
   async function setSaleApproval(id, status) {
     setError('');
@@ -541,6 +707,17 @@ function AdminView({ data, reload, setError }) {
     await callLegacyApi('delSale', { id: sale.id });
     setMessage('Продажа удалена.');
     await reload();
+  }
+
+  function changeMasterSort(key) {
+    setMasterSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc',
+    }));
+  }
+
+  function sortArrow(key) {
+    return masterSort.key === key ? (masterSort.direction === 'asc' ? '↑' : '↓') : '';
   }
 
   return (
@@ -576,29 +753,64 @@ function AdminView({ data, reload, setError }) {
         <SectionHeading label="Период отчёта" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="tiles">
-          <Tile label="Итого" value={money(revenue)} tone="total" />
-          <Tile label="Остаток салону" value={money(salonRemainder)} tone="salon" />
-          <Tile label="Наличные" value={money(sales.reduce((sum, sale) => sum + (Number(sale.cash) || 0), 0))} />
-          <Tile label="Карта" value={money(sales.reduce((sum, sale) => sum + (Number(sale.card) || 0), 0))} />
-          <Tile label="QR Paynet" value={money(sales.reduce((sum, sale) => sum + (Number(sale.qr) || 0), 0))} />
-          <Tile label="Новые" value={newClients} />
-          <Tile label="Постоянные" value={sales.reduce((sum, sale) => sum + clients(sale), 0) - newClients} />
+          <Tile label="Итого" value={money(revenue)} {...comparison(revenue, previousRevenue)} tone="total" />
+          <Tile label="Остаток салону" value={money(salonRemainder)} {...comparison(salonRemainder, previousRevenue - previousPayout)} tone="salon" />
+          <Tile label="Клиентов" value={totalClients} {...comparison(totalClients, previousClients)} />
+          <Tile label="Новые" value={newClients} {...comparison(newClients, previousNewClients)} />
+          <Tile label="Постоянные" value={totalClients - newClients} {...comparison(totalClients - newClients, previousClients - previousNewClients)} />
+          <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
         </div>
+        <PaymentBreakdownBar cash={paymentTotals.cash} card={paymentTotals.card} qr={paymentTotals.qr} />
       </div>
 
       <div className="card wide">
         <h2>Выручка по дням</h2>
-        <RevenueChart sales={sales} from={range.from} to={range.to} />
+        <RevenueChart
+          sales={sales}
+          previousSales={previousSales}
+          from={range.from}
+          to={range.to}
+          previousFrom={priorRange?.from}
+          previousTo={priorRange?.to}
+        />
       </div>
 
       <div className="card wide">
         <h2>По мастерам</h2>
-        {masterSummaries.map(({ master, rows, revenue: masterRevenue, pay }) => (
-          <div className="row" key={master.name}>
-            <div><strong>{master.name}</strong><span>{money(masterRevenue)} сум · {rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</span></div>
-            <strong>{money(pay)}</strong>
-          </div>
-        ))}
+        <div className="master-table-wrap">
+          <table className="master-table">
+            <thead>
+              <tr>
+                {[
+                  ['name', 'Мастер'],
+                  ['revenue', 'Выручка'],
+                  ['pay', 'К выплате'],
+                ].map(([key, label]) => (
+                  <th aria-sort={masterSort.key === key ? (masterSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key}>
+                    <button className="master-sort" type="button" onClick={() => changeMasterSort(key)}>
+                      {label}<span aria-hidden="true">{sortArrow(key)}</span>
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedMasterSummaries.map(({ master, rows, revenue: masterRevenue, pay }) => (
+                <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
+                  <td>
+                    <div className="master-name-line">
+                      <strong>{master.name}</strong>
+                      {master.name === topMasterName ? <span className="master-top-mark" aria-label="Лидер по выручке" title="Лидер по выручке">★</span> : null}
+                    </div>
+                    <small>{rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</small>
+                  </td>
+                  <td>{money(masterRevenue)} сум</td>
+                  <td><strong>{money(pay)} сум</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
       </div>
 
@@ -1198,21 +1410,30 @@ function FinanceView({ data, reload, setError }) {
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
+  const priorRange = previousRange(range, period);
   const sales = data.sales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
   const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
   const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
+  const previousSales = priorRange ? data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), priorRange.from, priorRange.to),
+  ) : [];
+  const previousExpenses = priorRange ? data.expenses.filter(
+    (expense) => inRange(rowDate(expense, 'date'), priorRange.from, priorRange.to),
+  ) : [];
+  const previousFines = priorRange ? data.fines.filter(
+    (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
+  ) : [];
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const reportMasters = reportMastersForPeriod(data, sales, fines);
-  const payouts = reportMasters.reduce((sum, master) => {
-    const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const rev = rows.reduce((total, sale) => total + saleTotal(sale), 0);
-    const fine = fines.filter((item) => belongsToMaster(item, master)).reduce((total, item) => total + (Number(item.amount) || 0), 0);
-    return sum + Math.max(0, (rev * Number(master.pct || 40)) / 100 - fine);
-  }, 0);
+  const payouts = masterPayoutForPeriod(data, sales, fines);
   const salon = revenue - payouts;
   const ishxonaExpenses = expenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const previousRevenue = previousSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const previousPayouts = masterPayoutForPeriod(data, previousSales, previousFines);
+  const previousSalon = previousRevenue - previousPayouts;
+  const previousIshxonaExpenses = previousExpenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous) : {};
   const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
   const visibleExpenseTotal = visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
 
@@ -1270,10 +1491,11 @@ function FinanceView({ data, reload, setError }) {
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero profit-value">{money(salon - ishxonaExpenses)} <small>сум прибыль</small></div>
         <div className="tiles">
-          <Tile label="Выручка" value={money(revenue)} />
-          <Tile label="Зарплаты мастеров" value={money(payouts)} />
-          <Tile label="Остаток салону" value={money(salon)} tone="salon" />
-          <Tile label="Расходы" value={money(ishxonaExpenses)} danger />
+          <Tile label="Выручка" value={money(revenue)} {...comparison(revenue, previousRevenue)} />
+          <Tile label="Зарплаты мастеров" value={money(payouts)} {...comparison(payouts, previousPayouts)} />
+          <Tile label="Остаток салону" value={money(salon)} {...comparison(salon, previousSalon)} tone="salon" />
+          <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(ishxonaExpenses, previousIshxonaExpenses)} danger />
+          <Tile label="Прибыль" value={money(salon - ishxonaExpenses)} {...comparison(salon - ishxonaExpenses, previousSalon - previousIshxonaExpenses)} tone="total" />
         </div>
       </div>
 
@@ -1354,7 +1576,7 @@ function FinanceView({ data, reload, setError }) {
   );
 }
 
-function RevenueChart({ sales, from, to }) {
+function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previousTo }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const days = [];
   const cursor = new Date(`${from}T12:00:00`);
@@ -1375,7 +1597,22 @@ function RevenueChart({ sales, from, to }) {
   });
 
   const values = days.map((day) => totals[day].revenue);
-  const max = Math.max(1, ...values);
+  const previousDays = [];
+  if (previousFrom && previousTo) {
+    const previousCursor = new Date(`${previousFrom}T12:00:00`);
+    const previousEnd = new Date(`${previousTo}T12:00:00`);
+    while (previousCursor <= previousEnd && previousDays.length < 370) {
+      previousDays.push(localDate(previousCursor));
+      previousCursor.setDate(previousCursor.getDate() + 1);
+    }
+  }
+  const previousTotals = Object.fromEntries(previousDays.map((day) => [day, 0]));
+  previousSales.forEach((sale) => {
+    const day = rowDate(sale);
+    if (day in previousTotals) previousTotals[day] += saleTotal(sale);
+  });
+  const previousValues = days.map((_, index) => previousTotals[previousDays[index]] || 0);
+  const max = Math.max(1, ...values, ...previousValues);
   const barWidth = Math.max(14, Math.min(38, Math.floor(480 / Math.max(1, days.length))));
   const gap = 6;
   const width = Math.max(170, days.length * (barWidth + gap) + 10);
@@ -1395,6 +1632,7 @@ function RevenueChart({ sales, from, to }) {
       <svg height="150" viewBox={`0 0 ${width} 150`} width={width}>
         {days.map((day, index) => {
           const height = Math.round((values[index] / max) * 100);
+          const previousHeight = Math.round((previousValues[index] / max) * 100);
           const x = 10 + index * (barWidth + gap);
           const isSelected = selectedDay === day;
           return (
@@ -1413,6 +1651,17 @@ function RevenueChart({ sales, from, to }) {
               tabIndex="0"
             >
               <rect
+                className="chart-bar-previous"
+                fill="var(--brass)"
+                height={previousHeight}
+                opacity={previousValues[index] ? 0.35 : 0}
+                rx="3"
+                width={barWidth}
+                x={x}
+                y={120 - previousHeight}
+              />
+              <rect
+                className="chart-bar-current"
                 fill="var(--brass)"
                 height={height}
                 opacity={values[index] ? 0.95 : 0.18}
@@ -1468,6 +1717,7 @@ function DebtsView({ data, reload, setError }) {
   const activeDebts = myDebts.filter((debt) => !debt.is_closed).sort(newestFirst);
   const closedDebts = myDebts.filter((debt) => debt.is_closed).sort(newestFirst);
   const currentMonth = TODAY.slice(0, 7);
+  const openDebtTotals = totalOpenDebtsByCurrency(data);
 
   function shiftDebtMonth(offset) {
     const [year, month] = currentMonth.split('-').map(Number);
@@ -1503,9 +1753,7 @@ function DebtsView({ data, reload, setError }) {
 
   const dashboard = ['USD', 'UZS'].map((currency) => {
     const currencyDebts = myDebts.filter((debt) => debt.currency === currency);
-    const remaining = currencyDebts
-      .filter((debt) => !debt.is_closed)
-      .reduce((sum, debt) => sum + Math.max(0, Number(debt.amount) - paid(debt.id)), 0);
+    const remaining = openDebtTotals[currency];
     const plannedPayment = plannedCurrencyPayment(currency);
     const forecast = Math.max(0, remaining - plannedPayment);
     const chartMonths = [-5, -4, -3, -2, -1, 0].map(shiftDebtMonth);
@@ -1594,14 +1842,20 @@ function DebtsView({ data, reload, setError }) {
     const progress = Math.min(100, Math.round((paidAmount / Math.max(Number(debt.amount), 1)) * 100));
     const paymentForm = payments[debt.id] || { date: TODAY, amount: '' };
     const previousMonths = [-3, -2, -1].map(shiftDebtMonth);
-    const average = previousMonths.reduce((sum, month) => (
+    const averagePayment = previousMonths.reduce((sum, month) => (
       sum + debtPayments
         .filter((payment) => String(payment.date).startsWith(month))
         .reduce((monthSum, payment) => monthSum + (Number(payment.amount) || 0), 0)
     ), 0) / 3;
     const plan = debtPaymentPlan(debt);
-    const monthlyPayment = plan?.monthly || average;
+    const monthlyPayment = plan?.monthly || averagePayment;
     const payoffMonths = monthlyPayment > 0 ? Math.ceil(remaining / monthlyPayment) : null;
+    const averagePayoffMonths = averagePayment > 0 ? Math.max(1, Math.ceil(remaining / averagePayment)) : null;
+    const payoffForecast = debt.is_closed
+      ? 'долг погашен'
+      : averagePayoffMonths
+        ? `ориентировочно закроется в ${futureMonthLabel(averagePayoffMonths)}`
+        : 'нет регулярных платежей для прогноза';
     const showHistory = historyIds.includes(debt.id);
     const showPayment = openPaymentId === debt.id;
 
@@ -1616,6 +1870,7 @@ function DebtsView({ data, reload, setError }) {
           <div className="debt-person-balance">
             <span>Осталось</span>
             <strong>{debt.currency === 'USD' ? usdMoney(remaining) : `${money(remaining)} сум`}</strong>
+            <small className="debt-payoff-forecast">{payoffForecast}</small>
           </div>
         </div>
 
@@ -1778,12 +2033,12 @@ function SectionHeading({ label, range }) {
   );
 }
 
-function Tile({ label, value, secondary, hint, danger, tone }) {
+function Tile({ label, value, secondary, secondaryTone, hint, danger, tone }) {
   return (
     <div className={`tile ${danger ? 'danger' : ''} ${tone ? `tile-${tone}` : ''}`}>
       <span>{label}</span>
       <strong>{value}</strong>
-      {secondary ? <em>{secondary}</em> : null}
+      {secondary ? <em className={secondaryTone}>{secondary}</em> : null}
       {hint ? <small>{hint}</small> : null}
     </div>
   );
@@ -1797,6 +2052,10 @@ function Rows({ rows, empty, render }) {
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
 const VIEW_META = {
+  overview: {
+    title: 'Обзор',
+    description: 'Ключевые показатели салона на одном экране.',
+  },
   master: {
     title: 'Рабочий день',
     description: 'Смена, продажи и заработок за выбранный период.',
@@ -1822,6 +2081,24 @@ const VIEW_META = {
     description: 'Прибыль, расходы и вложения за выбранный период.',
   },
 };
+
+function viewIdsForUser(data) {
+  if (data.role === 'admin') {
+    const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
+    return [
+      ...(canSeeOverview ? ['overview'] : []),
+      'master',
+      'admin',
+      'attendance',
+      ...(data.appRole === 'finance' ? [] : ['calendar']),
+      ...(canSeeOverview ? ['clients'] : []),
+      'finance',
+      'debts',
+    ];
+  }
+  if (data.role === 'master') return ['master', 'calendar'];
+  return [];
+}
 
 function LoginGate({ error }) {
   return (
@@ -1875,7 +2152,7 @@ function ThemeControls({ theme, setTheme, dark, setDark }) {
 
 export default function App() {
   const [data, setData] = useState(emptyState);
-  const [view, setView] = useState('master');
+  const [view, setView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -1921,10 +2198,8 @@ export default function App() {
       setData(normalized);
       setLoginRequired(false);
       setView((currentView) => {
-        const allowed = normalized.role === 'admin'
-          ? ['master', 'admin', 'attendance', ...(normalized.appRole === 'finance' ? [] : ['calendar']), ...(['owner', 'admin'].includes(normalized.appRole) ? ['clients'] : []), 'finance', 'debts']
-          : ['master', 'calendar'];
-        if (!preserveView) return normalized.role === 'admin' ? 'admin' : 'master';
+        const allowed = viewIdsForUser(normalized);
+        if (!preserveView) return allowed.includes('overview') ? 'overview' : normalized.role === 'admin' ? 'admin' : 'master';
         return allowed.includes(currentView) ? currentView : allowed[0];
       });
     } catch (loadError) {
@@ -1942,10 +2217,9 @@ export default function App() {
   }, []);
 
   const availableViews = useMemo(() => {
-    if (data.role === 'admin') return ['master', 'admin', 'attendance', ...(data.appRole === 'finance' ? [] : ['calendar']), ...(['owner', 'admin'].includes(data.appRole) ? ['clients'] : []), 'finance', 'debts'];
-    if (data.role === 'master') return ['master', 'calendar'];
-    return [];
+    return viewIdsForUser(data);
   }, [data.appRole, data.role]);
+  const pendingSalesCount = getPendingSales(data.sales).length;
 
   if (loginRequired) return <LoginGate error={error} />;
   if (isLoading) {
@@ -1961,6 +2235,7 @@ export default function App() {
   }
 
   const CurrentView = {
+    overview: OverviewView,
     master: MasterView,
     admin: AdminView,
     attendance: AttendanceView,
@@ -1989,6 +2264,7 @@ export default function App() {
       {availableViews.length ? (
         <nav className="seg nav">
           {[
+            ['overview', 'Обзор'],
             ['master', 'Мастер'],
             ['admin', 'Админ'],
             ['attendance', 'Посещаемость'],
@@ -1997,8 +2273,13 @@ export default function App() {
             ['finance', 'Финансы'],
             ['debts', 'Долги'],
           ].filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
-            <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => setView(id)}>
+            <button className={`${view === id ? 'on ' : ''}${id === 'admin' && pendingSalesCount ? 'has-nav-badge' : ''}`} key={id} type="button" onClick={() => setView(id)}>
               {label}
+              {id === 'admin' && pendingSalesCount ? (
+                <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
+                  {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>

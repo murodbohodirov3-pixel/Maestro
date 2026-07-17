@@ -220,6 +220,42 @@ small {
   box-shadow: none;
 }
 
+.nav button.has-nav-badge {
+  position: relative;
+  padding-right: 30px;
+}
+
+.nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  padding-inline: 4px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--brass);
+  box-shadow: 0 0 0 1px var(--surface-2);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  animation: maestro-badge-appear 0.35s ease-out 1;
+}
+
+.nav button.on .nav-badge {
+  background: var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brass) 72%, var(--surface));
+  color: var(--brass);
+}
+
+@keyframes maestro-badge-appear {
+  from { opacity: 0; transform: scale(0.88); }
+  70% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--brass) 12%, transparent); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 .view-intro {
   display: grid;
   gap: var(--space-1);
@@ -375,6 +411,18 @@ small {
   .loading-emblem::before,
   .loading-emblem-core {
     animation: none;
+  }
+
+  .chart-bar rect {
+    transition: none !important;
+  }
+
+  .nav-badge {
+    animation: none !important;
+  }
+
+  .payment-breakdown-segment {
+    transition: none !important;
   }
 }
 
@@ -919,7 +967,11 @@ small {
   outline: none;
 }
 
-.chart-bar:focus rect:first-child {
+.chart-bar rect {
+  transition: height 0.25s ease, opacity 0.25s ease, y 0.25s ease;
+}
+
+.chart-bar:focus .chart-bar-current {
   stroke: var(--ink);
   stroke-width: 2;
 }
@@ -1089,6 +1141,80 @@ table {
   font-size: 14px;
 }
 
+.master-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-radius: 12px;
+}
+
+.master-table {
+  min-width: 500px;
+}
+
+.master-sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.master-table th:first-child .master-sort {
+  justify-content: flex-start;
+}
+
+.master-sort span {
+  width: 10px;
+  color: var(--brass);
+}
+
+.master-table td:first-child small {
+  display: block;
+}
+
+.master-name-line {
+  display: flex;
+  align-items: center;
+}
+
+.master-table td:first-child small {
+  margin-top: 3px;
+}
+
+.master-top-row td {
+  border-top: 1px solid var(--brass);
+  border-bottom: 1px solid var(--brass);
+  background: color-mix(in srgb, var(--brass) 6%, var(--surface));
+}
+
+.master-top-row td:first-child {
+  border-left: 1px solid var(--brass);
+}
+
+.master-top-row td:last-child {
+  border-right: 1px solid var(--brass);
+}
+
+.master-top-mark {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--brass-soft);
+  color: var(--brass);
+  font-size: 10px;
+  vertical-align: middle;
+}
+
 th,
 td {
   padding: 9px 8px;
@@ -1162,6 +1288,76 @@ td:first-child {
   background:
     radial-gradient(circle at 100% 0, color-mix(in srgb, var(--brass) 14%, transparent), transparent 44%),
     var(--surface);
+}
+
+.tile em.positive {
+  color: #2f9e58;
+}
+
+.tile em.negative {
+  color: #c94b4b;
+}
+
+.payment-breakdown {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.payment-breakdown-track {
+  display: flex;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.payment-breakdown-segment {
+  min-width: 0;
+  flex-grow: 0;
+  flex-shrink: 0;
+  transition: flex-basis 0.4s ease;
+}
+
+.payment-breakdown-cash {
+  background: var(--brass);
+}
+
+.payment-breakdown-card {
+  background: color-mix(in srgb, var(--brass) 60%, white);
+}
+
+.payment-breakdown-qr {
+  background: color-mix(in srgb, var(--brass) 30%, white);
+}
+
+.payment-breakdown-labels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.payment-breakdown-labels > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.payment-breakdown-labels strong {
+  color: var(--ink);
+  font-size: inherit;
+}
+
+.payment-breakdown-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
 }
 
 .debt-summary-card--combined,
@@ -1418,6 +1614,14 @@ td:first-child {
   color: var(--brass);
   font-size: 20px;
   font-variant-numeric: tabular-nums;
+}
+
+.debt-payoff-forecast {
+  max-width: 230px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .debt-progress-track {
@@ -1821,6 +2025,21 @@ footer span {
   table {
     min-width: 460px;
     font-size: 13px;
+  }
+
+  .master-table {
+    min-width: 100%;
+    font-size: 12px;
+  }
+
+  .master-table th,
+  .master-table td {
+    padding-inline: 5px;
+  }
+
+  .master-sort {
+    gap: 2px;
+    font-size: 11px;
   }
 
   th,
