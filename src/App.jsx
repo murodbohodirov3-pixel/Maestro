@@ -10,7 +10,7 @@ import {
 import { saleClientsCount } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
-const APP_VERSION = 'analytics-comparison-v2';
+const APP_VERSION = 'overview-details-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -404,7 +404,165 @@ function MasterMetricComparison({ current, previous }) {
   );
 }
 
+function monthWeekRanges(range) {
+  const ranges = [];
+  const monthEnd = new Date(`${range.to}T12:00:00`);
+  let cursor = new Date(`${range.from}T12:00:00`);
+
+  while (cursor <= monthEnd) {
+    const weekEnd = new Date(cursor);
+    const mondayBasedDay = (cursor.getDay() + 6) % 7;
+    weekEnd.setDate(cursor.getDate() + (6 - mondayBasedDay));
+    if (weekEnd > monthEnd) weekEnd.setTime(monthEnd.getTime());
+
+    ranges.push({ from: localDate(cursor), to: localDate(weekEnd) });
+    cursor = new Date(weekEnd);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return ranges;
+}
+
+function overviewWeeklyMetrics(data, range, sales, fines) {
+  const reportMasters = reportMastersForPeriod(data, sales, fines);
+  const buckets = monthWeekRanges(range).map((week) => {
+    const weekSales = sales.filter((sale) => inRange(rowDate(sale), week.from, week.to));
+    const revenue = weekSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const grossMasterPay = reportMasters.reduce((sum, master) => {
+      const masterRevenue = weekSales
+        .filter((sale) => belongsToMaster(sale, master))
+        .reduce((total, sale) => total + saleTotal(sale), 0);
+      return sum + masterRevenue * Number(master.pct || 40) / 100;
+    }, 0);
+    const expenses = data.expenses
+      .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), week.from, week.to))
+      .reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+
+    return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses };
+  });
+
+  // A fine reduces a master's monthly payout only down to zero. Distributing the
+  // recognized part by its actual week keeps the weekly rows equal to the month total.
+  reportMasters.forEach((master) => {
+    const masterRevenue = sales
+      .filter((sale) => belongsToMaster(sale, master))
+      .reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const grossMasterPay = masterRevenue * Number(master.pct || 40) / 100;
+    const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
+    const fineTotal = masterFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
+
+    buckets.forEach((bucket) => {
+      if (remainingRecognizedFines <= 0) return;
+      const bucketFines = masterFines
+        .filter((fine) => inRange(rowDate(fine), bucket.from, bucket.to))
+        .reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+      const recognized = Math.min(bucketFines, remainingRecognizedFines);
+      bucket.recognizedFines += recognized;
+      remainingRecognizedFines -= recognized;
+    });
+  });
+
+  return buckets.map((bucket) => {
+    const salonRemainder = bucket.revenue - bucket.grossMasterPay + bucket.recognizedFines;
+    return {
+      ...bucket,
+      salonRemainder,
+      netProfit: salonRemainder - bucket.expenses,
+    };
+  });
+}
+
+function overviewFineRanking(data, fines) {
+  const mastersById = new Map(data.masters.map((master) => [String(master.id), master]));
+  const totals = new Map();
+
+  fines.forEach((fine) => {
+    const master = fine.master_id != null ? mastersById.get(String(fine.master_id)) : null;
+    const name = master?.name || fine.master || 'Без мастера';
+    const key = master?.id != null ? `id:${master.id}` : `name:${name}`;
+    const current = totals.get(key) || { key, name, amount: 0, count: 0 };
+    current.amount += Number(fine.amount) || 0;
+    current.count += 1;
+    totals.set(key, current);
+  });
+
+  return [...totals.values()].sort((left, right) => (
+    right.amount - left.amount || left.name.localeCompare(right.name, 'ru')
+  ));
+}
+
+function fineCountLabel(count) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'штрафов';
+  if (mod10 === 1) return 'штраф';
+  if (mod10 >= 2 && mod10 <= 4) return 'штрафа';
+  return 'штрафов';
+}
+
+function OverviewMetricTile({ detailId, label, value, tone, danger, expanded, onToggle }) {
+  return (
+    <button
+      aria-controls={expanded ? `overview-details-${detailId}` : undefined}
+      aria-expanded={expanded}
+      className={`tile overview-metric-tile ${expanded ? 'is-expanded' : ''} ${danger ? 'danger' : ''} ${tone ? `tile-${tone}` : ''}`}
+      type="button"
+      onClick={() => onToggle(expanded ? null : detailId)}
+    >
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <i className="overview-metric-chevron" aria-hidden="true" />
+    </button>
+  );
+}
+
+function OverviewWeeklyDetails({ detailId, title, rows, valueKey }) {
+  return (
+    <div className="overview-details" id={`overview-details-${detailId}`} role="region" aria-label={title}>
+      <div className="overview-details-heading">
+        <strong>{title}</strong>
+        <span>по календарным неделям</span>
+      </div>
+      <div className="overview-details-list">
+        {rows.map((row) => (
+          <div className="overview-detail-row" key={row.from}>
+            <span>{displayRange(row)}</span>
+            <strong>{money(row[valueKey])} сум</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OverviewFineDetails({ rows }) {
+  return (
+    <div className="overview-details" id="overview-details-fines" role="region" aria-label="Штрафы по мастерам">
+      <div className="overview-details-heading">
+        <strong>Штрафы по мастерам</strong>
+        <span>от большей суммы к меньшей</span>
+      </div>
+      {rows.length ? (
+        <ol className="overview-fine-ranking">
+          {rows.map((row, index) => (
+            <li className={index === 0 ? 'is-first' : ''} key={row.key}>
+              <span className="overview-rank-number">{index + 1}</span>
+              <span className="overview-rank-master">
+                <strong>{row.name}</strong>
+                <small>{row.count} {fineCountLabel(row.count)}</small>
+              </span>
+              <strong className="overview-rank-amount">{money(row.amount)} сум</strong>
+            </li>
+          ))}
+        </ol>
+      ) : <p className="hint overview-details-empty">В этом месяце штрафов нет.</p>}
+    </div>
+  );
+}
+
 function OverviewView({ data }) {
+  const [expandedDetail, setExpandedDetail] = useState(null);
   const monthRange = currentMonthRange();
   const todaySales = data.sales.filter((sale) => isCountedSale(sale) && rowDate(sale) === TODAY);
   const monthSales = data.sales.filter(
@@ -421,6 +579,11 @@ function OverviewView({ data }) {
     .reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
   const netProfit = salonRemainder - operatingExpenses;
   const pendingSales = getPendingSales(data.sales);
+  const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
+  const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
+    week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses
+  ));
+  const fineRanking = overviewFineRanking(data, monthFines);
 
   return (
     <section className="view-grid">
@@ -428,10 +591,47 @@ function OverviewView({ data }) {
         <SectionHeading label="Главное сегодня" range={{ from: TODAY, to: TODAY }} />
         <div className="tiles overview-tiles">
           <Tile label="Выручка сегодня" value={`${money(todayRevenue)} сум`} tone="total" />
-          <Tile label="Выручка за месяц" value={`${money(monthRevenue)} сум`} />
-          <Tile label="Остаток салону" value={`${money(salonRemainder)} сум`} tone="salon" />
-          <Tile label="Штрафы за месяц" value={`${money(fineTotal)} сум`} />
-          <Tile label="Чистая прибыль" value={`${money(netProfit)} сум`} tone="total" danger={netProfit < 0} />
+          <OverviewMetricTile
+            detailId="revenue"
+            expanded={expandedDetail === 'revenue'}
+            label="Выручка за месяц"
+            value={`${money(monthRevenue)} сум`}
+            onToggle={setExpandedDetail}
+          />
+          {expandedDetail === 'revenue' ? (
+            <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
+          ) : null}
+          <OverviewMetricTile
+            detailId="salon"
+            expanded={expandedDetail === 'salon'}
+            label="Остаток салону"
+            tone="salon"
+            value={`${money(salonRemainder)} сум`}
+            onToggle={setExpandedDetail}
+          />
+          {expandedDetail === 'salon' ? (
+            <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
+          ) : null}
+          <OverviewMetricTile
+            detailId="fines"
+            expanded={expandedDetail === 'fines'}
+            label="Штрафы за месяц"
+            value={`${money(fineTotal)} сум`}
+            onToggle={setExpandedDetail}
+          />
+          {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
+          <OverviewMetricTile
+            danger={netProfit < 0}
+            detailId="profit"
+            expanded={expandedDetail === 'profit'}
+            label="Чистая прибыль"
+            tone="total"
+            value={`${money(netProfit)} сум`}
+            onToggle={setExpandedDetail}
+          />
+          {expandedDetail === 'profit' ? (
+            <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
+          ) : null}
           <Tile label="Ждут подтверждения" value={pendingSales.length} />
         </div>
       </div>

@@ -405,6 +405,11 @@ small {
   50% { transform: scale(0.91); }
 }
 
+@keyframes overview-detail-reveal {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner,
   .loading-emblem-ring,
@@ -422,6 +427,15 @@ small {
   }
 
   .payment-breakdown-segment {
+    transition: none !important;
+  }
+
+  .overview-details {
+    animation: none !important;
+  }
+
+  .overview-metric-tile,
+  .overview-metric-chevron {
     transition: none !important;
   }
 }
@@ -867,6 +881,177 @@ small {
 .tile-salon strong,
 .profit-value {
   color: var(--cash);
+}
+
+.overview-metric-tile {
+  position: relative;
+  width: 100%;
+  padding-right: 38px;
+  appearance: none;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.overview-metric-tile:hover,
+.overview-metric-tile.is-expanded {
+  border-color: color-mix(in srgb, var(--brass) 72%, var(--line));
+  background: color-mix(in srgb, var(--brass-soft) 34%, var(--surface));
+}
+
+.overview-metric-tile:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brass) 72%, white);
+  outline-offset: 2px;
+}
+
+.overview-metric-tile.is-expanded {
+  box-shadow: inset 3px 0 0 var(--brass);
+}
+
+.overview-metric-chevron {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--brass);
+  border-bottom: 2px solid var(--brass);
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 0.25s ease;
+}
+
+.overview-metric-tile.is-expanded .overview-metric-chevron {
+  transform: translateY(-25%) rotate(225deg);
+}
+
+.overview-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--brass) 38%, var(--line));
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--brass-soft) 28%, var(--surface));
+  animation: overview-detail-reveal 0.28s ease-out both;
+}
+
+.overview-details-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.overview-details-heading > strong {
+  font-size: 15px;
+}
+
+.overview-details-heading > span {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.overview-details-list {
+  display: grid;
+}
+
+.overview-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--brass) 18%, var(--line));
+}
+
+.overview-detail-row > span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-detail-row > strong {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.overview-fine-ranking {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.overview-fine-ranking li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.overview-fine-ranking li.is-first {
+  border-color: color-mix(in srgb, var(--brass) 58%, var(--line));
+  background: color-mix(in srgb, var(--brass-soft) 52%, var(--surface));
+}
+
+.overview-rank-number {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brass) 16%, var(--surface));
+  color: var(--brass);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.overview-fine-ranking li.is-first .overview-rank-number {
+  background: var(--brass);
+  color: white;
+}
+
+.overview-rank-master {
+  min-width: 0;
+  margin: 0;
+}
+
+.overview-rank-master strong,
+.overview-rank-master small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.overview-rank-master strong {
+  font-size: 14px;
+}
+
+.overview-rank-master small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.overview-rank-amount {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.overview-details-empty {
+  margin: 4px 0 0;
 }
 
 .payout-total {
@@ -2225,6 +2410,25 @@ footer span {
 @media (max-width: 380px) {
   .tiles {
     grid-template-columns: 1fr;
+  }
+
+  .overview-details-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .overview-details-heading > span {
+    text-align: left;
+  }
+
+  .overview-fine-ranking li {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .overview-rank-amount {
+    grid-column: 2;
+    text-align: left;
   }
 
   .row {
