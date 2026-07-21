@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   callLegacyApi,
   captureTelegramOAuthCode,
@@ -10,7 +10,7 @@ import {
 import { saleClientsCount } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
-const APP_VERSION = 'overview-details-v1';
+const APP_VERSION = 'auto-refresh-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -2411,6 +2411,7 @@ export default function App() {
   const [view, setView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const isLoadingRef = useRef(false);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('maestroTheme') || 'brass');
@@ -2436,6 +2437,8 @@ export default function App() {
   }, [dark, theme]);
 
   async function load({ preserveView = true } = {}) {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     setError('');
     if (preserveView) setIsRefreshing(true);
     else setIsLoading(true);
@@ -2462,6 +2465,7 @@ export default function App() {
       setError(loadError.message || 'Не удалось загрузить данные.');
       if (String(loadError.message).includes('unauthorized')) setLoginRequired(true);
     } finally {
+      isLoadingRef.current = false;
       setIsLoading(false);
       setIsRefreshing(false);
     }
@@ -2471,6 +2475,42 @@ export default function App() {
     window.Telegram?.WebApp?.ready?.();
     load({ preserveView: false });
   }, []);
+
+  useEffect(() => {
+    if (loginRequired) return undefined;
+
+    let intervalId;
+
+    const refresh = () => {
+      if (!document.hidden && !isLoadingRef.current) {
+        load({ preserveView: true });
+      }
+    };
+
+    const startInterval = () => {
+      clearInterval(intervalId);
+      intervalId = window.setInterval(refresh, 15000);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        clearInterval(intervalId);
+        intervalId = undefined;
+        return;
+      }
+
+      refresh();
+      startInterval();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    if (!document.hidden) startInterval();
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loginRequired]);
 
   const availableViews = useMemo(() => {
     return viewIdsForUser(data);
