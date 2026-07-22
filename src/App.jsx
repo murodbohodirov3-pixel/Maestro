@@ -7,7 +7,7 @@ import {
   needsTelegramLogin,
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
-import { saleClientsCount } from './utils/calculations.js';
+import { masterGrossPay, masterNetPay, saleClientsCount } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
 const APP_VERSION = 'auto-refresh-v1';
@@ -296,7 +296,7 @@ function masterPayoutForPeriod(data, sales, fines = []) {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
     const revenue = rows.reduce((total, sale) => total + saleTotal(sale), 0);
     const fineTotal = fines.filter((fine) => belongsToMaster(fine, master)).reduce((total, fine) => total + (Number(fine.amount) || 0), 0);
-    return sum + Math.max(0, revenue * Number(master.pct || 40) / 100 - fineTotal);
+    return sum + masterNetPay(masterGrossPay(revenue, Number(master.pct || 40)), fineTotal);
   }, 0);
 }
 
@@ -432,7 +432,7 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
       const masterRevenue = weekSales
         .filter((sale) => belongsToMaster(sale, master))
         .reduce((total, sale) => total + saleTotal(sale), 0);
-      return sum + masterRevenue * Number(master.pct || 40) / 100;
+      return sum + masterGrossPay(masterRevenue, Number(master.pct || 40));
     }, 0);
     const expenses = data.expenses
       .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), week.from, week.to))
@@ -447,7 +447,7 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
     const masterRevenue = sales
       .filter((sale) => belongsToMaster(sale, master))
       .reduce((sum, sale) => sum + saleTotal(sale), 0);
-    const grossMasterPay = masterRevenue * Number(master.pct || 40) / 100;
+    const grossMasterPay = masterGrossPay(masterRevenue, Number(master.pct || 40));
     const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
     const fineTotal = masterFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
     let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
@@ -668,7 +668,7 @@ function MasterView({ data, reload, setError }) {
     qr: totals.qr + (Number(sale.qr) || 0),
   }), { cash: 0, card: 0, qr: 0 });
   const fineTotal = visibleFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
-  const pay = Math.max(0, (revenue * pct) / 100 - fineTotal);
+  const pay = masterNetPay(masterGrossPay(revenue, pct), fineTotal);
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
   const shiftStart = data.settings.shift_start || '09:00';
 
@@ -908,9 +908,9 @@ function AdminView({ data, reload, setError }) {
       master,
       rows,
       revenue: masterRevenue,
-      pay: Math.max(0, masterRevenue * Number(master.pct || 40) / 100 - masterFine),
+      pay: masterNetPay(masterGrossPay(masterRevenue, Number(master.pct || 40)), masterFine),
       previousRevenue,
-      previousPay: Math.max(0, previousRevenue * Number(master.pct || 40) / 100 - previousFine),
+      previousPay: masterNetPay(masterGrossPay(previousRevenue, Number(master.pct || 40)), previousFine),
     };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
@@ -1065,7 +1065,7 @@ function AdminView({ data, reload, setError }) {
           render={(sale) => {
             const master = data.byName[sale.master];
             const amount = saleTotal(sale);
-            const masterEarning = amount * Number(master?.pct || 40) / 100;
+            const masterEarning = masterGrossPay(amount, Number(master?.pct || 40));
             const payment = sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet';
             const canDelete = recentSaleCanBeDeleted(rowDate(sale));
             return (

@@ -61,9 +61,15 @@ npm run preview
 
 ## Important Security Note
 
-RLS is currently disabled for development. Before production launch, enable RLS
-and add Supabase policies for `app_users`, `masters`, `sales`, `attendance`,
-`fines`, `expenses`, `debts`, `debt_payments`, and `settings`.
+RLS is enabled on the production public tables. The browser must not access
+operational tables directly: the `api` Edge Function is the only data gateway
+and enforces application authorization with server-side credentials. The
+matching baseline is committed in
+`supabase/migrations/20260722100917_enable_core_operational_rls.sql`; it
+deliberately creates no browser-facing policies.
+
+Do not add broad `anon` or `authenticated` policies, disable RLS, or expose a
+service-role key in the frontend.
 
 Do not change the Supabase schema or delete legacy columns without a separate
 approved migration plan.
