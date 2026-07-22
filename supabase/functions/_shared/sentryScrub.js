@@ -29,6 +29,8 @@ const SAFE_ACTIONS = new Set([
   'setMasterDayOff',
   'addAppointment',
   'setAppointmentStatus',
+  'setAppointmentOutcome',
+  'setClientBlocked',
   'addFine',
   'delFine',
   'setSettings',

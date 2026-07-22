@@ -61,7 +61,7 @@ async function fetchAppointments(filters: Record<string, string | number> = {}) 
   const toDate = `${tashkentDate(180)}T00:00:00+05:00`;
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    let query = sb.from('appointments').select('*');
+    let query = sb.from('appointments').select('*, client:clients(lifecycle_status)');
     for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
     const { data, error } = await query
       .gte('starts_at', fromDate)
@@ -70,7 +70,14 @@ async function fetchAppointments(filters: Record<string, string | number> = {}) 
       .order('id', { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
-    rows.push(...(data ?? []));
+    rows.push(...(data ?? []).map((row) => {
+      const client = Array.isArray(row.client) ? row.client[0] : row.client;
+      const { client: _privateClient, ...appointment } = row;
+      return {
+        ...appointment,
+        client_is_blocked: client?.lifecycle_status === 'blocked',
+      };
+    }));
     if (!data || data.length < PAGE_SIZE) return rows;
   }
 }
@@ -554,7 +561,7 @@ Deno.serve(async (req) => {
       });
       if (error) return json({ error: error.message }, 500);
       if (!result?.ok) {
-        const conflict = ['slot_already_booked', 'master_day_off'].includes(result?.error);
+        const conflict = ['slot_already_booked', 'master_day_off', 'client_blocked'].includes(result?.error);
         return json(result, conflict ? 409 : 400);
       }
       return json(result);
@@ -580,7 +587,51 @@ Deno.serve(async (req) => {
         p_actor_user_id: appUserResult.data.id,
       });
       if (error) return json({ error: error.message }, 500);
-      if (!result?.ok) return json(result, result?.error === 'appointment_not_found' ? 404 : 400);
+      if (!result?.ok) {
+        if (result?.error === 'forbidden') return json(result, 403);
+        if (result?.error === 'appointment_not_found') return json(result, 404);
+        if (['invalid_status_transition', 'outcome_already_recorded'].includes(result?.error)) return json(result, 409);
+        return json(result, 400);
+      }
+      return json(result);
+    }
+
+    if (action === 'setAppointmentOutcome') {
+      const { data: result, error } = await sb.rpc('maestro_set_appointment_outcome', {
+        p_appointment_id: payload.id,
+        p_outcome: String(payload.outcome || ''),
+        p_cancelled_by: payload.cancelled_by ? String(payload.cancelled_by) : null,
+        p_reason_code: payload.reason_code ? String(payload.reason_code) : null,
+        p_reason_note: payload.reason_note ? String(payload.reason_note) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) {
+        if (result?.error === 'forbidden') return json(result, 403);
+        if (result?.error === 'appointment_not_found') return json(result, 404);
+        if (['invalid_status_transition', 'outcome_already_recorded', 'outcome_before_start'].includes(result?.error)) {
+          return json(result, 409);
+        }
+        return json(result, 400);
+      }
+      return json(result);
+    }
+
+    if (action === 'setClientBlocked') {
+      if (!canManageClients) return json({ error: 'forbidden' }, 403);
+      const { data: result, error } = await sb.rpc('maestro_set_client_blocked', {
+        p_client_id: payload.id,
+        p_blocked: payload.blocked === true,
+        p_reason: payload.reason ? String(payload.reason) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) {
+        if (result?.error === 'forbidden') return json(result, 403);
+        if (result?.error === 'client_not_found') return json(result, 404);
+        if (result?.error === 'client_already_blocked') return json(result, 409);
+        return json(result, 400);
+      }
       return json(result);
     }
 

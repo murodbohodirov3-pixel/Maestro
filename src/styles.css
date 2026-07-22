@@ -732,7 +732,40 @@ small {
   color: var(--ink);
 }
 .calendar-appointment-actions button.danger { color: var(--fine); }
+.calendar-appointment-actions button:disabled { cursor: not-allowed; opacity: 0.45; }
+.client-block-warning {
+  width: max-content;
+  margin-top: 4px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--fine) 45%, var(--line));
+  border-radius: 999px;
+  color: var(--fine) !important;
+  font-weight: 750;
+}
 .calendar-new-form { align-self: start; }
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.58);
+}
+.outcome-dialog {
+  width: min(100%, 500px);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+}
+.outcome-dialog h2 { margin-top: 0; }
+.outcome-dialog textarea { resize: vertical; }
+.outcome-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
 
 .clients-toolbar,
 .clients-filters,
@@ -767,6 +800,15 @@ small {
   background: var(--surface-2);
   border: 1px solid var(--line);
 }
+.client-meta .client-blocked-detail {
+  border-color: color-mix(in srgb, var(--fine) 45%, var(--line));
+  color: var(--fine);
+}
+.client-block-button { min-height: 32px; padding: 5px 9px; }
+.client-block-button.danger {
+  border-color: color-mix(in srgb, var(--fine) 45%, var(--line));
+  color: var(--fine);
+}
 
 @media (max-width: 680px) {
   .calendar-toolbar,
@@ -780,6 +822,8 @@ small {
   .client-row { align-items: stretch; flex-direction: column; }
   .clients-filters label { flex-basis: auto; }
   .client-meta { justify-content: flex-start; text-align: left; }
+  .outcome-dialog-actions { flex-direction: column-reverse; }
+  .outcome-dialog-actions .btn { width: 100%; }
 }
 
 .detailed-sale-amounts {

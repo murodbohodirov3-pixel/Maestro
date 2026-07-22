@@ -28,6 +28,8 @@
 
 ## Completed
 
+- [x] Added audited appointment outcomes (`completed`, `cancelled`, `no_show`) with exact reasons, no-show CRM counters, and owner/admin client blocking enforced across all booking creation paths; existing records were left unchanged.
+
 - [x] Added fail-closed Sentry monitoring for the React frontend and `api` Edge Function, with a shared PII scrubber, sentinel leak tests, source-map upload, and separate production projects.
 - [x] Added an append-only owner-only audit ledger for fine, expense, debt, and debt-payment deletions, with atomic RPC deletes and paginated API reads.
 - [x] Removed dormant browser-direct Supabase CRUD modules and duplicate root PWA assets; active React UI continues to use the `api` Edge Function gateway only.

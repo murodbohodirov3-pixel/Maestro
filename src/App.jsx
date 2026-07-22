@@ -22,6 +22,12 @@ import {
   totalSalesAmount,
 } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
+import {
+  APPOINTMENT_OUTCOME_REASONS,
+  APPOINTMENT_REASON_LABELS,
+  appointmentOutcomeAllowed,
+  reasonRequiresNote,
+} from './utils/appointmentOutcomes.js';
 
 const APP_VERSION = 'auto-refresh-v1';
 const TODAY = localDate();
@@ -1375,6 +1381,8 @@ function CalendarView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(canManage ? 'all' : String(ownMaster?.id || ''));
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [outcomeDialog, setOutcomeDialog] = useState(null);
+  const [outcomeForm, setOutcomeForm] = useState({ reason_code: '', reason_note: '' });
   const [form, setForm] = useState({
     master_id: String(ownMaster?.id || data.activeMasters[0]?.id || ''),
     service_id: data.bookingServices[0]?.id || '',
@@ -1428,6 +1436,7 @@ function CalendarView({ data, reload, setError }) {
       const labels = {
         slot_already_booked: 'Это время пересекается с другой активной записью.',
         master_day_off: 'У мастера выходной — запись на этот день закрыта.',
+        client_blocked: 'Клиент заблокирован. Сначала разблокируйте его в CRM.',
       };
       setError(labels[appointmentError.message] || appointmentError.message || 'Не удалось создать запись.');
     } finally {
@@ -1441,6 +1450,67 @@ function CalendarView({ data, reload, setError }) {
     await callLegacyApi('setAppointmentStatus', { id: appointment.id, status });
     setMessage(`Статус изменён: ${APPOINTMENT_STATUS_LABELS[status]}.`);
     await reload();
+  }
+
+  function openOutcomeDialog(appointment, outcome, cancelledBy = null) {
+    setError('');
+    setMessage('');
+    setOutcomeForm({ reason_code: '', reason_note: '' });
+    setOutcomeDialog({ appointment, outcome, cancelledBy });
+  }
+
+  async function submitOutcome(event) {
+    event.preventDefault();
+    const reasonCode = outcomeDialog.outcome === 'completed' ? null : outcomeForm.reason_code;
+    const reasonNote = outcomeForm.reason_note.trim();
+    if (!reasonCode) return setError('Выберите обязательную причину.');
+    if (reasonRequiresNote(reasonCode) && !reasonNote) return setError('Для варианта «Другая причина» добавьте комментарий.');
+    setSaving(true);
+    setError('');
+    try {
+      await callLegacyApi('setAppointmentOutcome', {
+        id: outcomeDialog.appointment.id,
+        outcome: outcomeDialog.outcome,
+        cancelled_by: outcomeDialog.cancelledBy,
+        reason_code: reasonCode,
+        reason_note: reasonNote || null,
+      });
+      setMessage(`Статус изменён: ${APPOINTMENT_STATUS_LABELS[outcomeDialog.outcome]}.`);
+      setOutcomeDialog(null);
+      await reload();
+    } catch (outcomeError) {
+      const labels = {
+        outcome_before_start: 'Завершить запись или отметить неявку можно только после времени начала.',
+        invalid_status_transition: 'Эта запись уже имеет финальный статус.',
+        outcome_already_recorded: 'Для записи уже сохранён другой итог.',
+      };
+      setError(labels[outcomeError.message] || outcomeError.message || 'Не удалось сохранить итог записи.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function completeAppointment(appointment) {
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await callLegacyApi('setAppointmentOutcome', {
+        id: appointment.id,
+        outcome: 'completed',
+        cancelled_by: null,
+        reason_code: null,
+        reason_note: null,
+      });
+      setMessage('Статус изменён: Завершена.');
+      await reload();
+    } catch (outcomeError) {
+      setError(outcomeError.message === 'outcome_before_start'
+        ? 'Завершить запись можно только после времени начала.'
+        : outcomeError.message || 'Не удалось завершить запись.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function toggleCalendarDayOff(master, enabled) {
@@ -1500,13 +1570,18 @@ function CalendarView({ data, reload, setError }) {
                     <strong>{appointment.client_name}</strong>
                     <span>{appointment.service_name} · {money(appointment.price_uzs)} сум</span>
                     {appointment.client_phone ? <span>{appointment.client_phone}</span> : null}
+                    {appointment.client_is_blocked ? <span className="client-block-warning">Клиент заблокирован</span> : null}
+                    {appointment.status_reason_code ? <span>Причина: {APPOINTMENT_REASON_LABELS[appointment.status_reason_code] || appointment.status_reason_code}</span> : null}
+                    {appointment.status_reason_note ? <span>Комментарий: {appointment.status_reason_note}</span> : null}
                   </div>
                   <b>{APPOINTMENT_STATUS_LABELS[appointment.status] || appointment.status}</b>
                   {(canManage || String(appointment.master_id) === String(ownMaster?.id)) && ['pending', 'confirmed'].includes(appointment.status) ? (
                     <div className="calendar-appointment-actions">
                       {appointment.status === 'pending' ? <button type="button" onClick={() => setAppointmentStatus(appointment, 'confirmed')}>Подтвердить</button> : null}
-                      <button type="button" onClick={() => setAppointmentStatus(appointment, 'completed')}>Завершить</button>
-                      <button className="danger" type="button" onClick={() => setAppointmentStatus(appointment, 'cancelled')}>Отменить</button>
+                      <button disabled={saving || !appointmentOutcomeAllowed(appointment.status, 'completed', appointment.starts_at)} type="button" onClick={() => completeAppointment(appointment)}>Завершить</button>
+                      <button className="danger" disabled={saving || !appointmentOutcomeAllowed(appointment.status, 'no_show', appointment.starts_at)} type="button" onClick={() => openOutcomeDialog(appointment, 'no_show')}>Неявка</button>
+                      <button className="danger" disabled={saving} type="button" onClick={() => openOutcomeDialog(appointment, 'cancelled', 'client')}>Отменил клиент</button>
+                      <button className="danger" disabled={saving} type="button" onClick={() => openOutcomeDialog(appointment, 'cancelled', 'salon')}>Отменил салон</button>
                     </div>
                   ) : null}
                 </div>
@@ -1532,6 +1607,35 @@ function CalendarView({ data, reload, setError }) {
         </form>
       ) : null}
       {message ? <p className="notice success">{message}</p> : null}
+      {outcomeDialog ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !saving) setOutcomeDialog(null);
+        }}>
+          <form className="card outcome-dialog" role="dialog" aria-modal="true" aria-labelledby="outcome-dialog-title" onSubmit={submitOutcome}>
+            <h2 id="outcome-dialog-title">
+              {outcomeDialog.outcome === 'no_show'
+                ? 'Причина неявки'
+                : outcomeDialog.cancelledBy === 'client' ? 'Причина отмены клиентом' : 'Причина отмены салоном'}
+            </h2>
+            <p className="hint">{outcomeDialog.appointment.client_name} · {appointmentTime(outcomeDialog.appointment.starts_at)}</p>
+            <label>Причина
+              <select required value={outcomeForm.reason_code} onChange={(event) => setOutcomeForm({ ...outcomeForm, reason_code: event.target.value })}>
+                <option value="">Выберите причину</option>
+                {APPOINTMENT_OUTCOME_REASONS[outcomeDialog.outcome === 'no_show' ? 'no_show' : outcomeDialog.cancelledBy].map(([code, label]) => (
+                  <option key={code} value={code}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label>Комментарий{reasonRequiresNote(outcomeForm.reason_code) ? ' (обязательно)' : ''}
+              <textarea maxLength="500" required={reasonRequiresNote(outcomeForm.reason_code)} rows="4" value={outcomeForm.reason_note} onChange={(event) => setOutcomeForm({ ...outcomeForm, reason_note: event.target.value })} />
+            </label>
+            <div className="outcome-dialog-actions">
+              <button className="btn ghost" disabled={saving} type="button" onClick={() => setOutcomeDialog(null)}>Отмена</button>
+              <button className="btn" disabled={saving} type="submit">{saving ? 'Сохраняю…' : 'Сохранить итог'}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1549,7 +1653,7 @@ const CLIENT_CONSENT_LABELS = {
   denied: 'Запрещено',
 };
 
-function ClientsView({ data, setError }) {
+function ClientsView({ data, reload, setError }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const clients = [...data.clients].sort((left, right) => (
@@ -1565,12 +1669,30 @@ function ClientsView({ data, setError }) {
     if (!matchesQuery) return false;
     if (filter === 'return') return client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45;
     if (filter === 'marketing') return client.eligible_for_marketing === true;
+    if (filter === 'blocked') return Boolean(client.blocked_at);
     return true;
   });
   const returningClients = clients.filter((client) => (
     client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45
   )).length;
   const marketingClients = clients.filter((client) => client.eligible_for_marketing === true).length;
+  const blockedClients = clients.filter((client) => Boolean(client.blocked_at)).length;
+
+  async function setClientBlocked(client, blocked) {
+    let reason = null;
+    if (blocked) {
+      reason = window.prompt(`Укажите обязательную причину блокировки клиента ${client.full_name}:`, '')?.trim();
+      if (!reason) return;
+      if (reason.length > 500) return setError('Причина блокировки не должна превышать 500 символов.');
+    } else if (!window.confirm(`Разблокировать клиента ${client.full_name}?`)) return;
+    setError('');
+    try {
+      await callLegacyApi('setClientBlocked', { id: client.id, blocked, reason });
+      await reload();
+    } catch (clientError) {
+      setError(clientError.message || 'Не удалось изменить блокировку клиента.');
+    }
+  }
 
   function exportClients() {
     setError('');
@@ -1598,6 +1720,7 @@ function ClientsView({ data, setError }) {
         <Tile label="Активные" value={clients.filter((client) => client.lifecycle_status === 'active').length} />
         <Tile label="Давно не были" value={returningClients} hint="45 дней и более" />
         <Tile label="Можно уведомлять" value={marketingClients} hint="есть согласие" />
+        <Tile label="Заблокированы" value={blockedClients} />
       </div>
 
       <div className="card wide clients-filters">
@@ -1616,6 +1739,7 @@ function ClientsView({ data, setError }) {
             <option value="all">Все клиенты</option>
             <option value="return">Давно не были</option>
             <option value="marketing">Можно уведомлять</option>
+            <option value="blocked">Заблокированные</option>
           </select>
         </label>
       </div>
@@ -1639,7 +1763,13 @@ function ClientsView({ data, setError }) {
                 <span>{CLIENT_STATUS_LABELS[client.lifecycle_status] || client.lifecycle_status}</span>
                 <span>Визитов: {Number(client.visit_count) || 0}</span>
                 <span>Последний визит: {client.last_visit_at ? displayDateTime(client.last_visit_at) : 'ещё не был'}</span>
+                <span>Неявок: {Number(client.no_show_count) || 0}</span>
+                <span>Последняя неявка: {client.last_no_show_at ? displayDateTime(client.last_no_show_at) : 'нет'}</span>
                 <span>Рассылка: {CLIENT_CONSENT_LABELS[client.marketing_consent] || 'Не запрошено'}</span>
+                {client.blocked_at ? <span className="client-blocked-detail">Блокировка: {client.blocked_reason}</span> : null}
+                <button className={client.blocked_at ? 'btn ghost client-block-button' : 'btn danger client-block-button'} type="button" onClick={() => setClientBlocked(client, !client.blocked_at)}>
+                  {client.blocked_at ? 'Разблокировать' : 'Заблокировать'}
+                </button>
               </div>
             </article>
           )}
@@ -2343,6 +2473,7 @@ function viewIdsForUser(data) {
       'admin',
       'attendance',
       'finance',
+      ...(['owner', 'admin'].includes(data.appRole) ? ['calendar', 'clients'] : []),
       'master',
     ];
   }
