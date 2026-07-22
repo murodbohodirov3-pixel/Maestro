@@ -3,6 +3,10 @@
 React + Vite frontend for Maestro Barberia. The app uses the existing Supabase
 tables and keeps legacy fields for compatibility with the old HTML prototype.
 
+The active runtime is `src/main.jsx` -> `src/App.jsx`. Frontend data operations
+use `src/lib/legacyApi.js` and the Supabase `api` Edge Function; the browser must
+not perform direct table CRUD.
+
 ## Requirements
 
 - Node.js 18+

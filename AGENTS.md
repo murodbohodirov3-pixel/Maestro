@@ -8,6 +8,8 @@ Project instructions for Codex agents working on Maestro Barberia.
 - Production URL currently known to the user: `https://maestro-pied-two.vercel.app/`.
 - The app uses Supabase project ref `ivowbhraaistxvoymxpf`.
 - Main local app code is under `src/`.
+- Active runtime path: `src/main.jsx` renders `src/App.jsx`; frontend data calls go through `src/lib/legacyApi.js` to the `api` Edge Function.
+- The former parallel page modules and browser-direct Supabase client were removed. Do not recreate or connect direct table CRUD from the frontend.
 - Supabase local assets are under `supabase/`.
 - Restoration source of truth: legacy single-file app `Maestro-main/index.html` version `v14` and the live Supabase Edge Function `api`.
 - The current restoration goal is near 1:1 behavior parity with the old HTML app while keeping React/Vite as the frontend shell.
