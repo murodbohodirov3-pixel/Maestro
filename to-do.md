@@ -2,6 +2,7 @@
 
 ## Active
 
+- [ ] After Sentry account/DSN approval, implement the reviewed frontend and Edge Function monitoring plan in `docs/monitoring-plan.md`.
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 - [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.
 - [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
