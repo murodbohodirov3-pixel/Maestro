@@ -7,7 +7,20 @@ import {
   needsTelegramLogin,
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
-import { masterGrossPay, masterNetPay, saleClientsCount } from './utils/calculations.js';
+import {
+  investmentSummary,
+  masterGrossPay,
+  masterNetPay,
+  saleClientsCount,
+  saleTotal,
+  totalCard,
+  totalCash,
+  totalExpenses,
+  totalFines,
+  totalPaidForDebt,
+  totalQr,
+  totalSalesAmount,
+} from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 
 const APP_VERSION = 'auto-refresh-v1';
@@ -73,10 +86,6 @@ function digitsOnly(value) {
 function formatDigits(value) {
   const digits = digitsOnly(value);
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-}
-
-function saleTotal(sale) {
-  return (Number(sale.cash) || 0) + (Number(sale.card) || 0) + (Number(sale.qr) || 0);
 }
 
 function isPendingOwnerApproval(sale) {
@@ -292,15 +301,19 @@ function reportMastersForPeriod(data, sales, fines = []) {
 }
 
 function masterPayoutForPeriod(data, sales, fines = []) {
+  // Keep legacy id-or-name ownership matching and the 40% fallback here; the
+  // generic masterPayoutSum helper intentionally has a stricter id contract.
   return reportMastersForPeriod(data, sales, fines).reduce((sum, master) => {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const revenue = rows.reduce((total, sale) => total + saleTotal(sale), 0);
-    const fineTotal = fines.filter((fine) => belongsToMaster(fine, master)).reduce((total, fine) => total + (Number(fine.amount) || 0), 0);
+    const revenue = totalSalesAmount(rows);
+    const fineTotal = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
     return sum + masterNetPay(masterGrossPay(revenue, Number(master.pct || 40)), fineTotal);
   }, 0);
 }
 
 function totalOpenDebtsByCurrency(data) {
+  // This dashboard is narrower than the generic helper: only i_owe debts are
+  // included and every overpaid debt is clamped before currency aggregation.
   const paidByDebt = data.debtPayments.reduce((totals, payment) => {
     const key = String(payment.debt_id);
     totals[key] = (totals[key] || 0) + (Number(payment.amount) || 0);
@@ -427,16 +440,13 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
   const reportMasters = reportMastersForPeriod(data, sales, fines);
   const buckets = monthWeekRanges(range).map((week) => {
     const weekSales = sales.filter((sale) => inRange(rowDate(sale), week.from, week.to));
-    const revenue = weekSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const revenue = totalSalesAmount(weekSales);
     const grossMasterPay = reportMasters.reduce((sum, master) => {
-      const masterRevenue = weekSales
-        .filter((sale) => belongsToMaster(sale, master))
-        .reduce((total, sale) => total + saleTotal(sale), 0);
+      const masterRevenue = totalSalesAmount(weekSales.filter((sale) => belongsToMaster(sale, master)));
       return sum + masterGrossPay(masterRevenue, Number(master.pct || 40));
     }, 0);
-    const expenses = data.expenses
-      .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), week.from, week.to))
-      .reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+    const expenses = totalExpenses(data.expenses
+      .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), week.from, week.to)));
 
     return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses };
   });
@@ -444,19 +454,16 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
   // A fine reduces a master's monthly payout only down to zero. Distributing the
   // recognized part by its actual week keeps the weekly rows equal to the month total.
   reportMasters.forEach((master) => {
-    const masterRevenue = sales
-      .filter((sale) => belongsToMaster(sale, master))
-      .reduce((sum, sale) => sum + saleTotal(sale), 0);
+    const masterRevenue = totalSalesAmount(sales.filter((sale) => belongsToMaster(sale, master)));
     const grossMasterPay = masterGrossPay(masterRevenue, Number(master.pct || 40));
     const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
-    const fineTotal = masterFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    const fineTotal = totalFines(masterFines);
     let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
 
     buckets.forEach((bucket) => {
       if (remainingRecognizedFines <= 0) return;
-      const bucketFines = masterFines
-        .filter((fine) => inRange(rowDate(fine), bucket.from, bucket.to))
-        .reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+      const bucketFines = totalFines(masterFines
+        .filter((fine) => inRange(rowDate(fine), bucket.from, bucket.to)));
       const recognized = Math.min(bucketFines, remainingRecognizedFines);
       bucket.recognizedFines += recognized;
       remainingRecognizedFines -= recognized;
@@ -569,14 +576,13 @@ function OverviewView({ data }) {
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), monthRange.from, monthRange.to),
   );
   const monthFines = data.fines.filter((fine) => inRange(rowDate(fine), monthRange.from, monthRange.to));
-  const todayRevenue = todaySales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const monthRevenue = monthSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const todayRevenue = totalSalesAmount(todaySales);
+  const monthRevenue = totalSalesAmount(monthSales);
   const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
   const salonRemainder = monthRevenue - payouts;
-  const fineTotal = monthFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
-  const operatingExpenses = data.expenses
-    .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), monthRange.from, monthRange.to))
-    .reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const fineTotal = totalFines(monthFines);
+  const operatingExpenses = totalExpenses(data.expenses
+    .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), monthRange.from, monthRange.to)));
   const netProfit = salonRemainder - operatingExpenses;
   const pendingSales = getPendingSales(data.sales);
   const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
@@ -660,14 +666,14 @@ function MasterView({ data, reload, setError }) {
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
   const visibleFines = data.fines.filter((fine) => fine.master === masterName && inRange(rowDate(fine), range.from, range.to));
-  const revenue = visibleSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const revenue = totalSalesAmount(visibleSales);
   const visibleClients = visibleSales.reduce((sum, sale) => sum + clients(sale), 0);
-  const paymentTotals = visibleSales.reduce((totals, sale) => ({
-    cash: totals.cash + (Number(sale.cash) || 0),
-    card: totals.card + (Number(sale.card) || 0),
-    qr: totals.qr + (Number(sale.qr) || 0),
-  }), { cash: 0, card: 0, qr: 0 });
-  const fineTotal = visibleFines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+  const paymentTotals = {
+    cash: totalCash(visibleSales),
+    card: totalCard(visibleSales),
+    qr: totalQr(visibleSales),
+  };
+  const fineTotal = totalFines(visibleFines);
   const pay = masterNetPay(masterGrossPay(revenue, pct), fineTotal);
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
   const shiftStart = data.settings.shift_start || '09:00';
@@ -884,13 +890,13 @@ function AdminView({ data, reload, setError }) {
   const previousFines = priorRange ? data.fines.filter(
     (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
   ) : [];
-  const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const revenue = totalSalesAmount(sales);
   const totalClients = sales.reduce((sum, sale) => sum + clients(sale), 0);
-  const paymentTotals = sales.reduce((totals, sale) => ({
-    cash: totals.cash + (Number(sale.cash) || 0),
-    card: totals.card + (Number(sale.card) || 0),
-    qr: totals.qr + (Number(sale.qr) || 0),
-  }), { cash: 0, card: 0, qr: 0 });
+  const paymentTotals = {
+    cash: totalCash(sales),
+    card: totalCard(sales),
+    qr: totalQr(sales),
+  };
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const reportMasters = reportMastersForPeriod(
     data,
@@ -899,11 +905,11 @@ function AdminView({ data, reload, setError }) {
   );
   const masterSummaries = reportMasters.map((master) => {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const masterRevenue = rows.reduce((sum, sale) => sum + saleTotal(sale), 0);
-    const masterFine = fines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    const masterRevenue = totalSalesAmount(rows);
+    const masterFine = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
     const previousRows = previousSales.filter((sale) => belongsToMaster(sale, master));
-    const previousRevenue = previousRows.reduce((sum, sale) => sum + saleTotal(sale), 0);
-    const previousFine = previousFines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
+    const previousRevenue = totalSalesAmount(previousRows);
+    const previousFine = totalFines(previousFines.filter((fine) => belongsToMaster(fine, master)));
     return {
       master,
       rows,
@@ -922,7 +928,7 @@ function AdminView({ data, reload, setError }) {
   });
   const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
   const salonRemainder = revenue - totalMasterPayout;
-  const previousRevenue = previousSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const previousRevenue = totalSalesAmount(previousSales);
   const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
   const previousPayout = masterPayoutForPeriod(data, previousSales, previousFines);
@@ -1666,17 +1672,17 @@ function FinanceView({ data, reload, setError }) {
   const previousFines = priorRange ? data.fines.filter(
     (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
   ) : [];
-  const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const revenue = totalSalesAmount(sales);
   const payouts = masterPayoutForPeriod(data, sales, fines);
   const salon = revenue - payouts;
-  const ishxonaExpenses = expenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
-  const previousRevenue = previousSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const ishxonaExpenses = totalExpenses(expenses.filter((expense) => expense.section === 'ishxona'));
+  const previousRevenue = totalSalesAmount(previousSales);
   const previousPayouts = masterPayoutForPeriod(data, previousSales, previousFines);
   const previousSalon = previousRevenue - previousPayouts;
-  const previousIshxonaExpenses = previousExpenses.filter((expense) => expense.section === 'ishxona').reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const previousIshxonaExpenses = totalExpenses(previousExpenses.filter((expense) => expense.section === 'ishxona'));
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
   const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
-  const visibleExpenseTotal = visibleExpenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
+  const visibleExpenseTotal = totalExpenses(visibleExpenses);
 
   async function addExpense(event) {
     event.preventDefault();
@@ -1699,18 +1705,6 @@ function FinanceView({ data, reload, setError }) {
   async function deleteExpense(id) {
     await callLegacyApi('delExpense', { id });
     await reload();
-  }
-
-  function investment(owner) {
-    return data.expenses.reduce((acc, expense) => {
-      const amount = Number(expense.amount_uzs) || 0;
-      const rate = Number(expense.usd_rate) || 0;
-      if (expense.section === owner) acc.invested += amount;
-      if (expense.section === 'ishxona' && expense.minus_from === owner) acc.returned += amount;
-      if (rate && expense.section === owner) acc.investedUsd += amount / rate;
-      if (rate && expense.section === 'ishxona' && expense.minus_from === owner) acc.returnedUsd += amount / rate;
-      return acc;
-    }, { invested: 0, returned: 0, investedUsd: 0, returnedUsd: 0 });
   }
 
   function sectionExpense(section) {
@@ -1744,7 +1738,7 @@ function FinanceView({ data, reload, setError }) {
         <h2>Вложения</h2>
         <div className="tiles">
           {['murod', 'jamshid'].map((owner) => {
-            const item = investment(owner);
+            const item = investmentSummary(data.expenses, owner);
             const netUzs = item.invested - item.returned;
             const netUsd = item.investedUsd - item.returnedUsd;
             return (
@@ -1990,7 +1984,7 @@ function DebtsView({ data, reload, setError }) {
   }
 
   function paid(debtId) {
-    return data.debtPayments.filter((payment) => String(payment.debt_id) === String(debtId)).reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+    return totalPaidForDebt(data.debtPayments, debtId);
   }
 
   function currencyPayments(currency, month) {
