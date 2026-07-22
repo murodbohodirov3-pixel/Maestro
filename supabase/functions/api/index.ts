@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { auditedDeleteResponse } from './deleteAudit.js';
+import { captureEdgeException } from '../_shared/sentry.ts';
 
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -233,8 +234,13 @@ async function verifyWidget(auth: Record<string, unknown>): Promise<{ id: number
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
+  const requestId = crypto.randomUUID();
+  let monitoredAction = 'unknown';
+  let monitoredRole = 'unauthenticated';
+
   try {
     const { initData, tgAuth, sessionToken, action, payload = {} } = await req.json();
+    monitoredAction = typeof action === 'string' ? action : 'unknown';
     let appUserResult;
     let issuedSessionToken: string | null = null;
 
@@ -294,6 +300,7 @@ Deno.serve(async (req) => {
     }
     if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
     if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
+    monitoredRole = String(appUserResult.data.role || 'unknown');
 
     console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
 
@@ -681,6 +688,13 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, 400);
   } catch (error) {
     console.error('[maestro-api] unhandled error', { action: 'unknown', error: String(error) });
+    await captureEdgeException(error, {
+      function: 'api',
+      action: monitoredAction,
+      http_status: 500,
+      role_class: monitoredRole,
+      request_id: requestId,
+    });
     return json({ error: String(error) }, 500);
   }
 });

@@ -2,8 +2,6 @@
 
 ## Active
 
-- [ ] After Sentry account/DSN approval, implement the reviewed frontend and Edge Function monitoring plan in `docs/monitoring-plan.md`.
-- [ ] After explicit schema approval, implement the critical deletion audit plan in `docs/deletion-audit-migration-plan.md`.
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 - [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.
 - [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
@@ -30,6 +28,7 @@
 
 ## Completed
 
+- [x] Added fail-closed Sentry monitoring for the React frontend and `api` Edge Function, with a shared PII scrubber, sentinel leak tests, source-map upload, and separate production projects.
 - [x] Added an append-only owner-only audit ledger for fine, expense, debt, and debt-payment deletions, with atomic RPC deletes and paginated API reads.
 - [x] Removed dormant browser-direct Supabase CRUD modules and duplicate root PWA assets; active React UI continues to use the `api` Edge Function gateway only.
 - [x] Centralized master commission calculations in `src/utils/calculations.js`, with Node regression tests and an RLS baseline migration for the core operational tables; production migration history now records `20260722100917` as applied after verifying its DDL was already present as `20260710061940`.

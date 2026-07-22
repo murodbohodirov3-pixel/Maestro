@@ -1,7 +1,8 @@
 # Production error monitoring plan
 
-Status: proposed; implementation requires a Sentry account, project credentials,
-and explicit approval.
+Status: implemented and activated in production on 2026-07-22 after the
+fail-closed sentinel suite passed. The environment-variable inventory below is
+the operational reference for rotation and recovery.
 
 ## Recommendation
 
@@ -54,6 +55,43 @@ tracking, and readable stack traces across both runtimes.
 7. Verify with synthetic exceptions in preview/test first, confirm source-map
    symbolication and redaction, then enable production DSNs and remove the test
    trigger.
+
+## Mandatory PII filter before SDK installation
+
+Both the frontend and Edge Function initializers must use the same fail-closed
+filter through `beforeSend` and `beforeSendTransaction`. Do not enable either
+DSN until preview events prove that this filter runs. The filter intentionally
+trades some diagnostic detail for privacy:
+
+- discard the complete request body, headers, cookies, query string, and URL
+  query parameters;
+- discard Sentry user, arbitrary contexts, and extra data;
+- discard breadcrumb messages and data;
+- discard exception messages and stack-frame local variables;
+- discard span descriptions and span data;
+- allow only controlled operational tags. In particular, `phone`,
+  `client_phone`, `marketing_consent`, names, Telegram identifiers, notes,
+  tokens, and any other PII fields are never allowlisted.
+
+The shared implementation is
+`supabase/functions/_shared/sentryScrub.js`. It uses an explicit top-level
+allowlist rather than spreading the incoming event. Allowed tag values are
+also validated: function and action names come from enumerated contracts,
+roles come from the application role set, HTTP status is bounded, request IDs
+must be UUIDs, and releases must be commit-like identifiers.
+
+The frontend and Deno initializers both call this exact module from
+`beforeSend` and `beforeSendTransaction`, with `sendDefaultPii: false`.
+
+Preview acceptance must include synthetic events containing a phone number and
+`marketing_consent` in every relevant carrier: breadcrumb message/data,
+request body/headers/query, exception message/frame vars, contexts, extra,
+tags, and span data. Search the raw Sentry event JSON for those sentinel values;
+production enablement is blocked if any survives.
+
+The automated acceptance test is `test/sentry-scrub.test.js`. Run it through
+`npm test`; it prints the raw scrubbed event JSON and fails if any of the four
+sentinel values survives.
 
 ## Acceptance checks
 
