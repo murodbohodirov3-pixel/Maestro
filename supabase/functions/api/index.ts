@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { auditedDeleteResponse } from './deleteAudit.js';
 
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -316,6 +317,30 @@ Deno.serve(async (req) => {
 
     if (!isAdmin && !myMaster) return json({ error: 'not_in_list' }, 403);
 
+    if (action === 'listAuditEvents') {
+      if (appUserResult.data.role !== 'owner') return json({ error: 'forbidden' }, 403);
+
+      const limit = Math.min(Math.max(Math.trunc(Number(payload.limit) || 50), 1), 100);
+      const cursor = String(payload.cursor || '').trim();
+      let query = sb
+        .from('audit_events')
+        .select('id,occurred_at,entity_type,entity_id,operation,event_name,actor_user_id,actor_name,actor_role,actor_external_id,source,correlation_id,changed_fields,old_values,new_values,metadata')
+        .eq('operation', 'delete')
+        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment'])
+        .order('id', { ascending: false })
+        .limit(limit + 1);
+      if (/^\d+$/.test(cursor)) query = query.lt('id', cursor);
+
+      const { data: rows, error } = await query;
+      if (error) return json({ error: error.message }, 500);
+      const events = (rows ?? []).slice(0, limit);
+      const hasMore = (rows ?? []).length > limit;
+      return json({
+        events,
+        nextCursor: hasMore && events.length ? String(events[events.length - 1].id) : null,
+      });
+    }
+
     if (action === 'load') {
       const masters = (await sb.from('masters').select('*').order('id')).data ?? [];
       const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
@@ -563,13 +588,13 @@ Deno.serve(async (req) => {
 
     if (action === 'delFine') {
       if (!isAdmin) return json({ error: 'forbidden' }, 403);
-      const existing = await sb.from('fines').select('id,d').eq('id', payload.id).maybeSingle();
-      if (existing.error) return json({ error: existing.error.message }, 500);
-      if (!existing.data) return json({ error: 'fine_not_found' }, 404);
-      if (existing.data.d < tashkentDate(-7)) return json({ error: 'fine_delete_window_expired' }, 403);
-      const { error } = await sb.from('fines').delete().eq('id', payload.id);
-      if (error) return json({ error: error.message }, 500);
-      return json({ ok: true });
+      const { data: result, error } = await sb.rpc('maestro_delete_fine', {
+        p_id: payload.id,
+        p_actor_user_id: appUserResult.data.id,
+        p_source: 'web_app',
+      });
+      const response = auditedDeleteResponse(action, result, error);
+      return json(response.body, response.status);
     }
 
     if (action === 'setSettings') {
@@ -597,8 +622,13 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'delExpense') {
-      await sb.from('expenses').delete().eq('id', payload.id);
-      return json({ ok: true });
+      const { data: result, error } = await sb.rpc('maestro_delete_expense', {
+        p_id: payload.id,
+        p_actor_user_id: appUserResult.data.id,
+        p_source: 'web_app',
+      });
+      const response = auditedDeleteResponse(action, result, error);
+      return json(response.body, response.status);
     }
 
     if (action === 'addDebt') {
@@ -624,13 +654,23 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'delDebtPayment') {
-      await sb.from('debt_payments').delete().eq('id', payload.id);
-      return json({ ok: true });
+      const { data: result, error } = await sb.rpc('maestro_delete_debt_payment', {
+        p_id: payload.id,
+        p_actor_user_id: appUserResult.data.id,
+        p_source: 'web_app',
+      });
+      const response = auditedDeleteResponse(action, result, error);
+      return json(response.body, response.status);
     }
 
     if (action === 'delDebt') {
-      await sb.from('debts').delete().eq('id', payload.id);
-      return json({ ok: true });
+      const { data: result, error } = await sb.rpc('maestro_delete_debt', {
+        p_id: payload.id,
+        p_actor_user_id: appUserResult.data.id,
+        p_source: 'web_app',
+      });
+      const response = auditedDeleteResponse(action, result, error);
+      return json(response.body, response.status);
     }
 
     if (action === 'setDebtClosed') {
