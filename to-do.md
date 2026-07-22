@@ -29,7 +29,7 @@
 ## Completed
 
 - [x] Removed dormant browser-direct Supabase CRUD modules and duplicate root PWA assets; active React UI continues to use the `api` Edge Function gateway only.
-- [x] Centralized master commission calculations in `src/utils/calculations.js`, with Node regression tests and an RLS baseline migration for the core operational tables.
+- [x] Centralized master commission calculations in `src/utils/calculations.js`, with Node regression tests and an RLS baseline migration for the core operational tables; production migration history now records `20260722100917` as applied after verifying its DDL was already present as `20260710061940`.
 - [x] Confirmed break point: `4130f28` replaced working HTML with React/Vite.
 - [x] Confirmed remote Supabase function `api` is active and contains legacy actions.
 - [x] Confirmed RLS was disabled during the original restoration; later verified the staged RLS migrations enabled it on all current public tables without public policies.
