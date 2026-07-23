@@ -446,6 +446,111 @@ small {
   100% { opacity: 0.22; transform: translateX(-50%) scaleX(1); }
 }
 
+/* Owner overview — one headline figure, its context, and everything else
+   folded away. The screen answers "how did the month go" before the owner
+   has to look for it. */
+.overview-hero {
+  display: grid;
+  padding: var(--space-4) var(--space-4) var(--space-5);
+  border-radius: var(--radius-card);
+  background:
+    radial-gradient(circle at 88% 0%, color-mix(in srgb, var(--brass) 14%, transparent), transparent 58%),
+    var(--surface-2);
+  gap: 2px;
+}
+
+.overview-hero-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.overview-hero-value {
+  color: var(--ink);
+  font-size: var(--text-display);
+  font-weight: 820;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+}
+
+.overview-hero-value small {
+  color: var(--muted);
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.overview-hero.is-negative .overview-hero-value {
+  color: var(--fine);
+}
+
+.overview-hero-delta {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.overview-hero-delta.positive {
+  color: var(--cash);
+}
+
+.overview-hero-delta.negative {
+  color: var(--fine);
+}
+
+.overview-tiles-supporting {
+  margin-top: var(--space-3);
+}
+
+.overview-pending {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--brass) 40%, var(--line));
+  background: color-mix(in srgb, var(--brass-soft) 60%, var(--surface));
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.overview-pending-text strong {
+  font-size: var(--text-title);
+  font-weight: 820;
+}
+
+.overview-pending-cta {
+  flex: 0 0 auto;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--brass);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.overview-more {
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, var(--brass) 30%, var(--line));
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.overview-more:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
 @keyframes overview-detail-reveal {
   from { opacity: 0; transform: translateY(-5px); }
   to { opacity: 1; transform: translateY(0); }
