@@ -23,6 +23,12 @@ import {
 } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 import {
+  localDate,
+  mergeWindowedData,
+  pollWindowStart,
+  rowDate,
+} from './utils/loadWindow.js';
+import {
   APPOINTMENT_OUTCOME_REASONS,
   APPOINTMENT_REASON_LABELS,
   appointmentOutcomeAllowed,
@@ -54,10 +60,6 @@ const THEMES = {
   },
 };
 
-function localDate(date = new Date()) {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
 
 function money(value) {
   return Math.round(Number(value) || 0).toLocaleString('ru-RU');
@@ -108,10 +110,6 @@ function isRejectedByOwner(sale) {
 
 function isCountedSale(sale) {
   return !isPendingOwnerApproval(sale) && !isRejectedByOwner(sale);
-}
-
-function rowDate(row, primary = 'd') {
-  return row?.[primary] || row?.date || row?.sale_date || row?.attendance_date || row?.fine_date || '';
 }
 
 function newestFirst(left, right) {
@@ -364,6 +362,7 @@ function normalizeData(data) {
 function emptyState() {
   return normalizeData({});
 }
+
 
 function MoneyInput({ value, onChange, ...props }) {
   return (
@@ -2561,7 +2560,7 @@ export default function App() {
     localStorage.setItem('maestroDark', String(dark));
   }, [dark, theme]);
 
-  async function load({ preserveView = true } = {}) {
+  async function load({ preserveView = true, since = null } = {}) {
     if (isLoadingRef.current) return;
     isLoadingRef.current = true;
     setError('');
@@ -2577,9 +2576,15 @@ export default function App() {
         return;
       }
 
-      const result = await callLegacyApi('load');
+      const result = await callLegacyApi('load', since ? { since } : {});
       const normalized = normalizeData(result);
-      setData(normalized);
+      // Trust the window only if the server confirms it applied one; an older
+      // deployment ignores `since` and answers with everything, which merges
+      // correctly either way but must not discard rows it did return.
+      const appliedSince = result?.windowSince === since ? since : null;
+      setData((previous) => (
+        appliedSince ? mergeWindowedData(previous, normalized, appliedSince) : normalized
+      ));
       setLoginRequired(false);
       setView((currentView) => {
         const allowed = viewIdsForUser(normalized);
@@ -2606,9 +2611,9 @@ export default function App() {
 
     let intervalId;
 
-    const refresh = () => {
+    const refresh = ({ full = false } = {}) => {
       if (!document.hidden && !isLoadingRef.current) {
-        load({ preserveView: true });
+        load({ preserveView: true, since: full ? null : pollWindowStart() });
       }
     };
 
@@ -2624,7 +2629,10 @@ export default function App() {
         return;
       }
 
-      refresh();
+      // Coming back into view is the one moment worth paying for everything:
+      // it re-syncs records older than the poll window, which the windowed
+      // refresh cannot see being edited or deleted.
+      refresh({ full: true });
       startInterval();
     };
 

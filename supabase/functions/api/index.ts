@@ -35,12 +35,16 @@ async function fetchAllRows(
   table: string,
   orderColumn: string,
   filters: Record<string, string | number> = {},
+  dateBound: { column: string; since: string } | null = null,
 ) {
   const rows: Record<string, unknown>[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
     let query = sb.from(table).select('*');
     for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
+    // Callers pass a bound only for tables that grow without limit. Rows older
+    // than it are already on the client from the unbounded first load.
+    if (dateBound) query = query.gte(dateBound.column, dateBound.since);
 
     let orderedQuery = query.order(orderColumn, { ascending: true });
     if (orderColumn !== 'id') {
@@ -359,14 +363,25 @@ Deno.serve(async (req) => {
       const masters = (await sb.from('masters').select('*').order('id')).data ?? [];
       const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
 
+      // Optional lower bound for the tables that accumulate a row per sale, per
+      // shift, per expense — the only ones whose size tracks how long the salon
+      // has been open. The client sends it on its 15s poll and omits it on the
+      // first load, so a refresh costs one period instead of all history.
+      // Balances (debts) and reference data stay complete at every size.
+      const since = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.since ?? ''))
+        ? String(payload.since)
+        : null;
+      const byDay = since ? { column: 'd', since } : null;
+      const byDate = since ? { column: 'date', since } : null;
+
       if (isAdmin) {
         const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients] = await Promise.all([
-          fetchAllRows('sales', 'd'),
-          fetchAllRows('fines', 'id'),
-          fetchAllRows('attendance', 'id'),
-          fetchAllRows('expenses', 'date'),
+          fetchAllRows('sales', 'd', {}, byDay),
+          fetchAllRows('fines', 'id', {}, byDay),
+          fetchAllRows('attendance', 'id', {}, byDay),
+          fetchAllRows('expenses', 'date', {}, byDate),
           fetchAllRows('debts', 'id'),
-          fetchAllRows('debt_payments', 'date'),
+          fetchAllRows('debt_payments', 'date', {}, byDate),
           canManageCalendar ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
           canManageCalendar ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
           canManageCalendar ? fetchAppointments() : Promise.resolve([]),
@@ -391,13 +406,14 @@ Deno.serve(async (req) => {
           clients,
           appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
+          windowSince: since,
         });
       }
 
       const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules] = await Promise.all([
-        fetchAllRows('sales', 'd', { master: myMaster }),
-        fetchAllRows('fines', 'id', { master: myMaster }),
-        fetchAllRows('attendance', 'id', { master: myMaster }),
+        fetchAllRows('sales', 'd', { master: myMaster }, byDay),
+        fetchAllRows('fines', 'id', { master: myMaster }, byDay),
+        fetchAllRows('attendance', 'id', { master: myMaster }, byDay),
         fetchAllRows('booking_services', 'id'),
         fetchAllRows('master_day_statuses', 'work_date', { master_id: myMasterId! }),
         fetchAppointments({ master_id: myMasterId! }),
@@ -419,6 +435,7 @@ Deno.serve(async (req) => {
         appointments,
         master_schedule_rules,
         sessionToken: issuedSessionToken,
+        windowSince: since,
       });
     }
 
