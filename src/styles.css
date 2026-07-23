@@ -446,6 +446,57 @@ small {
   100% { opacity: 0.22; transform: translateX(-50%) scaleX(1); }
 }
 
+/* Second navigation row. Deliberately quieter than the group row above it:
+   it says where you are inside a group, not which group you are in. */
+.nav-sub {
+  margin-top: calc(var(--space-2) * -1 + 2px);
+  background: transparent;
+}
+
+.nav-sub button {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+/* Client counts double as the filter that produces them — the number and the
+   way to act on it are the same control. */
+.client-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.client-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.client-chip strong {
+  color: var(--ink);
+  font-size: var(--text-body);
+  font-weight: 800;
+}
+
+.client-chip:hover {
+  border-color: color-mix(in srgb, var(--brass) 45%, var(--line));
+}
+
+.client-chip.is-on {
+  border-color: var(--brass);
+  background: color-mix(in srgb, var(--brass-soft) 55%, var(--surface));
+  color: var(--ink);
+}
+
 /* Owner overview — one headline figure, its context, and everything else
    folded away. The screen answers "how did the month go" before the owner
    has to look for it. */
