@@ -2647,9 +2647,16 @@ export default function App() {
     return (
       <main className="loading-splash" role="status" aria-label="Загрузка">
         <div className="loading-emblem" aria-hidden="true">
-          <span className="loading-emblem-ring loading-emblem-ring-outer" />
-          <span className="loading-emblem-ring loading-emblem-ring-inner" />
-          <span className="loading-emblem-core">M</span>
+          <div className="loading-coin">
+            <div className="loading-coin-face">M</div>
+            <div className="loading-coin-face loading-coin-back">
+              <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="18" r="3" />
+                <path d="M8.1 15.9 20 4M15.9 15.9 4 4" />
+              </svg>
+            </div>
+          </div>
         </div>
       </main>
     );
