@@ -28,6 +28,7 @@ import {
   pollWindowStart,
   rowDate,
 } from './utils/loadWindow.js';
+import { pluralRu } from './utils/plural.js';
 import {
   APPOINTMENT_OUTCOME_REASONS,
   APPOINTMENT_REASON_LABELS,
@@ -573,22 +574,46 @@ function OverviewFineDetails({ rows }) {
   );
 }
 
-function OverviewView({ data }) {
+function OverviewView({ data, setView }) {
   const [expandedDetail, setExpandedDetail] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const monthRange = currentMonthRange();
-  const todaySales = data.sales.filter((sale) => isCountedSale(sale) && rowDate(sale) === TODAY);
-  const monthSales = data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), monthRange.from, monthRange.to),
-  );
-  const monthFines = data.fines.filter((fine) => inRange(rowDate(fine), monthRange.from, monthRange.to));
+  const priorMonthRange = previousRange(monthRange, 'month');
+  const yesterday = localDate(new Date(Date.now() - 86400000));
+
+  const countedSales = data.sales.filter(isCountedSale);
+  const inMonth = (row, key = 'd', range = monthRange) => inRange(rowDate(row, key), range.from, range.to);
+
+  const todaySales = countedSales.filter((sale) => rowDate(sale) === TODAY);
+  const yesterdaySales = countedSales.filter((sale) => rowDate(sale) === yesterday);
+  const monthSales = countedSales.filter((sale) => inMonth(sale));
+  const monthFines = data.fines.filter((fine) => inMonth(fine));
+  const priorSales = priorMonthRange ? countedSales.filter((sale) => inMonth(sale, 'd', priorMonthRange)) : [];
+  const priorFines = priorMonthRange ? data.fines.filter((fine) => inMonth(fine, 'd', priorMonthRange)) : [];
+
+  const operatingFor = (range) => totalExpenses(data.expenses.filter((expense) => (
+    expense.section === 'ishxona' && inMonth(expense, 'date', range)
+  )));
+
   const todayRevenue = totalSalesAmount(todaySales);
   const monthRevenue = totalSalesAmount(monthSales);
   const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
   const salonRemainder = monthRevenue - payouts;
   const fineTotal = totalFines(monthFines);
-  const operatingExpenses = totalExpenses(data.expenses
-    .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), monthRange.from, monthRange.to)));
-  const netProfit = salonRemainder - operatingExpenses;
+  const netProfit = salonRemainder - operatingFor(monthRange);
+
+  const priorRevenue = totalSalesAmount(priorSales);
+  const priorNetProfit = priorMonthRange
+    ? priorRevenue - masterPayoutForPeriod(data, priorSales, priorFines) - operatingFor(priorMonthRange)
+    : 0;
+
+  // Average check is the number that moves before revenue does: the same takings
+  // spread over more clients means each one is paying less.
+  const monthClients = monthSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const priorClients = priorSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const monthCheck = monthClients ? monthRevenue / monthClients : 0;
+  const priorCheck = priorClients ? priorRevenue / priorClients : 0;
+
   const pendingSales = getPendingSales(data.sales);
   const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
   const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
@@ -596,55 +621,118 @@ function OverviewView({ data }) {
   ));
   const fineRanking = overviewFineRanking(data, monthFines);
 
+  const versusPriorMonth = (current, previous) => (
+    priorMonthRange ? comparisonToPrevious(current, previous, priorMonthRange) : {}
+  );
+  const profitVersusPriorMonth = versusPriorMonth(netProfit, priorNetProfit);
+
   return (
     <section className="view-grid">
+      {/* An approval queue is work waiting, not a statistic. It reads as a task
+          and it leaves entirely when there is nothing to approve — an empty
+          screen is the message that everything is settled. */}
+      {pendingSales.length ? (
+        <button className="card wide overview-pending" type="button" onClick={() => setView('admin')}>
+          <span className="overview-pending-text">
+            <strong>{pendingSales.length}</strong>
+            {' '}
+            {pluralRu(pendingSales.length, 'продажа ждёт', 'продажи ждут', 'продаж ждут')} подтверждения
+          </span>
+          <span className="overview-pending-cta">Открыть</span>
+        </button>
+      ) : null}
+
       <div className="card wide overview-card">
-        <SectionHeading label="Главное сегодня" range={{ from: TODAY, to: TODAY }} />
-        <div className="tiles overview-tiles">
-          <Tile label="Выручка сегодня" value={`${money(todayRevenue)} сум`} tone="total" />
-          <OverviewMetricTile
-            detailId="revenue"
-            expanded={expandedDetail === 'revenue'}
+        {/* One figure carries the screen: the answer to the question the owner
+            opened the app for. Everything else is context for it. */}
+        <div className={`overview-hero ${netProfit < 0 ? 'is-negative' : ''}`}>
+          <span className="overview-hero-label">Чистая прибыль · {futureMonthLabel(0)}</span>
+          <strong className="overview-hero-value">
+            {money(netProfit)}
+            <small> сум</small>
+          </strong>
+          {profitVersusPriorMonth.secondary ? (
+            <em className={`overview-hero-delta ${profitVersusPriorMonth.secondaryTone}`}>
+              {profitVersusPriorMonth.secondary}
+            </em>
+          ) : null}
+        </div>
+
+        <div className="tiles overview-tiles overview-tiles-supporting">
+          <Tile
+            label="Выручка сегодня"
+            value={`${money(todayRevenue)} сум`}
+            tone="total"
+            {...comparisonToPrevious(todayRevenue, totalSalesAmount(yesterdaySales), { from: yesterday, to: yesterday })}
+          />
+          <Tile
             label="Выручка за месяц"
             value={`${money(monthRevenue)} сум`}
-            onToggle={setExpandedDetail}
+            {...versusPriorMonth(monthRevenue, priorRevenue)}
           />
-          {expandedDetail === 'revenue' ? (
-            <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
-          ) : null}
-          <OverviewMetricTile
-            detailId="salon"
-            expanded={expandedDetail === 'salon'}
-            label="Остаток салону"
-            tone="salon"
-            value={`${money(salonRemainder)} сум`}
-            onToggle={setExpandedDetail}
+          <Tile
+            label="Средний чек"
+            value={averageCheck(monthRevenue, monthClients)}
+            {...versusPriorMonth(monthCheck, priorCheck)}
           />
-          {expandedDetail === 'salon' ? (
-            <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
-          ) : null}
-          <OverviewMetricTile
-            detailId="fines"
-            expanded={expandedDetail === 'fines'}
-            label="Штрафы за месяц"
-            value={`${money(fineTotal)} сум`}
-            onToggle={setExpandedDetail}
-          />
-          {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
-          <OverviewMetricTile
-            danger={netProfit < 0}
-            detailId="profit"
-            expanded={expandedDetail === 'profit'}
-            label="Чистая прибыль"
-            tone="total"
-            value={`${money(netProfit)} сум`}
-            onToggle={setExpandedDetail}
-          />
-          {expandedDetail === 'profit' ? (
-            <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
-          ) : null}
-          <Tile label="Ждут подтверждения" value={pendingSales.length} />
         </div>
+
+        {/* The month's breakdowns are unchanged, just one tap down: they answer
+            questions the owner asks occasionally, not on every open. */}
+        <button
+          aria-expanded={detailsOpen}
+          className="overview-more"
+          type="button"
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? 'Свернуть подробности' : 'Подробнее: остаток салону, штрафы, по неделям'}
+        </button>
+
+        {detailsOpen ? (
+          <div className="tiles overview-tiles">
+            <OverviewMetricTile
+              detailId="revenue"
+              expanded={expandedDetail === 'revenue'}
+              label="Выручка за месяц"
+              value={`${money(monthRevenue)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'revenue' ? (
+              <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
+            ) : null}
+            <OverviewMetricTile
+              detailId="salon"
+              expanded={expandedDetail === 'salon'}
+              label="Остаток салону"
+              tone="salon"
+              value={`${money(salonRemainder)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'salon' ? (
+              <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
+            ) : null}
+            <OverviewMetricTile
+              detailId="fines"
+              expanded={expandedDetail === 'fines'}
+              label="Штрафы за месяц"
+              value={`${money(fineTotal)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
+            <OverviewMetricTile
+              danger={netProfit < 0}
+              detailId="profit"
+              expanded={expandedDetail === 'profit'}
+              label="Чистая прибыль"
+              tone="total"
+              value={`${money(netProfit)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'profit' ? (
+              <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -864,8 +952,10 @@ function MasterView({ data, reload, setError }) {
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(pay)} <small>сум к выплате</small></div>
         <div className="tiles">
+          {/* The rate is already in the header next to the master's name, and it
+              does not change from one period to the next. A tile for it took the
+              space of a figure that moves. */}
           <Tile label="Выручка" value={money(revenue)} />
-          <Tile label="Мой %" value={`${pct}%`} />
           <Tile label="Штрафы" value={`-${money(fineTotal)}`} danger />
           <Tile label="Клиентов" value={visibleClients} />
           <Tile label="Средний чек" value={averageCheck(revenue, visibleClients)} />
@@ -932,11 +1022,9 @@ function AdminView({ data, reload, setError }) {
     return (left[masterSort.key] - right[masterSort.key]) * multiplier;
   });
   const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
-  const salonRemainder = revenue - totalMasterPayout;
   const previousRevenue = totalSalesAmount(previousSales);
   const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
-  const previousPayout = masterPayoutForPeriod(data, previousSales, previousFines);
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
 
   async function setSaleApproval(id, status) {
@@ -998,11 +1086,16 @@ function AdminView({ data, reload, setError }) {
         <SectionHeading label="Период отчёта" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="tiles">
-          <Tile label="Итого" value={money(revenue)} {...comparison(revenue, previousRevenue)} tone="total" />
-          <Tile label="Остаток салону" value={money(salonRemainder)} {...comparison(salonRemainder, previousRevenue - previousPayout)} tone="salon" />
+          {/* "Выручка" everywhere, never "Итого": one word per concept, or the
+              owner cannot tell whether two screens mean the same number.
+              The salon remainder lives on Финансы, at its place in the chain
+              revenue → payouts → remainder → expenses → profit. Repeating it
+              here only invited the question of whether the two agree.
+              "Постоянные" was "Клиентов" minus "Новые" — a tile for a
+              subtraction the eye does anyway. */}
+          <Tile label="Выручка" value={money(revenue)} {...comparison(revenue, previousRevenue)} tone="total" />
           <Tile label="Клиентов" value={totalClients} {...comparison(totalClients, previousClients)} />
           <Tile label="Новые" value={newClients} {...comparison(newClients, previousNewClients)} />
-          <Tile label="Постоянные" value={totalClients - newClients} {...comparison(totalClients - newClients, previousClients - previousNewClients)} />
           <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
         </div>
         <PaymentBreakdownBar cash={paymentTotals.cash} card={paymentTotals.card} qr={paymentTotals.qr} />
@@ -1666,6 +1759,7 @@ function ClientsView({ data, reload, setError }) {
       client.telegram_username,
     ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery));
     if (!matchesQuery) return false;
+    if (filter === 'active') return client.lifecycle_status === 'active';
     if (filter === 'return') return client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45;
     if (filter === 'marketing') return client.eligible_for_marketing === true;
     if (filter === 'blocked') return Boolean(client.blocked_at);
@@ -1676,6 +1770,21 @@ function ClientsView({ data, reload, setError }) {
   )).length;
   const marketingClients = clients.filter((client) => client.eligible_for_marketing === true).length;
   const blockedClients = clients.filter((client) => Boolean(client.blocked_at)).length;
+  const activeClients = clients.filter((client) => client.lifecycle_status === 'active').length;
+
+  // These counts used to sit in a row of tiles above a dropdown offering the
+  // very same cuts. A tile you want to tap but cannot is a dead end, so the
+  // count and the filter are now one control.
+  //
+  // Note the groups overlap: a client can be active and still not have been in
+  // for 45 days. The counts do not add up to the total, and are not meant to.
+  const clientFilters = [
+    { id: 'all', label: 'Все', count: clients.length },
+    { id: 'active', label: 'Активные', count: activeClients },
+    { id: 'return', label: 'Давно не были', count: returningClients, hint: '45 дней и более' },
+    { id: 'marketing', label: 'Можно уведомлять', count: marketingClients, hint: 'есть согласие' },
+    { id: 'blocked', label: 'Заблокированы', count: blockedClients },
+  ];
 
   async function setClientBlocked(client, blocked) {
     let reason = null;
@@ -1714,14 +1823,6 @@ function ClientsView({ data, reload, setError }) {
         </button>
       </div>
 
-      <div className="tiles wide">
-        <Tile label="Всего клиентов" value={clients.length} />
-        <Tile label="Активные" value={clients.filter((client) => client.lifecycle_status === 'active').length} />
-        <Tile label="Давно не были" value={returningClients} hint="45 дней и более" />
-        <Tile label="Можно уведомлять" value={marketingClients} hint="есть согласие" />
-        <Tile label="Заблокированы" value={blockedClients} />
-      </div>
-
       <div className="card wide clients-filters">
         <label>
           Поиск
@@ -1732,15 +1833,21 @@ function ClientsView({ data, reload, setError }) {
             value={query}
           />
         </label>
-        <label>
-          Список
-          <select onChange={(event) => setFilter(event.target.value)} value={filter}>
-            <option value="all">Все клиенты</option>
-            <option value="return">Давно не были</option>
-            <option value="marketing">Можно уведомлять</option>
-            <option value="blocked">Заблокированные</option>
-          </select>
-        </label>
+        <div aria-label="Фильтр списка клиентов" className="client-chips" role="group">
+          {clientFilters.map((option) => (
+            <button
+              aria-pressed={filter === option.id}
+              className={`client-chip ${filter === option.id ? 'is-on' : ''}`}
+              key={option.id}
+              title={option.hint || undefined}
+              type="button"
+              onClick={() => setFilter(option.id)}
+            >
+              <span>{option.label}</span>
+              <strong>{option.count}</strong>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="card wide">
@@ -2433,6 +2540,31 @@ function Rows({ rows, empty, render }) {
 
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+// Eight flat tabs on a 390px screen make the owner remember where each screen
+// lives. Four groups turn that recall into recognition, and the second row only
+// appears for groups that actually hold more than one screen.
+// Masters see two screens in total, so grouping them would add a level of
+// navigation to hide nothing.
+const VIEW_GROUPS = [
+  { id: 'overview', label: 'Обзор', views: ['overview'] },
+  { id: 'money', label: 'Деньги', views: ['admin', 'finance', 'debts'] },
+  { id: 'people', label: 'Люди', views: ['attendance', 'clients', 'master'] },
+  { id: 'calendar', label: 'Календарь', views: ['calendar'] },
+];
+
+// Inside a group the shorter name is unambiguous — "Продажи" under "Деньги"
+// says as much as "Управление салоном" did, in a third of the width.
+const VIEW_TAB_LABELS = {
+  overview: 'Обзор',
+  admin: 'Продажи',
+  finance: 'Финансы',
+  debts: 'Долги',
+  attendance: 'Посещаемость',
+  clients: 'Клиенты',
+  master: 'Мастера',
+  calendar: 'Календарь',
+};
+
 const VIEW_META = {
   overview: {
     title: 'Обзор',
@@ -2648,6 +2780,14 @@ export default function App() {
   const availableViews = useMemo(() => {
     return viewIdsForUser(data);
   }, [data.appRole, data.role]);
+  // A group is only offered if the role can reach something inside it, so an
+  // admin without calendar rights never sees an empty tab.
+  const navGroups = useMemo(() => (
+    VIEW_GROUPS
+      .map((group) => ({ ...group, views: group.views.filter((id) => availableViews.includes(id)) }))
+      .filter((group) => group.views.length)
+  ), [availableViews]);
+  const activeGroup = navGroups.find((group) => group.views.includes(view)) || navGroups[0];
   const pendingSalesCount = getPendingSales(data.sales).length;
 
   if (loginRequired) return <LoginGate error={error} />;
@@ -2697,31 +2837,61 @@ export default function App() {
         <ThemeControls theme={theme} setTheme={setTheme} dark={dark} setDark={setDark} />
       </header>
 
-      {availableViews.length ? (
+      {availableViews.length && data.role === 'master' ? (
         <nav className="seg nav">
-          {(data.role === 'master' ? [
-            ['master', 'Мастер'],
-            ['calendar', 'Календарь'],
-          ] : [
-            ['overview', 'Обзор'],
-            ['admin', 'Админ'],
-            ['attendance', 'Посещаемость'],
-            ['finance', 'Финансы'],
-            ['calendar', 'Календарь'],
-            ['clients', 'Клиенты'],
-            ['debts', 'Долги'],
-            ['master', 'Мастер'],
-          ]).filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
-            <button className={`${view === id ? 'on ' : ''}${id === 'admin' && pendingSalesCount ? 'has-nav-badge' : ''}`} key={id} type="button" onClick={() => setView(id)}>
-              {label}
-              {id === 'admin' && pendingSalesCount ? (
-                <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
-                  {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
-                </span>
-              ) : null}
-            </button>
-          ))}
+          {[['master', 'Мастер'], ['calendar', 'Календарь']]
+            .filter(([id]) => availableViews.includes(id))
+            .map(([id, label]) => (
+              <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => setView(id)}>
+                {label}
+              </button>
+            ))}
         </nav>
+      ) : null}
+
+      {availableViews.length && data.role !== 'master' ? (
+        <>
+          <nav className="seg nav">
+            {navGroups.map((group) => {
+              const showsPending = group.views.includes('admin') && pendingSalesCount;
+              return (
+                <button
+                  className={`${activeGroup?.id === group.id ? 'on ' : ''}${showsPending ? 'has-nav-badge' : ''}`}
+                  key={group.id}
+                  type="button"
+                  onClick={() => setView(group.views.includes(view) ? view : group.views[0])}
+                >
+                  {group.label}
+                  {showsPending ? (
+                    <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
+                      {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </nav>
+
+          {activeGroup && activeGroup.views.length > 1 ? (
+            <nav className="seg nav nav-sub" aria-label={`Разделы: ${activeGroup.label}`}>
+              {activeGroup.views.map((id) => (
+                <button
+                  className={`${view === id ? 'on ' : ''}${id === 'admin' && pendingSalesCount ? 'has-nav-badge' : ''}`}
+                  key={id}
+                  type="button"
+                  onClick={() => setView(id)}
+                >
+                  {VIEW_TAB_LABELS[id]}
+                  {id === 'admin' && pendingSalesCount ? (
+                    <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
+                      {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </nav>
+          ) : null}
+        </>
       ) : null}
 
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
@@ -2737,7 +2907,7 @@ export default function App() {
           <p>{VIEW_META[view].description}</p>
         </section>
       ) : null}
-      <CurrentView data={data} reload={load} setError={setError} />
+      <CurrentView data={data} reload={load} setError={setError} setView={setView} />
 
       <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
     </main>
