@@ -29,6 +29,7 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
+import { sameWeekdayLastWeek } from './utils/periods.js';
 import {
   APPOINTMENT_OUTCOME_REASONS,
   APPOINTMENT_REASON_LABELS,
@@ -255,11 +256,15 @@ function percentageDifference(current, previous) {
     : currentValue ? 100 : 0;
 }
 
-function comparisonToPrevious(current, previous, comparisonRange) {
+// A percentage alone cannot be acted on: "+12%" hides whether the salon gained
+// two million or twenty thousand. The figure it grew from is shown next to it,
+// and the dates it came from drop to the quiet line underneath.
+function comparisonToPrevious(current, previous, comparisonRange, formatValue = money) {
   const percent = percentageDifference(current, previous);
   return {
-    secondary: `${percent > 0 ? '+' : ''}${percent}% к периоду — ${displayRange(comparisonRange)}`,
+    secondary: `${percent > 0 ? '+' : ''}${percent}% · было ${formatValue(previous)}`,
     secondaryTone: percent > 0 ? 'positive' : percent < 0 ? 'negative' : '',
+    hint: displayRange(comparisonRange),
   };
 }
 
@@ -579,13 +584,15 @@ function OverviewView({ data, setView }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const monthRange = currentMonthRange();
   const priorMonthRange = previousRange(monthRange, 'month');
-  const yesterday = localDate(new Date(Date.now() - 86400000));
+  // Not yesterday: a Thursday is compared with the previous Thursday, because a
+  // barbershop's week has a shape and a Wednesday is a different kind of day.
+  const lastWeekSameDay = sameWeekdayLastWeek(TODAY);
 
   const countedSales = data.sales.filter(isCountedSale);
   const inMonth = (row, key = 'd', range = monthRange) => inRange(rowDate(row, key), range.from, range.to);
 
   const todaySales = countedSales.filter((sale) => rowDate(sale) === TODAY);
-  const yesterdaySales = countedSales.filter((sale) => rowDate(sale) === yesterday);
+  const lastWeekSales = countedSales.filter((sale) => rowDate(sale) === lastWeekSameDay);
   const monthSales = countedSales.filter((sale) => inMonth(sale));
   const monthFines = data.fines.filter((fine) => inMonth(fine));
   const priorSales = priorMonthRange ? countedSales.filter((sale) => inMonth(sale, 'd', priorMonthRange)) : [];
@@ -663,7 +670,11 @@ function OverviewView({ data, setView }) {
             label="Выручка сегодня"
             value={`${money(todayRevenue)} сум`}
             tone="total"
-            {...comparisonToPrevious(todayRevenue, totalSalesAmount(yesterdaySales), { from: yesterday, to: yesterday })}
+            {...comparisonToPrevious(
+              todayRevenue,
+              totalSalesAmount(lastWeekSales),
+              { from: lastWeekSameDay, to: lastWeekSameDay },
+            )}
           />
           <Tile
             label="Выручка за месяц"
@@ -674,6 +685,11 @@ function OverviewView({ data, setView }) {
             label="Средний чек"
             value={averageCheck(monthRevenue, monthClients)}
             {...versusPriorMonth(monthCheck, priorCheck)}
+          />
+          <Tile
+            label="Клиентов за месяц"
+            value={monthClients}
+            {...versusPriorMonth(monthClients, priorClients)}
           />
         </div>
 
@@ -1894,27 +1910,11 @@ function FinanceView({ data, reload, setError }) {
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
   const priorRange = previousRange(range, period);
-  const sales = data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
-  );
   const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
-  const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
-  const previousSales = priorRange ? data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), priorRange.from, priorRange.to),
-  ) : [];
   const previousExpenses = priorRange ? data.expenses.filter(
     (expense) => inRange(rowDate(expense, 'date'), priorRange.from, priorRange.to),
   ) : [];
-  const previousFines = priorRange ? data.fines.filter(
-    (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
-  ) : [];
-  const revenue = totalSalesAmount(sales);
-  const payouts = masterPayoutForPeriod(data, sales, fines);
-  const salon = revenue - payouts;
   const ishxonaExpenses = totalExpenses(expenses.filter((expense) => expense.section === 'ishxona'));
-  const previousRevenue = totalSalesAmount(previousSales);
-  const previousPayouts = masterPayoutForPeriod(data, previousSales, previousFines);
-  const previousSalon = previousRevenue - previousPayouts;
   const previousIshxonaExpenses = totalExpenses(previousExpenses.filter((expense) => expense.section === 'ishxona'));
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
   const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
@@ -1958,15 +1958,15 @@ function FinanceView({ data, reload, setError }) {
   return (
     <section className="view-grid">
       <div className="card wide">
-        <SectionHeading label="Финансы" range={range} />
+        <SectionHeading label="Расходы за период" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
-        <div className="hero profit-value">{money(salon - ishxonaExpenses)} <small>сум прибыль</small></div>
         <div className="tiles">
-          <Tile label="Выручка" value={money(revenue)} {...comparison(revenue, previousRevenue)} />
-          <Tile label="Зарплаты мастеров" value={money(payouts)} {...comparison(payouts, previousPayouts)} />
-          <Tile label="Остаток салону" value={money(salon)} {...comparison(salon, previousSalon)} tone="salon" />
+          {/* This screen is one side of the ledger: money that left. Revenue,
+              master payouts and the remainder are all products of sales and
+              belong on Продажи; profit is the sum of both sides and belongs on
+              Обзор, which is the only screen allowed to add them up. Showing
+              them here too was what made the same figures appear three times. */}
           <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(ishxonaExpenses, previousIshxonaExpenses)} danger />
-          <Tile label="Прибыль" value={money(salon - ishxonaExpenses)} {...comparison(salon - ishxonaExpenses, previousSalon - previousIshxonaExpenses)} tone="total" />
         </div>
       </div>
 
@@ -2077,12 +2077,19 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
       previousCursor.setDate(previousCursor.getDate() + 1);
     }
   }
-  const previousTotals = Object.fromEntries(previousDays.map((day) => [day, 0]));
+  // The previous period used to carry revenue only, so a tapped bar showed how
+  // many clients came this Thursday and stayed silent about the last one —
+  // which is the comparison that explains the revenue difference.
+  const previousTotals = Object.fromEntries(previousDays.map((day) => [day, { revenue: 0, clients: 0 }]));
   previousSales.forEach((sale) => {
     const day = rowDate(sale);
-    if (day in previousTotals) previousTotals[day] += saleTotal(sale);
+    if (day in previousTotals) {
+      previousTotals[day].revenue += saleTotal(sale);
+      previousTotals[day].clients += clients(sale);
+    }
   });
-  const previousValues = days.map((_, index) => previousTotals[previousDays[index]] || 0);
+  const previousValues = days.map((_, index) => previousTotals[previousDays[index]]?.revenue || 0);
+  const previousClientCounts = days.map((_, index) => previousTotals[previousDays[index]]?.clients || 0);
   const currentTotal = values.reduce((sum, value) => sum + value, 0);
   const previousTotal = previousValues.reduce((sum, value) => sum + value, 0);
   const max = Math.max(1, ...values, ...previousValues);
@@ -2094,6 +2101,7 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   const selectedValue = selectedIndex >= 0 ? values[selectedIndex] : 0;
   const selectedPreviousDay = selectedIndex >= 0 ? previousDays[selectedIndex] : null;
   const selectedPreviousValue = selectedIndex >= 0 ? previousValues[selectedIndex] : 0;
+  const selectedPreviousClients = selectedIndex >= 0 ? previousClientCounts[selectedIndex] : 0;
   const selectedHeight = Math.round((selectedValue / max) * 100);
   const selectedCenter = selectedIndex >= 0
     ? 10 + selectedIndex * (barWidth + gap) + barWidth / 2
@@ -2119,7 +2127,7 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
           const isSelected = selectedDay === day;
           return (
             <g
-              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум${previousDays[index] ? `; ${displayDate(previousDays[index])}: ${money(previousValues[index])} сум` : ''}`}
+              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум${previousDays[index] ? `; ${displayDate(previousDays[index])}: ${previousClientCounts[index]} клиентов, ${money(previousValues[index])} сум` : ''}`}
               className={`chart-bar ${isSelected ? 'selected' : ''}`}
               key={day}
               onClick={() => setSelectedDay((current) => current === day ? null : day)}
@@ -2186,8 +2194,16 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
       </div>
       {selectedIndex >= 0 ? (
         <div className="chart-selected-comparison" aria-live="polite">
-          <div><span>{displayDate(selectedDay)} · текущий</span><strong>{money(selectedValue)} сум</strong></div>
-          {selectedPreviousDay ? <div><span>{displayDate(selectedPreviousDay)} · прошлый</span><strong>{money(selectedPreviousValue)} сум</strong></div> : null}
+          <div>
+            <span>{displayDate(selectedDay)} · текущий · {totals[selectedDay].clients} кл.</span>
+            <strong>{money(selectedValue)} сум</strong>
+          </div>
+          {selectedPreviousDay ? (
+            <div>
+              <span>{displayDate(selectedPreviousDay)} · прошлый · {selectedPreviousClients} кл.</span>
+              <strong>{money(selectedPreviousValue)} сум</strong>
+            </div>
+          ) : null}
         </div>
       ) : <p className="chart-tap-hint">Нажмите на столбец, чтобы сравнить конкретные дни.</p>}
     </div>
@@ -2557,7 +2573,7 @@ const VIEW_GROUPS = [
 const VIEW_TAB_LABELS = {
   overview: 'Обзор',
   admin: 'Продажи',
-  finance: 'Финансы',
+  finance: 'Расходы',
   debts: 'Долги',
   attendance: 'Посещаемость',
   clients: 'Клиенты',
@@ -2591,8 +2607,8 @@ const VIEW_META = {
     description: 'Контакты, история посещений, согласия на уведомления и выгрузка в Excel.',
   },
   finance: {
-    title: 'Финансы салона',
-    description: 'Прибыль, расходы и вложения за выбранный период.',
+    title: 'Расходы салона',
+    description: 'Траты по разделам и вложения за выбранный период.',
   },
 };
 
