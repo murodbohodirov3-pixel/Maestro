@@ -28,6 +28,7 @@ import {
   pollWindowStart,
   rowDate,
 } from './utils/loadWindow.js';
+import { pluralRu } from './utils/plural.js';
 import {
   APPOINTMENT_OUTCOME_REASONS,
   APPOINTMENT_REASON_LABELS,
@@ -573,22 +574,46 @@ function OverviewFineDetails({ rows }) {
   );
 }
 
-function OverviewView({ data }) {
+function OverviewView({ data, setView }) {
   const [expandedDetail, setExpandedDetail] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const monthRange = currentMonthRange();
-  const todaySales = data.sales.filter((sale) => isCountedSale(sale) && rowDate(sale) === TODAY);
-  const monthSales = data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), monthRange.from, monthRange.to),
-  );
-  const monthFines = data.fines.filter((fine) => inRange(rowDate(fine), monthRange.from, monthRange.to));
+  const priorMonthRange = previousRange(monthRange, 'month');
+  const yesterday = localDate(new Date(Date.now() - 86400000));
+
+  const countedSales = data.sales.filter(isCountedSale);
+  const inMonth = (row, key = 'd', range = monthRange) => inRange(rowDate(row, key), range.from, range.to);
+
+  const todaySales = countedSales.filter((sale) => rowDate(sale) === TODAY);
+  const yesterdaySales = countedSales.filter((sale) => rowDate(sale) === yesterday);
+  const monthSales = countedSales.filter((sale) => inMonth(sale));
+  const monthFines = data.fines.filter((fine) => inMonth(fine));
+  const priorSales = priorMonthRange ? countedSales.filter((sale) => inMonth(sale, 'd', priorMonthRange)) : [];
+  const priorFines = priorMonthRange ? data.fines.filter((fine) => inMonth(fine, 'd', priorMonthRange)) : [];
+
+  const operatingFor = (range) => totalExpenses(data.expenses.filter((expense) => (
+    expense.section === 'ishxona' && inMonth(expense, 'date', range)
+  )));
+
   const todayRevenue = totalSalesAmount(todaySales);
   const monthRevenue = totalSalesAmount(monthSales);
   const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
   const salonRemainder = monthRevenue - payouts;
   const fineTotal = totalFines(monthFines);
-  const operatingExpenses = totalExpenses(data.expenses
-    .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), monthRange.from, monthRange.to)));
-  const netProfit = salonRemainder - operatingExpenses;
+  const netProfit = salonRemainder - operatingFor(monthRange);
+
+  const priorRevenue = totalSalesAmount(priorSales);
+  const priorNetProfit = priorMonthRange
+    ? priorRevenue - masterPayoutForPeriod(data, priorSales, priorFines) - operatingFor(priorMonthRange)
+    : 0;
+
+  // Average check is the number that moves before revenue does: the same takings
+  // spread over more clients means each one is paying less.
+  const monthClients = monthSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const priorClients = priorSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const monthCheck = monthClients ? monthRevenue / monthClients : 0;
+  const priorCheck = priorClients ? priorRevenue / priorClients : 0;
+
   const pendingSales = getPendingSales(data.sales);
   const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
   const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
@@ -596,55 +621,118 @@ function OverviewView({ data }) {
   ));
   const fineRanking = overviewFineRanking(data, monthFines);
 
+  const versusPriorMonth = (current, previous) => (
+    priorMonthRange ? comparisonToPrevious(current, previous, priorMonthRange) : {}
+  );
+  const profitVersusPriorMonth = versusPriorMonth(netProfit, priorNetProfit);
+
   return (
     <section className="view-grid">
+      {/* An approval queue is work waiting, not a statistic. It reads as a task
+          and it leaves entirely when there is nothing to approve — an empty
+          screen is the message that everything is settled. */}
+      {pendingSales.length ? (
+        <button className="card wide overview-pending" type="button" onClick={() => setView('admin')}>
+          <span className="overview-pending-text">
+            <strong>{pendingSales.length}</strong>
+            {' '}
+            {pluralRu(pendingSales.length, 'продажа ждёт', 'продажи ждут', 'продаж ждут')} подтверждения
+          </span>
+          <span className="overview-pending-cta">Открыть</span>
+        </button>
+      ) : null}
+
       <div className="card wide overview-card">
-        <SectionHeading label="Главное сегодня" range={{ from: TODAY, to: TODAY }} />
-        <div className="tiles overview-tiles">
-          <Tile label="Выручка сегодня" value={`${money(todayRevenue)} сум`} tone="total" />
-          <OverviewMetricTile
-            detailId="revenue"
-            expanded={expandedDetail === 'revenue'}
+        {/* One figure carries the screen: the answer to the question the owner
+            opened the app for. Everything else is context for it. */}
+        <div className={`overview-hero ${netProfit < 0 ? 'is-negative' : ''}`}>
+          <span className="overview-hero-label">Чистая прибыль · {futureMonthLabel(0)}</span>
+          <strong className="overview-hero-value">
+            {money(netProfit)}
+            <small> сум</small>
+          </strong>
+          {profitVersusPriorMonth.secondary ? (
+            <em className={`overview-hero-delta ${profitVersusPriorMonth.secondaryTone}`}>
+              {profitVersusPriorMonth.secondary}
+            </em>
+          ) : null}
+        </div>
+
+        <div className="tiles overview-tiles overview-tiles-supporting">
+          <Tile
+            label="Выручка сегодня"
+            value={`${money(todayRevenue)} сум`}
+            tone="total"
+            {...comparisonToPrevious(todayRevenue, totalSalesAmount(yesterdaySales), { from: yesterday, to: yesterday })}
+          />
+          <Tile
             label="Выручка за месяц"
             value={`${money(monthRevenue)} сум`}
-            onToggle={setExpandedDetail}
+            {...versusPriorMonth(monthRevenue, priorRevenue)}
           />
-          {expandedDetail === 'revenue' ? (
-            <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
-          ) : null}
-          <OverviewMetricTile
-            detailId="salon"
-            expanded={expandedDetail === 'salon'}
-            label="Остаток салону"
-            tone="salon"
-            value={`${money(salonRemainder)} сум`}
-            onToggle={setExpandedDetail}
+          <Tile
+            label="Средний чек"
+            value={averageCheck(monthRevenue, monthClients)}
+            {...versusPriorMonth(monthCheck, priorCheck)}
           />
-          {expandedDetail === 'salon' ? (
-            <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
-          ) : null}
-          <OverviewMetricTile
-            detailId="fines"
-            expanded={expandedDetail === 'fines'}
-            label="Штрафы за месяц"
-            value={`${money(fineTotal)} сум`}
-            onToggle={setExpandedDetail}
-          />
-          {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
-          <OverviewMetricTile
-            danger={netProfit < 0}
-            detailId="profit"
-            expanded={expandedDetail === 'profit'}
-            label="Чистая прибыль"
-            tone="total"
-            value={`${money(netProfit)} сум`}
-            onToggle={setExpandedDetail}
-          />
-          {expandedDetail === 'profit' ? (
-            <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
-          ) : null}
-          <Tile label="Ждут подтверждения" value={pendingSales.length} />
         </div>
+
+        {/* The month's breakdowns are unchanged, just one tap down: they answer
+            questions the owner asks occasionally, not on every open. */}
+        <button
+          aria-expanded={detailsOpen}
+          className="overview-more"
+          type="button"
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? 'Свернуть подробности' : 'Подробнее: остаток салону, штрафы, по неделям'}
+        </button>
+
+        {detailsOpen ? (
+          <div className="tiles overview-tiles">
+            <OverviewMetricTile
+              detailId="revenue"
+              expanded={expandedDetail === 'revenue'}
+              label="Выручка за месяц"
+              value={`${money(monthRevenue)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'revenue' ? (
+              <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
+            ) : null}
+            <OverviewMetricTile
+              detailId="salon"
+              expanded={expandedDetail === 'salon'}
+              label="Остаток салону"
+              tone="salon"
+              value={`${money(salonRemainder)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'salon' ? (
+              <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
+            ) : null}
+            <OverviewMetricTile
+              detailId="fines"
+              expanded={expandedDetail === 'fines'}
+              label="Штрафы за месяц"
+              value={`${money(fineTotal)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
+            <OverviewMetricTile
+              danger={netProfit < 0}
+              detailId="profit"
+              expanded={expandedDetail === 'profit'}
+              label="Чистая прибыль"
+              tone="total"
+              value={`${money(netProfit)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'profit' ? (
+              <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -2737,7 +2825,7 @@ export default function App() {
           <p>{VIEW_META[view].description}</p>
         </section>
       ) : null}
-      <CurrentView data={data} reload={load} setError={setError} />
+      <CurrentView data={data} reload={load} setError={setError} setView={setView} />
 
       <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
     </main>
