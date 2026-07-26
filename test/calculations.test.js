@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   investmentSummary,
+  isRentOffset,
   masterGrossPay,
   masterNetPay,
   masterNetPayFromRevenue,
+  operatingExpenses,
+  rentOffsetIncome,
   saleTotal,
   totalCard,
   totalCash,
@@ -49,14 +52,27 @@ test('investment summary retains lifetime UZS and USD balances', () => {
   const expenses = [
     { section: 'murod', amount_uzs: 1_220_000, usd_rate: 12_200 },
     { section: 'ishxona', minus_from: 'murod', amount_uzs: 244_000, usd_rate: 12_200 },
+    { section: 'ishxona', category: 'rent_offset', minus_from: 'murod', amount_uzs: 610_000, usd_rate: 12_200 },
     { section: 'jamshid', amount_uzs: 999_999, usd_rate: 12_200 },
   ];
   assert.deepEqual(investmentSummary(expenses, 'murod'), {
     invested: 1_220_000,
     investedUsd: 100,
-    returned: 244_000,
-    returnedUsd: 20,
+    returned: 854_000,
+    returnedUsd: 70,
   });
+});
+
+test('rent offsets reduce investment without becoming operating expenses', () => {
+  const rows = [
+    { section: 'ishxona', category: 'ishxona', amount_uzs: 200_000 },
+    { section: 'ishxona', category: 'rent_offset', minus_from: 'jamshid', amount_uzs: 6_100_000 },
+    { section: 'jamshid', category: 'jamshid', amount_uzs: 300_000 },
+  ];
+
+  assert.equal(isRentOffset(rows[1]), true);
+  assert.deepEqual(operatingExpenses(rows), [rows[0]]);
+  assert.equal(rentOffsetIncome(rows), 6_100_000);
 });
 
 test('debt payment total retains string id matching and numeric coercion', () => {

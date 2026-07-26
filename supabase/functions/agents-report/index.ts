@@ -244,6 +244,8 @@ function financeReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods
   const sales = data.sales.filter((sale) => isCountedSale(sale) && inRange(sale, periods.current.from, periods.current.to));
   const fines = data.fines.filter((fine) => inRange(fine, periods.current.from, periods.current.to));
   const expenses = data.expenses.filter((expense) => inRange(expense, periods.current.from, periods.current.to, 'date'));
+  const rentOffsets = expenses.filter((expense) => expense.category === 'rent_offset');
+  const expenseRows = expenses.filter((expense) => expense.category !== 'rent_offset');
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const masterPayouts = data.masters.filter((master) => master.active !== false).reduce((sum, master) => {
     const name = String(master.name || '');
@@ -251,13 +253,15 @@ function financeReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods
     const masterFines = fines.filter((fine) => fine.master === name).reduce((total, fine) => total + number(fine.amount), 0);
     return sum + Math.max(0, (masterRevenue * number(master.pct || 40)) / 100 - masterFines);
   }, 0);
-  const expensesBySection = expenses.reduce((result: Record<string, number>, expense) => {
+  const expensesBySection = expenseRows.reduce((result: Record<string, number>, expense) => {
     const section = String(expense.section || 'unknown');
     result[section] = (result[section] || 0) + number(expense.amount_uzs);
     return result;
   }, {});
   const operatingExpenses = expensesBySection.ishxona || 0;
+  const nonCashRentIncome = rentOffsets.reduce((sum, expense) => sum + number(expense.amount_uzs), 0);
   const salonBeforeExpenses = revenue - masterPayouts;
+  const cashProfit = salonBeforeExpenses - operatingExpenses;
   return {
     report: 'finance_report',
     period: periods.current,
@@ -265,12 +269,15 @@ function financeReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods
     masterPayouts: Math.round(masterPayouts),
     salonBeforeExpenses: Math.round(salonBeforeExpenses),
     operatingExpenses,
-    calculatedProfit: Math.round(salonBeforeExpenses - operatingExpenses),
+    calculatedProfit: Math.round(cashProfit),
+    nonCashRentIncome: Math.round(nonCashRentIncome),
+    totalProfitWithOffsets: Math.round(cashProfit + nonCashRentIncome),
     allRecordedExpenses: Object.values(expensesBySection).reduce((sum, value) => sum + value, 0),
     expensesBySection,
     caveats: [
       'Расчёт прибыли повторяет формулу Maestro: доля салона минус расходы раздела ishxona.',
       'Инвестиционные разделы Murod/Jamshid не вычитаются повторно из операционной прибыли.',
+      'Взаимозачёт аренды не считается движением денег: он показан отдельно и прибавляется только к общему результату с взаимозачётами.',
     ],
   };
 }

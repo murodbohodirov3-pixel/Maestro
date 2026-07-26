@@ -678,7 +678,7 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
-    if (['addExpense', 'delExpense', 'addDebt', 'addDebtPayment', 'delDebtPayment', 'delDebt', 'setDebtClosed'].includes(action)) {
+    if (['addExpense', 'addRentOffset', 'delExpense', 'addDebt', 'addDebtPayment', 'delDebtPayment', 'delDebt', 'setDebtClosed'].includes(action)) {
       if (!isAdmin) return json({ error: 'forbidden' }, 403);
     }
 
@@ -693,6 +693,37 @@ Deno.serve(async (req) => {
         minus_from: payload.minus_from || null,
         note: payload.note || null,
       });
+      return json({ ok: true });
+    }
+
+    if (action === 'addRentOffset') {
+      const owner = String(payload.owner || '');
+      const amountUsd = Number(payload.amount_usd);
+      const usdRate = Number(payload.usd_rate);
+      const amountUzs = Math.round(amountUsd * usdRate);
+      const date = String(payload.date || '');
+      if (!['murod', 'jamshid'].includes(owner)
+        || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || !Number.isFinite(amountUsd)
+        || !Number.isFinite(usdRate)
+        || amountUsd <= 0
+        || usdRate <= 0
+        || amountUzs <= 0) {
+        return json({ error: 'invalid_rent_offset' }, 400);
+      }
+      const ownerName = owner === 'murod' ? 'Мурод' : 'Жамшид';
+      const { error } = await sb.from('expenses').insert({
+        date,
+        section: 'ishxona',
+        category: 'rent_offset',
+        name: `Взаимозачёт аренды · ${ownerName}`,
+        qty: null,
+        amount_uzs: amountUzs,
+        usd_rate: usdRate,
+        minus_from: owner,
+        note: payload.note ? String(payload.note).trim().slice(0, 500) : null,
+      });
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 

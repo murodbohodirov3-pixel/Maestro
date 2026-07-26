@@ -11,6 +11,8 @@ import {
   investmentSummary,
   masterGrossPay,
   masterNetPay,
+  operatingExpenses,
+  rentOffsetIncome,
   saleClientsCount,
   saleTotal,
   totalCard,
@@ -456,10 +458,12 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
       const masterRevenue = totalSalesAmount(weekSales.filter((sale) => belongsToMaster(sale, master)));
       return sum + masterGrossPay(masterRevenue, Number(master.pct || 40));
     }, 0);
-    const expenses = totalExpenses(data.expenses
-      .filter((expense) => expense.section === 'ishxona' && inRange(rowDate(expense, 'date'), week.from, week.to)));
+    const weekExpenses = data.expenses
+      .filter((expense) => inRange(rowDate(expense, 'date'), week.from, week.to));
+    const expenses = totalExpenses(operatingExpenses(weekExpenses));
+    const nonCashIncome = rentOffsetIncome(weekExpenses);
 
-    return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses };
+    return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses, nonCashIncome };
   });
 
   // A fine reduces a master's monthly payout only down to zero. Distributing the
@@ -487,6 +491,7 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
       ...bucket,
       salonRemainder,
       netProfit: salonRemainder - bucket.expenses,
+      totalNetProfit: salonRemainder - bucket.expenses + bucket.nonCashIncome,
     };
   });
 }
@@ -598,9 +603,9 @@ function OverviewView({ data, setView }) {
   const priorSales = priorMonthRange ? countedSales.filter((sale) => inMonth(sale, 'd', priorMonthRange)) : [];
   const priorFines = priorMonthRange ? data.fines.filter((fine) => inMonth(fine, 'd', priorMonthRange)) : [];
 
-  const operatingFor = (range) => totalExpenses(data.expenses.filter((expense) => (
-    expense.section === 'ishxona' && inMonth(expense, 'date', range)
-  )));
+  const expensesFor = (range) => data.expenses.filter((expense) => inMonth(expense, 'date', range));
+  const operatingFor = (range) => totalExpenses(operatingExpenses(expensesFor(range)));
+  const rentOffsetsFor = (range) => rentOffsetIncome(expensesFor(range));
 
   const todayRevenue = totalSalesAmount(todaySales);
   const monthRevenue = totalSalesAmount(monthSales);
@@ -608,6 +613,8 @@ function OverviewView({ data, setView }) {
   const salonRemainder = monthRevenue - payouts;
   const fineTotal = totalFines(monthFines);
   const netProfit = salonRemainder - operatingFor(monthRange);
+  const nonCashIncome = rentOffsetsFor(monthRange);
+  const totalNetProfit = netProfit + nonCashIncome;
 
   const priorRevenue = totalSalesAmount(priorSales);
   const priorNetProfit = priorMonthRange
@@ -624,7 +631,7 @@ function OverviewView({ data, setView }) {
   const pendingSales = getPendingSales(data.sales);
   const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
   const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
-    week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses
+    week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses || week.nonCashIncome
   ));
   const fineRanking = overviewFineRanking(data, monthFines);
 
@@ -653,7 +660,7 @@ function OverviewView({ data, setView }) {
         {/* One figure carries the screen: the answer to the question the owner
             opened the app for. Everything else is context for it. */}
         <div className={`overview-hero ${netProfit < 0 ? 'is-negative' : ''}`}>
-          <span className="overview-hero-label">Чистая прибыль · {futureMonthLabel(0)}</span>
+          <span className="overview-hero-label">Денежная чистая прибыль · {futureMonthLabel(0)}</span>
           <strong className="overview-hero-value">
             {money(netProfit)}
             <small> сум</small>
@@ -701,7 +708,7 @@ function OverviewView({ data, setView }) {
           type="button"
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? 'Свернуть подробности' : 'Подробнее: остаток салону, штрафы, по неделям'}
+          {detailsOpen ? 'Свернуть подробности' : 'Подробнее: остаток салону, взаимозачёты, по неделям'}
         </button>
 
         {detailsOpen ? (
@@ -737,15 +744,37 @@ function OverviewView({ data, setView }) {
             {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
             <OverviewMetricTile
               danger={netProfit < 0}
-              detailId="profit"
-              expanded={expandedDetail === 'profit'}
-              label="Чистая прибыль"
+              detailId="cash-profit"
+              expanded={expandedDetail === 'cash-profit'}
+              label="Денежная чистая прибыль"
               tone="total"
               value={`${money(netProfit)} сум`}
               onToggle={setExpandedDetail}
             />
-            {expandedDetail === 'profit' ? (
-              <OverviewWeeklyDetails detailId="profit" title="Чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
+            {expandedDetail === 'cash-profit' ? (
+              <OverviewWeeklyDetails detailId="cash-profit" title="Денежная чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
+            ) : null}
+            <OverviewMetricTile
+              detailId="rent-offsets"
+              expanded={expandedDetail === 'rent-offsets'}
+              label="Безденежный доход"
+              value={`${money(nonCashIncome)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'rent-offsets' ? (
+              <OverviewWeeklyDetails detailId="rent-offsets" title="Взаимозачёты аренды" rows={visibleWeeklyMetrics} valueKey="nonCashIncome" />
+            ) : null}
+            <OverviewMetricTile
+              danger={totalNetProfit < 0}
+              detailId="total-profit"
+              expanded={expandedDetail === 'total-profit'}
+              label="Общий результат"
+              tone="total"
+              value={`${money(totalNetProfit)} сум`}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'total-profit' ? (
+              <OverviewWeeklyDetails detailId="total-profit" title="Общий результат с взаимозачётами" rows={visibleWeeklyMetrics} valueKey="totalNetProfit" />
             ) : null}
           </div>
         ) : null}
@@ -1907,6 +1936,8 @@ function FinanceView({ data, reload, setError }) {
   const [customTo, setCustomTo] = useState('');
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
+  const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
+  const [message, setMessage] = useState('');
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
   const priorRange = previousRange(range, period);
@@ -1914,14 +1945,20 @@ function FinanceView({ data, reload, setError }) {
   const previousExpenses = priorRange ? data.expenses.filter(
     (expense) => inRange(rowDate(expense, 'date'), priorRange.from, priorRange.to),
   ) : [];
-  const ishxonaExpenses = totalExpenses(expenses.filter((expense) => expense.section === 'ishxona'));
-  const previousIshxonaExpenses = totalExpenses(previousExpenses.filter((expense) => expense.section === 'ishxona'));
+  const ishxonaExpenses = totalExpenses(operatingExpenses(expenses));
+  const previousIshxonaExpenses = totalExpenses(operatingExpenses(previousExpenses));
+  const offsetIncome = rentOffsetIncome(expenses);
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
-  const visibleExpenses = expenses.filter((expense) => expense.section === tab).sort(newestFirst);
+  const visibleExpenses = expenses.filter((expense) => (
+    tab === 'offset'
+      ? expense.category === 'rent_offset'
+      : expense.section === tab && expense.category !== 'rent_offset'
+  )).sort(newestFirst);
   const visibleExpenseTotal = totalExpenses(visibleExpenses);
 
   async function addExpense(event) {
     event.preventDefault();
+    setMessage('');
     const amount = Number(form.amount_uzs);
     if (!form.name.trim() || !amount) return setError('Введите название и сумму расхода.');
     await callLegacyApi('addExpense', {
@@ -1938,6 +1975,25 @@ function FinanceView({ data, reload, setError }) {
     await reload();
   }
 
+  async function addRentOffset(event) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    const amountUsd = Number(offsetForm.amount_usd);
+    const usdRate = Number(offsetForm.usd_rate);
+    if (!amountUsd || !usdRate) return setError('Введите сумму аренды в USD и курс USD.');
+    await callLegacyApi('addRentOffset', {
+      date: offsetForm.date || TODAY,
+      owner: offsetForm.owner,
+      amount_usd: amountUsd,
+      usd_rate: usdRate,
+      note: offsetForm.note.trim() || null,
+    });
+    localStorage.setItem('usdRate', offsetForm.usd_rate);
+    setMessage(`Взаимозачёт $${money(amountUsd)} сохранён. Касса не изменилась.`);
+    await reload();
+  }
+
   async function deleteExpense(id) {
     await callLegacyApi('delExpense', { id });
     await reload();
@@ -1945,7 +2001,7 @@ function FinanceView({ data, reload, setError }) {
 
   function sectionExpense(section) {
     return data.expenses
-      .filter((expense) => expense.section === section)
+      .filter((expense) => expense.section === section && expense.category !== 'rent_offset')
       .reduce((totals, expense) => {
         const amount = Number(expense.amount_uzs) || 0;
         const rate = Number(expense.usd_rate) || 0;
@@ -1967,8 +2023,11 @@ function FinanceView({ data, reload, setError }) {
               Обзор, which is the only screen allowed to add them up. Showing
               them here too was what made the same figures appear three times. */}
           <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(ishxonaExpenses, previousIshxonaExpenses)} danger />
+          <Tile label="Безденежный доход" value={money(offsetIncome)} hint="касса не меняется" />
         </div>
       </div>
+
+      {message ? <div className="notice success wide">{message}</div> : null}
 
       <div className="card wide">
         <h2>Вложения</h2>
@@ -2008,19 +2067,59 @@ function FinanceView({ data, reload, setError }) {
             ['ishxona', 'Ишхона'],
             ['murod', 'Мурод'],
             ['jamshid', 'Жамшид'],
+            ['offset', 'Взаимозачёты'],
           ].map(([value, label]) => <button className={tab === value ? 'on' : ''} key={value} type="button" onClick={() => setTab(value)}>{label}</button>)}
         </div>
         <div className="section-total">
           <span>За выбранный период: {visibleExpenses.length} записей</span>
           <strong>{money(visibleExpenseTotal)} сум</strong>
         </div>
-        <Rows rows={visibleExpenses} empty="Расходов за период нет." render={(expense) => (
+        <Rows rows={visibleExpenses} empty="Записей за период нет." render={(expense) => (
           <div className="row" key={expense.id}>
-            <div><strong>{expense.name}</strong><span>{rowDate(expense, 'date')} · {expense.minus_from ? `минус ${expense.minus_from}` : expense.section}</span></div>
+            <div>
+              <strong>{expense.name}</strong>
+              <span>
+                {rowDate(expense, 'date')} · {expense.category === 'rent_offset'
+                  ? `без денег · минус вложения ${expense.minus_from}`
+                  : expense.minus_from ? `минус ${expense.minus_from}` : expense.section}
+              </span>
+            </div>
             <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense.id)}>×</button></div>
           </div>
         )} />
       </div>
+
+      <form className="card" onSubmit={addRentOffset}>
+        <h2>Взаимозачёт аренды</h2>
+        <p className="hint">Уменьшает вложения партнёра и показывает безденежный доход. Касса и расходы Ишхоны не меняются.</p>
+        <label>
+          Дата
+          <input type="date" value={offsetForm.date} onChange={(event) => setOffsetForm({ ...offsetForm, date: event.target.value })} />
+        </label>
+        <label>
+          Партнёр
+          <select value={offsetForm.owner} onChange={(event) => setOffsetForm({ ...offsetForm, owner: event.target.value })}>
+            <option value="jamshid">Жамшид</option>
+            <option value="murod">Мурод</option>
+          </select>
+        </label>
+        <label>
+          Аренда, USD
+          <MoneyInput placeholder="500" value={offsetForm.amount_usd} onChange={(amount_usd) => setOffsetForm({ ...offsetForm, amount_usd })} />
+        </label>
+        <label>
+          Курс USD
+          <MoneyInput placeholder="Курс USD" value={offsetForm.usd_rate} onChange={(usd_rate) => setOffsetForm({ ...offsetForm, usd_rate })} />
+        </label>
+        <label>
+          Примечание
+          <input placeholder="Например: аренда за июль" value={offsetForm.note} onChange={(event) => setOffsetForm({ ...offsetForm, note: event.target.value })} />
+        </label>
+        <p className="hint">
+          В отчёте: {money(Number(offsetForm.amount_usd || 0) * Number(offsetForm.usd_rate || 0))} сум без движения денег.
+        </p>
+        <button className="btn" type="submit">Сохранить взаимозачёт</button>
+      </form>
 
       <form className="card" onSubmit={addExpense}>
         <h2>Добавить расход</h2>

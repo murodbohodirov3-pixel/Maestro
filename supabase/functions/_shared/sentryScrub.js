@@ -35,6 +35,7 @@ const SAFE_ACTIONS = new Set([
   'delFine',
   'setSettings',
   'addExpense',
+  'addRentOffset',
   'delExpense',
   'addDebt',
   'addDebtPayment',

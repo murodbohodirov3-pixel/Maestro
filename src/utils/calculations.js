@@ -22,6 +22,18 @@ export function totalExpenses(expenses) {
   return expenses.reduce((sum, expense) => sum + (Number(expense.amount_uzs) || 0), 0);
 }
 
+export function isRentOffset(expense) {
+  return expense?.section === 'ishxona' && expense?.category === 'rent_offset';
+}
+
+export function operatingExpenses(expenses) {
+  return expenses.filter((expense) => expense.section === 'ishxona' && !isRentOffset(expense));
+}
+
+export function rentOffsetIncome(expenses) {
+  return totalExpenses(expenses.filter(isRentOffset));
+}
+
 export function totalFines(fines) {
   return fines.reduce((sum, fine) => sum + (Number(fine.amount) || 0), 0);
 }
@@ -106,7 +118,7 @@ export function expensesByMinusFrom(expenses, minusFrom) {
 }
 
 export function ishxonaExpenses(expenses) {
-  return expensesBySection(expenses, 'ishxona');
+  return operatingExpenses(expenses);
 }
 
 export function profit(sales, masters, expenses, fines = []) {
