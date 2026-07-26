@@ -73,6 +73,10 @@ function usdMoney(value) {
   return `$${money(value)}`;
 }
 
+function usdMoneyPrecise(value) {
+  return `$${(Number(value) || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}`;
+}
+
 function futureMonthLabel(monthsAhead) {
   const [year, month] = TODAY.split('-').map(Number);
   return new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })
@@ -1938,6 +1942,7 @@ function FinanceView({ data, reload, setError }) {
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
   const [message, setMessage] = useState('');
+  const [offsetsOpen, setOffsetsOpen] = useState(false);
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
   const priorRange = previousRange(range, period);
@@ -1949,11 +1954,12 @@ function FinanceView({ data, reload, setError }) {
   const previousIshxonaExpenses = totalExpenses(operatingExpenses(previousExpenses));
   const offsetIncome = rentOffsetIncome(expenses);
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
-  const visibleExpenses = expenses.filter((expense) => (
-    tab === 'offset'
-      ? expense.category === 'rent_offset'
-      : expense.section === tab && expense.category !== 'rent_offset'
-  )).sort(newestFirst);
+  const visibleExpenses = expenses
+    .filter((expense) => expense.section === tab && expense.category !== 'rent_offset')
+    .sort(newestFirst);
+  const visibleOffsets = expenses
+    .filter((expense) => expense.category === 'rent_offset')
+    .sort(newestFirst);
   const visibleExpenseTotal = totalExpenses(visibleExpenses);
 
   async function addExpense(event) {
@@ -2067,7 +2073,6 @@ function FinanceView({ data, reload, setError }) {
             ['ishxona', 'Ишхона'],
             ['murod', 'Мурод'],
             ['jamshid', 'Жамшид'],
-            ['offset', 'Взаимозачёты'],
           ].map(([value, label]) => <button className={tab === value ? 'on' : ''} key={value} type="button" onClick={() => setTab(value)}>{label}</button>)}
         </div>
         <div className="section-total">
@@ -2079,9 +2084,7 @@ function FinanceView({ data, reload, setError }) {
             <div>
               <strong>{expense.name}</strong>
               <span>
-                {rowDate(expense, 'date')} · {expense.category === 'rent_offset'
-                  ? `без денег · минус вложения ${expense.minus_from}`
-                  : expense.minus_from ? `минус ${expense.minus_from}` : expense.section}
+                {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${expense.minus_from}` : expense.section}
               </span>
             </div>
             <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense.id)}>×</button></div>
@@ -2142,6 +2145,61 @@ function FinanceView({ data, reload, setError }) {
         ) : null}
         <button className="btn" type="submit">Добавить расход</button>
       </form>
+
+      <div className="card wide offset-history-card">
+        <button
+          aria-expanded={offsetsOpen}
+          className="overview-more"
+          type="button"
+          onClick={() => setOffsetsOpen((open) => !open)}
+        >
+          {offsetsOpen ? 'Свернуть взаимозачёты' : 'Подробнее: взаимозачёты'}
+        </button>
+
+        {offsetsOpen ? (
+          <div className="offset-history">
+            <div className="section-title">
+              <div>
+                <h2>Взаимозачёты</h2>
+                <p className="hint">{displayRange(range)} · без движения денег</p>
+              </div>
+              <strong>{money(offsetIncome)} сум</strong>
+            </div>
+            {visibleOffsets.length ? (
+              <div className="table-scroll">
+                <table className="offset-table">
+                  <thead>
+                    <tr>
+                      <th>Дата</th>
+                      <th>Партнёр</th>
+                      <th>USD</th>
+                      <th>Сум</th>
+                      <th>Примечание</th>
+                      <th aria-label="Действия" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleOffsets.map((expense) => {
+                      const rate = Number(expense.usd_rate) || 0;
+                      const amount = Number(expense.amount_uzs) || 0;
+                      return (
+                        <tr key={expense.id}>
+                          <td>{rowDate(expense, 'date')}</td>
+                          <td>{expense.minus_from === 'murod' ? 'Мурод' : 'Жамшид'}</td>
+                          <td>{rate ? usdMoneyPrecise(amount / rate) : '—'}</td>
+                          <td>{money(amount)}</td>
+                          <td className="offset-note">{expense.note || expense.name}</td>
+                          <td><button aria-label={`Удалить взаимозачёт от ${rowDate(expense, 'date')}`} className="del" type="button" onClick={() => deleteExpense(expense.id)}>×</button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="hint offset-empty">Взаимозачётов за выбранный период нет.</p>}
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
