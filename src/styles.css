@@ -617,6 +617,18 @@ small {
   align-items: end;
 }
 
+.offset-form-card {
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+}
+
+.offset-form-card h2,
+.offset-form-card > .hint {
+  margin: 0;
+}
+
 .offset-history .section-title h2,
 .offset-history .section-title p {
   margin: 0;

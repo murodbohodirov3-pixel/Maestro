@@ -2092,38 +2092,6 @@ function FinanceView({ data, reload, setError }) {
         )} />
       </div>
 
-      <form className="card" onSubmit={addRentOffset}>
-        <h2>Взаимозачёт аренды</h2>
-        <p className="hint">Уменьшает вложения партнёра и показывает безденежный доход. Касса и расходы Ишхоны не меняются.</p>
-        <label>
-          Дата
-          <input type="date" value={offsetForm.date} onChange={(event) => setOffsetForm({ ...offsetForm, date: event.target.value })} />
-        </label>
-        <label>
-          Партнёр
-          <select value={offsetForm.owner} onChange={(event) => setOffsetForm({ ...offsetForm, owner: event.target.value })}>
-            <option value="jamshid">Жамшид</option>
-            <option value="murod">Мурод</option>
-          </select>
-        </label>
-        <label>
-          Аренда, USD
-          <MoneyInput placeholder="500" value={offsetForm.amount_usd} onChange={(amount_usd) => setOffsetForm({ ...offsetForm, amount_usd })} />
-        </label>
-        <label>
-          Курс USD
-          <MoneyInput placeholder="Курс USD" value={offsetForm.usd_rate} onChange={(usd_rate) => setOffsetForm({ ...offsetForm, usd_rate })} />
-        </label>
-        <label>
-          Примечание
-          <input placeholder="Например: аренда за июль" value={offsetForm.note} onChange={(event) => setOffsetForm({ ...offsetForm, note: event.target.value })} />
-        </label>
-        <p className="hint">
-          В отчёте: {money(Number(offsetForm.amount_usd || 0) * Number(offsetForm.usd_rate || 0))} сум без движения денег.
-        </p>
-        <button className="btn" type="submit">Сохранить взаимозачёт</button>
-      </form>
-
       <form className="card" onSubmit={addExpense}>
         <h2>Добавить расход</h2>
         <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
@@ -2158,6 +2126,38 @@ function FinanceView({ data, reload, setError }) {
 
         {offsetsOpen ? (
           <div className="offset-history">
+            <form className="offset-form-card" onSubmit={addRentOffset}>
+              <h2>Взаимозачёт аренды</h2>
+              <p className="hint">Уменьшает вложения партнёра и показывает безденежный доход. Касса и расходы Ишхоны не меняются.</p>
+              <label>
+                Дата
+                <input type="date" value={offsetForm.date} onChange={(event) => setOffsetForm({ ...offsetForm, date: event.target.value })} />
+              </label>
+              <label>
+                Партнёр
+                <select value={offsetForm.owner} onChange={(event) => setOffsetForm({ ...offsetForm, owner: event.target.value })}>
+                  <option value="jamshid">Жамшид</option>
+                  <option value="murod">Мурод</option>
+                </select>
+              </label>
+              <label>
+                Аренда, USD
+                <MoneyInput placeholder="500" value={offsetForm.amount_usd} onChange={(amount_usd) => setOffsetForm({ ...offsetForm, amount_usd })} />
+              </label>
+              <label>
+                Курс USD
+                <MoneyInput placeholder="Курс USD" value={offsetForm.usd_rate} onChange={(usd_rate) => setOffsetForm({ ...offsetForm, usd_rate })} />
+              </label>
+              <label>
+                Примечание
+                <input placeholder="Например: аренда за июль" value={offsetForm.note} onChange={(event) => setOffsetForm({ ...offsetForm, note: event.target.value })} />
+              </label>
+              <p className="hint">
+                В отчёте: {money(Number(offsetForm.amount_usd || 0) * Number(offsetForm.usd_rate || 0))} сум без движения денег.
+              </p>
+              <button className="btn" type="submit">Сохранить взаимозачёт</button>
+            </form>
+
             <div className="section-title">
               <div>
                 <h2>Взаимозачёты</h2>
