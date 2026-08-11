@@ -294,7 +294,22 @@ Deno.serve(async (req) => {
     if (!appUserResult) {
       let user = await verifyMiniApp(initData || '');
       if (!user && tgAuth) user = await verifyWidget(tgAuth);
-      if (!user) return json({ error: 'unauthorized' }, 401);
+      if (!user) {
+        // The LoginGate renders this string verbatim, so an on-site failure
+        // photo tells us whether Telegram data was absent or failed its
+        // signature check. Keep the "unauthorized" prefix: the client's
+        // substring match on it is what routes users to the login screen.
+        const reason = initData
+          ? 'unauthorized_bad_signature'
+          : tgAuth
+            ? 'unauthorized_bad_widget_auth'
+            : 'unauthorized_no_telegram_data';
+        console.log('[maestro-api] rejected login', {
+          reason,
+          hasSessionToken: Boolean(sessionToken),
+        });
+        return json({ error: reason }, 401);
+      }
       appUserResult = await sb
         .from('app_users')
         .select('id, role, master_id, active')
