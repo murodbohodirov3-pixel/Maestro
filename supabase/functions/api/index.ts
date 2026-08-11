@@ -320,16 +320,18 @@ Deno.serve(async (req) => {
     const canManageClients = ['owner', 'admin'].includes(appUserResult.data.role);
     let myMaster: string | null = null;
     let myMasterId: number | null = null;
+    let myMasterPct: number | null = null;
     if (appUserResult.data.master_id) {
       const masterMatch = await sb
         .from('masters')
-        .select('name, active')
+        .select('name, pct, active')
         .eq('id', appUserResult.data.master_id)
         .maybeSingle();
       if (masterMatch.error) return json({ error: masterMatch.error.message }, 500);
       if (masterMatch.data?.active) {
         myMaster = masterMatch.data.name;
         myMasterId = Number(appUserResult.data.master_id);
+        myMasterPct = Number(masterMatch.data.pct);
       }
     }
 
@@ -458,6 +460,14 @@ Deno.serve(async (req) => {
         return json({ error: 'invalid_sale' }, 400);
       }
 
+      const masterRecord = isAdmin
+        ? await sb.from('masters').select('id, pct, active').eq('name', master).maybeSingle()
+        : { data: { id: myMasterId, pct: myMasterPct, active: true }, error: null };
+      if (masterRecord.error) return json({ error: masterRecord.error.message }, 500);
+      if (!masterRecord.data?.active || !Number.isFinite(Number(masterRecord.data.pct))) {
+        return json({ error: 'master_not_active' }, 409);
+      }
+
       const { error } = await sb.from('sales').insert({
         master,
         d: payload.d,
@@ -467,6 +477,8 @@ Deno.serve(async (req) => {
         cl: clientsCount,
         clients_count: clientsCount,
         is_new_client: isNewClient,
+        master_id: masterRecord.data.id,
+        commission_pct: Number(masterRecord.data.pct),
         status: requiresOwnerApproval ? 'pending' : 'approved',
         approved_by: requiresOwnerApproval ? null : String(appUserResult.data.id),
         approved_at: requiresOwnerApproval ? null : new Date().toISOString(),

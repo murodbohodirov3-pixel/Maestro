@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  commissionPctForSale,
+  grossMasterPayForSales,
   investmentSummary,
   isRentOffset,
   masterGrossPay,
@@ -22,6 +24,15 @@ test('master gross pay retains the percentage commission formula', () => {
   assert.equal(masterGrossPay(1_250_000, 40), 500_000);
   assert.equal(masterGrossPay('1250000', '35'), 437_500);
   assert.equal(masterGrossPay(undefined, 40), 0);
+});
+
+test('sale commission snapshots preserve historical payouts after a profile change', () => {
+  const master = { id: 3, pct: 40 };
+  const history = { cash: 1_000_000, commission_pct: 50 };
+  const newSale = { card: 1_000_000, commission_pct: 40 };
+
+  assert.equal(commissionPctForSale(history, master), 50);
+  assert.equal(grossMasterPayForSales([history, newSale], master), 900_000);
 });
 
 test('master net pay never falls below zero after fines', () => {

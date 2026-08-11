@@ -61,6 +61,17 @@ function saleTotal(sale: Row) {
   return number(sale.cash) + number(sale.card) + number(sale.qr);
 }
 
+function commissionPctForSale(sale: Row, master: Row) {
+  const snapshot = Number(sale.commission_pct);
+  return Number.isFinite(snapshot) ? snapshot : number(master.pct || 40);
+}
+
+function grossMasterPayForSales(sales: Row[], master: Row) {
+  return sales.reduce((sum, sale) => (
+    sum + (saleTotal(sale) * commissionPctForSale(sale, master)) / 100
+  ), 0);
+}
+
 function saleClients(sale: Row) {
   const raw = sale.clients_count ?? sale.cl ?? 1;
   return Math.max(0, integer(raw, 1));
@@ -139,7 +150,7 @@ async function fetchAllRows(
 
 async function loadPeriodData(previousFrom: string, currentTo: string) {
   const [sales, fines, expenses, attendance, masters, settings] = await Promise.all([
-    fetchAllRows('sales', 'id,master,master_id,d,sale_date,cash,card,qr,cl,clients_count,is_new_client,status,comment', 'd', previousFrom, currentTo),
+    fetchAllRows('sales', 'id,master,master_id,d,sale_date,cash,card,qr,cl,clients_count,is_new_client,status,comment,commission_pct', 'd', previousFrom, currentTo),
     fetchAllRows('fines', 'id,master,master_id,d,fine_date,amount,reason', 'd', previousFrom, currentTo),
     fetchAllRows('expenses', 'id,date,section,name,amount_uzs,usd_rate,minus_from,category', 'date', previousFrom, currentTo),
     fetchAllRows('attendance', 'id,master,master_id,d,attendance_date,arrived,arrived_at', 'd', previousFrom, currentTo),
@@ -216,7 +227,6 @@ function masterReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods:
     const previousRevenue = previousRows.reduce((sum, sale) => sum + saleTotal(sale), 0);
     const clients = currentRows.reduce((sum, sale) => sum + saleClients(sale), 0);
     const fines = currentFines.filter((fine) => fine.master === name).reduce((sum, fine) => sum + number(fine.amount), 0);
-    const pct = number(master.pct || 40);
     return {
       id: master.id,
       name,
@@ -228,7 +238,7 @@ function masterReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods:
       averagePerClient: clients ? Math.round(revenue / clients) : 0,
       revenueSharePercent: salonRevenue ? Math.round((revenue / salonRevenue) * 1000) / 10 : 0,
       fines,
-      calculatedPayout: Math.max(0, Math.round((revenue * pct) / 100 - fines)),
+      calculatedPayout: Math.max(0, Math.round(grossMasterPayForSales(currentRows, master) - fines)),
     };
   }).sort((left, right) => right.revenue - left.revenue);
   return {
@@ -249,9 +259,8 @@ function financeReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const masterPayouts = data.masters.filter((master) => master.active !== false).reduce((sum, master) => {
     const name = String(master.name || '');
-    const masterRevenue = sales.filter((sale) => sale.master === name).reduce((total, sale) => total + saleTotal(sale), 0);
     const masterFines = fines.filter((fine) => fine.master === name).reduce((total, fine) => total + number(fine.amount), 0);
-    return sum + Math.max(0, (masterRevenue * number(master.pct || 40)) / 100 - masterFines);
+    return sum + Math.max(0, grossMasterPayForSales(sales.filter((sale) => sale.master === name), master) - masterFines);
   }, 0);
   const expensesBySection = expenseRows.reduce((result: Record<string, number>, expense) => {
     const section = String(expense.section || 'unknown');

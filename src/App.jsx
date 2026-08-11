@@ -8,6 +8,8 @@ import {
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
 import {
+  commissionPctForSale,
+  grossMasterPayForSales,
   investmentSummary,
   masterGrossPay,
   masterNetPay,
@@ -317,13 +319,12 @@ function reportMastersForPeriod(data, sales, fines = []) {
 }
 
 function masterPayoutForPeriod(data, sales, fines = []) {
-  // Keep legacy id-or-name ownership matching and the 40% fallback here; the
-  // generic masterPayoutSum helper intentionally has a stricter id contract.
+  // Keep legacy id-or-name ownership matching.  Each sale keeps its commission
+  // snapshot, so later profile changes never recalculate historical payouts.
   return reportMastersForPeriod(data, sales, fines).reduce((sum, master) => {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const revenue = totalSalesAmount(rows);
     const fineTotal = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
-    return sum + masterNetPay(masterGrossPay(revenue, Number(master.pct || 40)), fineTotal);
+    return sum + masterNetPay(grossMasterPayForSales(rows, master), fineTotal);
   }, 0);
 }
 
@@ -459,8 +460,8 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
     const weekSales = sales.filter((sale) => inRange(rowDate(sale), week.from, week.to));
     const revenue = totalSalesAmount(weekSales);
     const grossMasterPay = reportMasters.reduce((sum, master) => {
-      const masterRevenue = totalSalesAmount(weekSales.filter((sale) => belongsToMaster(sale, master)));
-      return sum + masterGrossPay(masterRevenue, Number(master.pct || 40));
+      const masterSales = weekSales.filter((sale) => belongsToMaster(sale, master));
+      return sum + grossMasterPayForSales(masterSales, master);
     }, 0);
     const weekExpenses = data.expenses
       .filter((expense) => inRange(rowDate(expense, 'date'), week.from, week.to));
@@ -473,8 +474,8 @@ function overviewWeeklyMetrics(data, range, sales, fines) {
   // A fine reduces a master's monthly payout only down to zero. Distributing the
   // recognized part by its actual week keeps the weekly rows equal to the month total.
   reportMasters.forEach((master) => {
-    const masterRevenue = totalSalesAmount(sales.filter((sale) => belongsToMaster(sale, master)));
-    const grossMasterPay = masterGrossPay(masterRevenue, Number(master.pct || 40));
+    const masterSales = sales.filter((sale) => belongsToMaster(sale, master));
+    const grossMasterPay = grossMasterPayForSales(masterSales, master);
     const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
     const fineTotal = totalFines(masterFines);
     let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
@@ -800,7 +801,7 @@ function MasterView({ data, reload, setError }) {
 
   const canPickMaster = data.role === 'admin';
   const masterName = data.role === 'master' ? data.me : selectedMaster;
-  const pct = Number(data.byName[masterName]?.pct ?? 40);
+  const masterProfile = data.byName[masterName];
   const range = getRange(period, customFrom, customTo, data.sales);
   const masterSales = data.sales.filter((sale) => sale.master === masterName);
   const todaySales = masterSales.filter((sale) => rowDate(sale) === TODAY);
@@ -816,7 +817,7 @@ function MasterView({ data, reload, setError }) {
     qr: totalQr(visibleSales),
   };
   const fineTotal = totalFines(visibleFines);
-  const pay = masterNetPay(masterGrossPay(revenue, pct), fineTotal);
+  const pay = masterNetPay(grossMasterPayForSales(visibleSales, masterProfile), fineTotal);
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
   const shiftStart = data.settings.shift_start || '09:00';
 
@@ -1058,9 +1059,9 @@ function AdminView({ data, reload, setError }) {
       master,
       rows,
       revenue: masterRevenue,
-      pay: masterNetPay(masterGrossPay(masterRevenue, Number(master.pct || 40)), masterFine),
+      pay: masterNetPay(grossMasterPayForSales(rows, master), masterFine),
       previousRevenue,
-      previousPay: masterNetPay(masterGrossPay(previousRevenue, Number(master.pct || 40)), previousFine),
+      previousPay: masterNetPay(grossMasterPayForSales(previousRows, master), previousFine),
     };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
@@ -1218,7 +1219,7 @@ function AdminView({ data, reload, setError }) {
           render={(sale) => {
             const master = data.byName[sale.master];
             const amount = saleTotal(sale);
-            const masterEarning = masterGrossPay(amount, Number(master?.pct || 40));
+            const masterEarning = masterGrossPay(amount, commissionPctForSale(sale, master));
             const payment = sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet';
             const canDelete = recentSaleCanBeDeleted(rowDate(sale));
             return (

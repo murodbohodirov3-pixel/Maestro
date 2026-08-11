@@ -76,6 +76,23 @@ export function masterGrossPay(revenue, pct) {
   return (Number(revenue) || 0) * (Number(pct) || 0) / 100;
 }
 
+// A commission belongs to a sale, not to the master's current profile.  The
+// profile percentage is only a compatibility fallback for pre-migration rows.
+export function commissionPctForSale(sale, master = null) {
+  const snapshot = Number(sale?.commission_pct);
+  if (Number.isFinite(snapshot)) return snapshot;
+
+  const profilePct = Number(master?.pct);
+  return Number.isFinite(profilePct) ? profilePct : 40;
+}
+
+export function grossMasterPayForSales(sales, master = null) {
+  return sales.reduce(
+    (sum, sale) => sum + masterGrossPay(saleTotal(sale), commissionPctForSale(sale, master)),
+    0,
+  );
+}
+
 export function masterFines(fines, masterId) {
   return totalFines(fines.filter((fine) => String(fine.master_id) === String(masterId)));
 }
@@ -90,15 +107,15 @@ export function masterNetPayFromRevenue(revenue, pct, fines) {
 
 export function grossMasterCommissions(sales, masters) {
   return masters.reduce((sum, master) => {
-    const revenue = masterRevenue(sales, master.id);
-    return sum + masterGrossPay(revenue, master.pct);
+    const rows = sales.filter((sale) => String(sale.master_id) === String(master.id));
+    return sum + grossMasterPayForSales(rows, master);
   }, 0);
 }
 
 export function masterPayoutSum(sales, masters, fines = []) {
   return masters.reduce((sum, master) => {
-    const revenue = masterRevenue(sales, master.id);
-    const grossPay = masterGrossPay(revenue, master.pct);
+    const rows = sales.filter((sale) => String(sale.master_id) === String(master.id));
+    const grossPay = grossMasterPayForSales(rows, master);
     const finesAmount = masterFines(fines, master.id);
     return sum + masterNetPay(grossPay, finesAmount);
   }, 0);
