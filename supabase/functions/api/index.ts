@@ -639,8 +639,10 @@ Deno.serve(async (req) => {
       if (!master) return json({ error: 'invalid_attendance' }, 400);
       // A master checking himself in does not get to choose when or for which
       // day: the device clock is his to change, and a late arrival is money.
-      const d = isAdmin ? String(payload.d ?? '') : tashkentDate();
-      const arrived = isAdmin ? String(payload.arrived ?? '') : tashkentTime();
+      // An admin correcting the sheet does send both, and the "Я пришёл" button
+      // sends neither — so an absent value means "stamp it now", not an error.
+      const d = isAdmin && payload.d ? String(payload.d) : tashkentDate();
+      const arrived = isAdmin && payload.arrived ? String(payload.arrived) : tashkentTime();
       if (!isValidIsoDate(d) || !/^\d{2}:\d{2}$/.test(arrived)) {
         return json({ error: 'invalid_attendance' }, 400);
       }
