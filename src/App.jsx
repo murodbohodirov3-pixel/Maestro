@@ -27,6 +27,23 @@ import {
 } from './utils/calculations.js';
 import { downloadClientWorkbook } from './utils/clientExport.js';
 import {
+  appointmentOutcomeSummary,
+  belongsToMaster,
+  comparablePreviousRange,
+  inRange,
+  latenessSummary,
+  masterPayoutForPeriod,
+  mastersForPeriod,
+  minutesLate,
+  overviewWeeklyMetrics,
+  paymentMix,
+  percentageDifference,
+  previousRange,
+  recognizedFinesTotal,
+  shiftProductivity,
+  weekdayBreakdown,
+} from './utils/reporting.js';
+import {
   localDate,
   mergeWindowedData,
   pollWindowStart,
@@ -171,19 +188,94 @@ function clientType(sale) {
   return 'тип не указан';
 }
 
-function timeToMinutes(value) {
-  const time = displayTime(value);
-  if (!time) return null;
-  const [hours, minutes] = time.split(':').map(Number);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  return hours * 60 + minutes;
+// Server codes are the contract; these are the sentences the owner reads. An
+// unmapped code still surfaces verbatim, because a strange message beats a
+// screen that shows nothing at all.
+const ACTION_ERROR_TEXT = {
+  forbidden: 'Недостаточно прав для этого действия.',
+  invalid_sale: 'Проверьте сумму, дату и количество клиентов.',
+  sale_date_out_of_range: 'Продажу можно записать только за последнюю неделю.',
+  sale_amount_too_large: 'Сумма слишком большая — похоже, лишний ноль.',
+  master_not_active: 'Мастер не активен — включите его в списке мастеров.',
+  sale_not_found: 'Продажа уже удалена.',
+  sale_delete_window_expired: 'Продажу старше двух дней удалить нельзя.',
+  sale_does_not_require_owner_approval: 'Эту продажу уже обработали — обновите экран.',
+  fine_not_found: 'Штраф уже удалён.',
+  fine_delete_window_expired: 'Штраф старше семи дней удалить нельзя.',
+  invalid_attendance: 'Не удалось отметить приход — проверьте дату и время.',
+  attendance_edit_window_expired: 'Изменить отметку можно только за сегодня.',
+  invalid_expense: 'Проверьте дату и сумму расхода.',
+  invalid_rent_offset: 'Проверьте сумму в долларах и курс.',
+  no_settings_to_update: 'Нечего сохранять — ничего не изменилось.',
+  slot_already_booked: 'Это время уже занято.',
+  master_day_off: 'У мастера в этот день выходной.',
+  client_blocked: 'Этот клиент заблокирован.',
+  not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
+};
+
+function actionErrorText(error) {
+  const code = String(error?.details?.error || error?.message || '');
+  if (ACTION_ERROR_TEXT[code]) return ACTION_ERROR_TEXT[code];
+  if (code.startsWith('unauthorized')) return 'Сессия истекла. Откройте приложение через Telegram заново.';
+  if (/Failed to fetch|NetworkError|network/i.test(code)) {
+    return 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.';
+  }
+  return code ? `Не удалось выполнить: ${code}` : 'Не удалось выполнить действие.';
 }
 
-function minutesLate(arrived, shiftStart = '09:00') {
-  const arrivedMinutes = timeToMinutes(arrived);
-  const shiftMinutes = timeToMinutes(shiftStart);
-  if (arrivedMinutes == null || shiftMinutes == null) return 0;
-  return Math.max(0, arrivedMinutes - shiftMinutes);
+// Every mutation used to fire and forget. A failure became an unhandled
+// rejection, the screen said nothing, and the natural next move was to tap
+// again — which is where the duplicate sales came from. One action at a time,
+// and the result is always stated.
+function useAction(setError, setMessage) {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
+  async function run(work, successMessage) {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    setError('');
+    setMessage?.('');
+    try {
+      await work();
+      if (successMessage) setMessage?.(successMessage);
+      return true;
+    } catch (error) {
+      setError(actionErrorText(error));
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  return { run, busy };
+}
+
+function newRequestId() {
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// Telegram's own dialog: window.confirm is suppressed in some Mini App clients,
+// and a destructive action that silently does nothing is worse than no guard.
+function confirmAction(question) {
+  const telegram = window.Telegram?.WebApp;
+  if (typeof telegram?.showConfirm === 'function') {
+    return new Promise((resolve) => {
+      try {
+        telegram.showConfirm(question, (ok) => resolve(Boolean(ok)));
+      } catch {
+        resolve(window.confirm(question));
+      }
+    });
+  }
+  return Promise.resolve(window.confirm(question));
 }
 
 function recentRecordCanBeDeleted(recordDate, days) {
@@ -236,34 +328,6 @@ function getRange(period, customFrom, customTo, rows = [], key = 'd') {
   return { from: customFrom || TODAY, to: customTo || customFrom || TODAY };
 }
 
-function previousRange(range, period) {
-  if (!range?.from || !range?.to || period === 'all') return null;
-  const from = new Date(`${range.from}T12:00:00`);
-  const to = new Date(`${range.to}T12:00:00`);
-
-  if (period === 'month') {
-    return {
-      from: localDate(new Date(from.getFullYear(), from.getMonth() - 1, 1)),
-      to: localDate(new Date(from.getFullYear(), from.getMonth(), 0)),
-    };
-  }
-
-  const durationDays = Math.round((to - from) / 86400000) + 1;
-  const previousTo = new Date(from);
-  previousTo.setDate(previousTo.getDate() - 1);
-  const previousFrom = new Date(previousTo);
-  previousFrom.setDate(previousFrom.getDate() - durationDays + 1);
-  return { from: localDate(previousFrom), to: localDate(previousTo) };
-}
-
-function percentageDifference(current, previous) {
-  const currentValue = Number(current) || 0;
-  const previousValue = Number(previous) || 0;
-  return previousValue
-    ? Math.round(((currentValue - previousValue) / Math.abs(previousValue)) * 100)
-    : currentValue ? 100 : 0;
-}
-
 // A percentage alone cannot be acted on: "+12%" hides whether the salon gained
 // two million or twenty thousand. The figure it grew from is shown next to it,
 // and the dates it came from drop to the quiet line underneath.
@@ -274,11 +338,6 @@ function comparisonToPrevious(current, previous, comparisonRange, formatValue = 
     secondaryTone: percent > 0 ? 'positive' : percent < 0 ? 'negative' : '',
     hint: displayRange(comparisonRange),
   };
-}
-
-function inRange(value, from, to) {
-  if (!value) return false;
-  return (!from || value >= from) && (!to || value <= to);
 }
 
 function tashkentDate(value) {
@@ -301,31 +360,6 @@ function appointmentTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function belongsToMaster(row, master) {
-  if (row.master_id != null && master.id != null) {
-    return String(row.master_id) === String(master.id);
-  }
-  return row.master === master.name;
-}
-
-function reportMastersForPeriod(data, sales, fines = []) {
-  return data.masters.filter((master) => (
-    master.active !== false
-    || sales.some((sale) => belongsToMaster(sale, master))
-    || fines.some((fine) => belongsToMaster(fine, master))
-  ));
-}
-
-function masterPayoutForPeriod(data, sales, fines = []) {
-  // Keep legacy id-or-name ownership matching.  Each sale keeps its commission
-  // snapshot, so later profile changes never recalculate historical payouts.
-  return reportMastersForPeriod(data, sales, fines).reduce((sum, master) => {
-    const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const fineTotal = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
-    return sum + masterNetPay(grossMasterPayForSales(rows, master), fineTotal);
-  }, 0);
 }
 
 function totalOpenDebtsByCurrency(data) {
@@ -435,71 +469,6 @@ function MasterMetricComparison({ current, previous }) {
   );
 }
 
-function monthWeekRanges(range) {
-  const ranges = [];
-  const monthEnd = new Date(`${range.to}T12:00:00`);
-  let cursor = new Date(`${range.from}T12:00:00`);
-
-  while (cursor <= monthEnd) {
-    const weekEnd = new Date(cursor);
-    const mondayBasedDay = (cursor.getDay() + 6) % 7;
-    weekEnd.setDate(cursor.getDate() + (6 - mondayBasedDay));
-    if (weekEnd > monthEnd) weekEnd.setTime(monthEnd.getTime());
-
-    ranges.push({ from: localDate(cursor), to: localDate(weekEnd) });
-    cursor = new Date(weekEnd);
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  return ranges;
-}
-
-function overviewWeeklyMetrics(data, range, sales, fines) {
-  const reportMasters = reportMastersForPeriod(data, sales, fines);
-  const buckets = monthWeekRanges(range).map((week) => {
-    const weekSales = sales.filter((sale) => inRange(rowDate(sale), week.from, week.to));
-    const revenue = totalSalesAmount(weekSales);
-    const grossMasterPay = reportMasters.reduce((sum, master) => {
-      const masterSales = weekSales.filter((sale) => belongsToMaster(sale, master));
-      return sum + grossMasterPayForSales(masterSales, master);
-    }, 0);
-    const weekExpenses = data.expenses
-      .filter((expense) => inRange(rowDate(expense, 'date'), week.from, week.to));
-    const expenses = totalExpenses(operatingExpenses(weekExpenses));
-    const nonCashIncome = rentOffsetIncome(weekExpenses);
-
-    return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses, nonCashIncome };
-  });
-
-  // A fine reduces a master's monthly payout only down to zero. Distributing the
-  // recognized part by its actual week keeps the weekly rows equal to the month total.
-  reportMasters.forEach((master) => {
-    const masterSales = sales.filter((sale) => belongsToMaster(sale, master));
-    const grossMasterPay = grossMasterPayForSales(masterSales, master);
-    const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
-    const fineTotal = totalFines(masterFines);
-    let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
-
-    buckets.forEach((bucket) => {
-      if (remainingRecognizedFines <= 0) return;
-      const bucketFines = totalFines(masterFines
-        .filter((fine) => inRange(rowDate(fine), bucket.from, bucket.to)));
-      const recognized = Math.min(bucketFines, remainingRecognizedFines);
-      bucket.recognizedFines += recognized;
-      remainingRecognizedFines -= recognized;
-    });
-  });
-
-  return buckets.map((bucket) => {
-    const salonRemainder = bucket.revenue - bucket.grossMasterPay + bucket.recognizedFines;
-    return {
-      ...bucket,
-      salonRemainder,
-      netProfit: salonRemainder - bucket.expenses,
-      totalNetProfit: salonRemainder - bucket.expenses + bucket.nonCashIncome,
-    };
-  });
-}
 
 function overviewFineRanking(data, fines) {
   const mastersById = new Map(data.masters.map((master) => [String(master.id), master]));
@@ -593,7 +562,10 @@ function OverviewView({ data, setView }) {
   const [expandedDetail, setExpandedDetail] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const monthRange = currentMonthRange();
-  const priorMonthRange = previousRange(monthRange, 'month');
+  // Trimmed to the days that have already happened. Comparing three days of a
+  // new month against a whole previous month reported a collapse every time the
+  // month turned over.
+  const priorMonthRange = comparablePreviousRange(monthRange, 'month', TODAY);
   // Not yesterday: a Thursday is compared with the previous Thursday, because a
   // barbershop's week has a shape and a Wednesday is a different kind of day.
   const lastWeekSameDay = sameWeekdayLastWeek(TODAY);
@@ -614,16 +586,19 @@ function OverviewView({ data, setView }) {
 
   const todayRevenue = totalSalesAmount(todaySales);
   const monthRevenue = totalSalesAmount(monthSales);
-  const payouts = masterPayoutForPeriod(data, monthSales, monthFines);
+  const payouts = masterPayoutForPeriod(data.masters, monthSales, monthFines);
   const salonRemainder = monthRevenue - payouts;
   const fineTotal = totalFines(monthFines);
+  // Issued and withheld differ whenever a fine outruns what a master earned;
+  // only the withheld part ever reaches the salon.
+  const recognizedFines = recognizedFinesTotal(data.masters, monthSales, monthFines);
   const netProfit = salonRemainder - operatingFor(monthRange);
   const nonCashIncome = rentOffsetsFor(monthRange);
   const totalNetProfit = netProfit + nonCashIncome;
 
   const priorRevenue = totalSalesAmount(priorSales);
   const priorNetProfit = priorMonthRange
-    ? priorRevenue - masterPayoutForPeriod(data, priorSales, priorFines) - operatingFor(priorMonthRange)
+    ? priorRevenue - masterPayoutForPeriod(data.masters, priorSales, priorFines) - operatingFor(priorMonthRange)
     : 0;
 
   // Average check is the number that moves before revenue does: the same takings
@@ -798,6 +773,8 @@ function MasterView({ data, reload, setError }) {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [message, setMessage] = useState('');
+  const [requestId, setRequestId] = useState(newRequestId);
+  const { run, busy } = useAction(setError, setMessage);
 
   const canPickMaster = data.role === 'admin';
   const masterName = data.role === 'master' ? data.me : selectedMaster;
@@ -846,29 +823,33 @@ function MasterView({ data, reload, setError }) {
       clients_count: clientCount,
       is_new_client: clientCount === 0 ? null : isNewClient,
       [payType]: numericAmount,
+      // Held across retries of this same sale, so a reply lost on a bad
+      // connection cannot turn one haircut into two rows.
+      client_request_id: requestId,
     };
 
-    await callLegacyApi('addSale', payload);
+    const ok = await run(
+      () => callLegacyApi('addSale', payload).then(reload),
+      data.role === 'master' ? 'Оплата отправлена owner на подтверждение.' : 'Продажа сохранена.',
+    );
+    if (!ok) return;
+
+    setRequestId(newRequestId());
     setPayType(null);
     setAmount('');
     setClientCount(1);
     setIsNewClient(null);
-    setMessage(data.role === 'master'
-      ? 'Оплата отправлена owner на подтверждение.'
-      : 'Продажа сохранена.');
-    await reload();
   }
 
   async function deleteSale(id) {
-    await callLegacyApi('delSale', { id });
-    await reload();
+    if (!await confirmAction('Удалить эту продажу?')) return;
+    await run(() => callLegacyApi('delSale', { id }).then(reload), 'Продажа удалена.');
   }
 
   async function markArrival() {
     setError('');
     setMessage('');
 
-    const arrived = new Date().toTimeString().slice(0, 5);
     const salonLat = Number(data.settings.salon_lat);
     const salonLng = Number(data.settings.salon_lng);
     const salonRadius = Number(data.settings.salon_radius || 100);
@@ -894,14 +875,20 @@ function MasterView({ data, reload, setError }) {
       }
     }
 
-    await callLegacyApi('setAttendance', { master: masterName, d: TODAY, arrived });
-    setMessage('Приход отмечен.');
-    await reload();
+    // The server stamps the actual Tashkent time; sending it here would let a
+    // phone clock decide whether an arrival counts as late.
+    await run(
+      () => callLegacyApi('setAttendance', { master: masterName, d: TODAY }).then(reload),
+      'Приход отмечен.',
+    );
   }
 
   async function resetArrival() {
-    await callLegacyApi('delAttendance', { master: masterName, d: TODAY });
-    await reload();
+    if (!await confirmAction('Убрать отметку о приходе за сегодня?')) return;
+    await run(
+      () => callLegacyApi('delAttendance', { master: masterName, d: TODAY }).then(reload),
+      'Отметка убрана.',
+    );
   }
 
   return (
@@ -927,11 +914,11 @@ function MasterView({ data, reload, setError }) {
                 ? `Опоздал на ${minutesLate(attendanceToday.arrived || attendanceToday.arrived_at, shiftStart)} мин`
                 : 'Вовремя'}
             </p>
-            <button className="btn ghost" type="button" onClick={resetArrival}>Изменить</button>
+            <button className="btn ghost" type="button" onClick={resetArrival} disabled={busy}>Изменить</button>
           </>
         ) : (
           <>
-            <button className="btn" type="button" onClick={markArrival} disabled={!masterName}>Я пришёл</button>
+            <button className="btn" type="button" onClick={markArrival} disabled={busy || !masterName}>Я пришёл</button>
             <p className="hint">Смена с {shiftStart}. Если координаты салона заданы, отметка проверяет радиус.</p>
           </>
         )}
@@ -971,7 +958,9 @@ function MasterView({ data, reload, setError }) {
           <button className={isNewClient === false ? 'on' : ''} type="button" onClick={() => setIsNewClient(false)}>Постоянный</button>
         </div>
         {clientCount === 0 ? <p className="hint">Продажа сохранится в выручке, но не увеличит число клиентов.</p> : null}
-        <button className="btn" type="submit">Добавить</button>
+        <button className="btn" type="submit" disabled={busy}>
+          {busy ? 'Сохраняем…' : 'Добавить'}
+        </button>
         {message ? <p className="success">{message}</p> : null}
       </form>
 
@@ -1043,8 +1032,8 @@ function AdminView({ data, reload, setError }) {
     qr: totalQr(sales),
   };
   const newClients = sales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
-  const reportMasters = reportMastersForPeriod(
-    data,
+  const reportMasters = mastersForPeriod(
+    data.masters,
     [...sales, ...previousSales],
     [...fines, ...previousFines],
   );
