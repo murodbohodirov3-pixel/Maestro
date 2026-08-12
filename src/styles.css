@@ -2915,3 +2915,43 @@ footer span {
 .client-block-form .btn {
   min-height: 44px;
 }
+
+.master-fines,
+.deletion-log {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.deletion-log {
+  margin-top: 0;
+  padding: 0;
+}
+
+.master-fines > summary,
+.deletion-log > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.master-fines > summary span,
+.deletion-log > summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.master-fines .rows,
+.deletion-log .rows,
+.master-fines > .hint,
+.deletion-log > .hint,
+.deletion-log > .btn {
+  margin: 0 12px 12px;
+}

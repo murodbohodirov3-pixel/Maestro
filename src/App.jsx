@@ -1073,6 +1073,26 @@ function MasterView({ data, reload, setError }) {
           <Tile label="Средний чек" value={averageCheck(revenue, visibleClients)} />
         </div>
         <PaymentBreakdownBar cash={paymentTotals.cash} card={paymentTotals.card} qr={paymentTotals.qr} />
+        {/* The tile above gave a master the total and nothing else, so "за что
+            эти 150 тысяч" was settled from someone's memory. His own rows were
+            already loaded for him; they were simply never shown. */}
+        {visibleFines.length ? (
+          <details className="master-fines">
+            <summary>За что штрафы<span>{visibleFines.length}</span></summary>
+            <Rows
+              rows={[...visibleFines].sort(newestFirst)}
+              empty="Штрафов за период нет."
+              render={(fine) => (
+                <div className="row" key={fine.id}>
+                  <div>
+                    <strong>−{money(fine.amount)} сум</strong>
+                    <span>{displayDate(rowDate(fine))} · {fineReasonLabel(fine.reason)}</span>
+                  </div>
+                </div>
+              )}
+            />
+          </details>
+        ) : null}
       </div>
     </section>
   );
@@ -2440,7 +2460,84 @@ function FinanceView({ data, reload, setError }) {
           </div>
         ) : null}
       </div>
+
+      {data.appRole === 'owner' ? <DeletionLog setError={setError} /> : null}
     </section>
+  );
+}
+
+// The ledger, the RPCs and the listAuditEvents action were all built and the
+// app never called them, so "кто это удалил" had no answer anywhere.
+const AUDIT_ENTITY_LABELS = {
+  fine: 'Штраф',
+  expense: 'Расход',
+  debt: 'Долг',
+  debt_payment: 'Платёж по долгу',
+  sale: 'Продажа',
+  attendance: 'Отметка о приходе',
+};
+
+function auditRowSummary(event) {
+  const values = event.old_values || {};
+  const amount = values.amount ?? values.amount_uzs
+    ?? ((Number(values.cash) || 0) + (Number(values.card) || 0) + (Number(values.qr) || 0) || null);
+  const parts = [];
+  if (values.master || values.counterparty || values.name) parts.push(values.master || values.counterparty || values.name);
+  if (amount) parts.push(`${money(amount)} сум`);
+  const day = values.d || values.date || values.work_date;
+  if (day) parts.push(`за ${displayDate(day)}`);
+  return parts.join(' · ') || `запись #${event.entity_id}`;
+}
+
+function DeletionLog({ setError }) {
+  const [events, setEvents] = useState([]);
+  const [cursor, setCursor] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const { run, busy } = useAction(setError);
+
+  async function loadPage(nextCursor = null) {
+    await run(async () => {
+      const result = await callLegacyApi('listAuditEvents', nextCursor ? { cursor: nextCursor, limit: 25 } : { limit: 25 });
+      setEvents((current) => (nextCursor ? [...current, ...(result.events || [])] : (result.events || [])));
+      setCursor(result.nextCursor || null);
+      setLoaded(true);
+    });
+  }
+
+  return (
+    <details
+      className="card wide deletion-log"
+      open={open}
+      onToggle={(event) => {
+        setOpen(event.currentTarget.open);
+        if (event.currentTarget.open && !loaded && !busy) loadPage();
+      }}
+    >
+      <summary>Журнал удалений<span>кто и что удалил</span></summary>
+      {busy && !loaded ? <p className="hint">Загружаем журнал…</p> : null}
+      {loaded ? (
+        <Rows
+          rows={events}
+          empty="Удалений пока не было."
+          render={(event) => (
+            <div className="row" key={event.id}>
+              <div>
+                <strong>{AUDIT_ENTITY_LABELS[event.entity_type] || event.entity_type}: {auditRowSummary(event)}</strong>
+                <span>{displayDateTime(event.occurred_at)}</span>
+                <span>Удалил: {event.actor_name || 'неизвестно'}{event.actor_role ? ` (${event.actor_role})` : ''}</span>
+              </div>
+            </div>
+          )}
+        />
+      ) : null}
+      {cursor ? (
+        <button className="btn ghost" type="button" disabled={busy} onClick={() => loadPage(cursor)}>
+          {busy ? 'Загружаем…' : 'Показать ещё'}
+        </button>
+      ) : null}
+      <p className="hint">Записи журнала нельзя изменить или удалить — он только пополняется.</p>
+    </details>
   );
 }
 
