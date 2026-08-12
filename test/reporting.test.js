@@ -195,8 +195,8 @@ test('lateness summary counts only the days that were actually late', () => {
 
 test('productivity separates working more from earning more', () => {
   const sales = [
-    { master_id: 1, cash: 3_000_000, cl: 10 },
-    { master_id: 3, cash: 3_000_000, cl: 10 },
+    { master_id: 1, d: '2026-08-01', cash: 3_000_000, cl: 10 },
+    { master_id: 3, d: '2026-08-01', cash: 3_000_000, cl: 10 },
   ];
   const attendance = [
     ...Array.from({ length: 20 }, () => ({ master_id: 1 })),
@@ -211,12 +211,37 @@ test('productivity separates working more from earning more', () => {
 test('a master with no attendance rows does not divide by zero', () => {
   const [only] = shiftProductivity(
     [{ id: 3, name: 'Жавлон', active: true }],
-    [{ master_id: 3, cash: 500_000, cl: 2 }],
+    [{ master_id: 3, d: '2026-08-01', cash: 500_000, cl: 2 }],
     [],
   );
   assert.equal(only.shifts, 0);
   assert.equal(only.revenuePerShift, 0);
   assert.equal(only.clientsPerShift, 0);
+});
+
+test('fewer check-ins than selling days makes the per-shift figure unreliable', () => {
+  // Backfilled sales: eleven days of takings against a single check-in would
+  // otherwise report an eleven-fold productivity and top the ranking.
+  const sales = Array.from({ length: 11 }, (_, day) => ({
+    master_id: 3,
+    d: `2026-08-${String(day + 1).padStart(2, '0')}`,
+    cash: 300_000,
+    cl: 2,
+  }));
+  const byId = (rows, id) => rows.find((row) => row.id === id);
+
+  const sparse = byId(shiftProductivity(MASTERS, sales, [{ master_id: 3 }]), 3);
+  assert.equal(sparse.shifts, 1);
+  assert.equal(sparse.saleDays, 11);
+  assert.equal(sparse.reliable, false);
+  assert.equal(sparse.revenuePerShift, 0);
+
+  const covered = byId(
+    shiftProductivity(MASTERS, sales, sales.map((sale) => ({ master_id: 3, d: sale.d }))),
+    3,
+  );
+  assert.equal(covered.reliable, true);
+  assert.equal(covered.revenuePerShift, 300_000);
 });
 
 test('no-show rate ignores appointments that have not happened yet', () => {

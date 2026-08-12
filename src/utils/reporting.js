@@ -270,14 +270,21 @@ export function shiftProductivity(masters, sales, attendance, fines = []) {
     const shifts = attendance.filter((row) => belongsToMaster(row, master)).length;
     const revenue = totalSalesAmount(rows);
     const clientCount = rows.reduce((sum, sale) => sum + saleClientsCount(sale), 0);
+    // He cannot have earned on more days than he was recorded present. When he
+    // has, the check-ins are missing — backfilled sales, a forgotten button —
+    // and dividing by them invents a figure that outranks everyone.
+    const saleDays = new Set(rows.map((sale) => rowDate(sale)).filter(Boolean)).size;
+    const reliable = shifts > 0 && shifts >= saleDays;
     return {
       id: master.id,
       name: master.name,
       shifts,
+      saleDays,
+      reliable,
       revenue,
       clients: clientCount,
-      revenuePerShift: shifts ? revenue / shifts : 0,
-      clientsPerShift: shifts ? clientCount / shifts : 0,
+      revenuePerShift: reliable ? revenue / shifts : 0,
+      clientsPerShift: reliable ? clientCount / shifts : 0,
     };
   }).sort((left, right) => right.revenuePerShift - left.revenuePerShift);
 }

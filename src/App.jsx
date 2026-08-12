@@ -1319,11 +1319,17 @@ function AdminView({ data, reload, setError }) {
                     </div>
                     <small>{rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</small>
                     {/* Revenue alone cannot tell working more from earning
-                        more. The shift count is what separates them. */}
+                        more. The shift count is what separates them — but only
+                        when the check-ins actually cover the days he sold on. */}
                     <small className="master-shift-line">
-                      {productivityByMaster[String(master.id)]?.shifts
-                        ? `${productivityByMaster[String(master.id)].shifts} ${pluralRu(productivityByMaster[String(master.id)].shifts, 'смена', 'смены', 'смен')} · ${money(productivityByMaster[String(master.id)].revenuePerShift)} за смену`
-                        : 'нет отметок о приходе'}
+                      {(() => {
+                        const stats = productivityByMaster[String(master.id)];
+                        if (!stats?.shifts) return 'нет отметок о приходе';
+                        const shiftLabel = `${stats.shifts} ${pluralRu(stats.shifts, 'смена', 'смены', 'смен')}`;
+                        return stats.reliable
+                          ? `${shiftLabel} · ${money(stats.revenuePerShift)} за смену`
+                          : `${shiftLabel} · продажи за ${stats.saleDays} ${pluralRu(stats.saleDays, 'день', 'дня', 'дней')} — отметок не хватает`;
+                      })()}
                     </small>
                   </td>
                   <td>
