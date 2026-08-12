@@ -776,8 +776,12 @@ Deno.serve(async (req) => {
     if (action === 'addFine') {
       if (!isAdmin) return json({ error: 'forbidden' }, 403);
       const amount = Math.round(Number(payload.amount) || 0);
-      if (!payload.master || !payload.d || amount <= 0) return json({ error: 'invalid_fine' }, 400);
-      const { error } = await sb.from('fines').insert({ master: payload.master, d: payload.d, amount });
+      const d = String(payload.d ?? '');
+      if (!payload.master || !isValidIsoDate(d) || amount <= 0) return json({ error: 'invalid_fine' }, 400);
+      // The column existed from the start and nothing ever wrote to it, so a
+      // disputed fine had no record of what it was for.
+      const reason = payload.reason ? String(payload.reason).trim().slice(0, 200) : null;
+      const { error } = await sb.from('fines').insert({ master: payload.master, d, amount, reason });
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }

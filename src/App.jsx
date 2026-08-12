@@ -21,7 +21,6 @@ import {
   totalCash,
   totalExpenses,
   totalFines,
-  totalPaidForDebt,
   totalQr,
   totalSalesAmount,
 } from './utils/calculations.js';
@@ -40,6 +39,7 @@ import {
   percentageDifference,
   previousRange,
   recognizedFinesTotal,
+  shiftDate,
   shiftProductivity,
   weekdayBreakdown,
 } from './utils/reporting.js';
@@ -104,14 +104,6 @@ function futureMonthLabel(monthsAhead) {
 
 function averageCheck(revenue, clientCount) {
   return clientCount > 0 ? money(revenue / clientCount) : '—';
-}
-
-// These are payment plans only: they never change the debt amount, balance, or payment history.
-function debtPaymentPlan(debt) {
-  const counterparty = String(debt.counterparty || '').toLowerCase();
-  if (debt.currency === 'USD' && counterparty.includes('dyson')) return { monthly: 110, months: 2 };
-  if (debt.currency === 'UZS' && counterparty.includes('alif')) return { monthly: 2431392 };
-  return null;
 }
 
 function digitsOnly(value) {
@@ -253,6 +245,23 @@ function useAction(setError, setMessage) {
   return { run, busy };
 }
 
+// The fines table has always had a reason column and nothing ever wrote to it,
+// so "за что этот штраф" was settled from memory.
+const FINE_REASONS = [
+  { value: 'late', label: 'Опоздание' },
+  { value: 'absence', label: 'Прогул' },
+  { value: 'damage', label: 'Порча имущества' },
+  { value: 'service', label: 'Качество обслуживания' },
+  { value: 'other', label: 'Другое' },
+];
+
+const FINE_REASON_LABELS = Object.fromEntries(FINE_REASONS.map((item) => [item.value, item.label]));
+
+function fineReasonLabel(reason) {
+  if (!reason) return 'причина не указана';
+  return FINE_REASON_LABELS[reason] || reason;
+}
+
 function newRequestId() {
   if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -260,6 +269,25 @@ function newRequestId() {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// The period lived in each view's own state, so stepping from Продажи to
+// Расходы to check one figure silently threw the chosen month away. One shared,
+// remembered selection instead.
+const PERIOD_KEYS = { period: 'maestroPeriod', from: 'maestroPeriodFrom', to: 'maestroPeriodTo' };
+
+function usePeriodSelection(defaultPeriod = 'day') {
+  const [period, setPeriod] = useState(() => localStorage.getItem(PERIOD_KEYS.period) || defaultPeriod);
+  const [customFrom, setCustomFrom] = useState(() => localStorage.getItem(PERIOD_KEYS.from) || '');
+  const [customTo, setCustomTo] = useState(() => localStorage.getItem(PERIOD_KEYS.to) || '');
+
+  useEffect(() => {
+    localStorage.setItem(PERIOD_KEYS.period, period);
+    localStorage.setItem(PERIOD_KEYS.from, customFrom);
+    localStorage.setItem(PERIOD_KEYS.to, customTo);
+  }, [period, customFrom, customTo]);
+
+  return { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo };
 }
 
 // Telegram's own dialog: window.confirm is suppressed in some Mini App clients,
@@ -362,23 +390,6 @@ function appointmentTime(value) {
   });
 }
 
-function totalOpenDebtsByCurrency(data) {
-  // This dashboard is narrower than the generic helper: only i_owe debts are
-  // included and every overpaid debt is clamped before currency aggregation.
-  const paidByDebt = data.debtPayments.reduce((totals, payment) => {
-    const key = String(payment.debt_id);
-    totals[key] = (totals[key] || 0) + (Number(payment.amount) || 0);
-    return totals;
-  }, {});
-  return data.debts
-    .filter((debt) => debt.direction === 'i_owe' && !debt.is_closed)
-    .reduce((totals, debt) => {
-      const currency = debt.currency === 'USD' ? 'USD' : 'UZS';
-      totals[currency] += Math.max(0, (Number(debt.amount) || 0) - (paidByDebt[String(debt.id)] || 0));
-      return totals;
-    }, { UZS: 0, USD: 0 });
-}
-
 function normalizeData(data) {
   const masters = data.masters || [];
   const byName = Object.fromEntries(masters.map((master) => [master.name, master]));
@@ -400,8 +411,6 @@ function normalizeData(data) {
     scheduleRules: data.master_schedule_rules || [],
     clients: data.clients || [],
     expenses: data.expenses || [],
-    debts: data.debts || [],
-    debtPayments: data.debt_payments || [],
     settings,
   };
 }
@@ -423,15 +432,22 @@ function MoneyInput({ value, onChange, ...props }) {
   );
 }
 
-function PaymentBreakdownBar({ cash, card, qr }) {
+function PaymentBreakdownBar({ cash, card, qr, previous }) {
   const [isReady, setIsReady] = useState(false);
   const values = [Number(cash) || 0, Number(card) || 0, Number(qr) || 0];
   const total = values.reduce((sum, value) => sum + value, 0);
+  const previousShares = previous?.total
+    ? { cash: previous.cashShare, card: previous.cardShare, qr: previous.qrShare }
+    : null;
   const items = [
     { key: 'cash', label: 'Наличные', value: values[0] },
     { key: 'card', label: 'Карта', value: values[1] },
     { key: 'qr', label: 'QR Paynet', value: values[2] },
-  ].map((item) => ({ ...item, percent: total ? (item.value / total) * 100 : 0 }));
+  ].map((item) => ({
+    ...item,
+    percent: total ? (item.value / total) * 100 : 0,
+    previousPercent: previousShares ? previousShares[item.key] : null,
+  }));
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setIsReady(true));
@@ -452,7 +468,13 @@ function PaymentBreakdownBar({ cash, card, qr }) {
       </div>
       <div className="payment-breakdown-labels">
         {items.map((item) => (
-          <span key={item.key}><i className={`payment-breakdown-dot payment-breakdown-${item.key}`} />{item.label} <strong>{Math.round(item.percent)}%</strong></span>
+          <span key={item.key}>
+            <i className={`payment-breakdown-dot payment-breakdown-${item.key}`} />
+            {item.label} <strong>{Math.round(item.percent)}%</strong>
+            {item.previousPercent != null ? (
+              <em className="payment-breakdown-previous">было {Math.round(item.previousPercent)}%</em>
+            ) : null}
+          </span>
         ))}
       </div>
     </div>
@@ -498,7 +520,7 @@ function fineCountLabel(count) {
   return 'штрафов';
 }
 
-function OverviewMetricTile({ detailId, label, value, tone, danger, expanded, onToggle }) {
+function OverviewMetricTile({ detailId, label, value, tone, danger, expanded, hint, onToggle }) {
   return (
     <button
       aria-controls={expanded ? `overview-details-${detailId}` : undefined}
@@ -509,8 +531,39 @@ function OverviewMetricTile({ detailId, label, value, tone, danger, expanded, on
     >
       <span>{label}</span>
       <strong>{value}</strong>
+      {hint ? <em className="tile-hint">{hint}</em> : null}
       <i className="overview-metric-chevron" aria-hidden="true" />
     </button>
+  );
+}
+
+// Which days deserve five masters and which deserve three. Averaged per
+// occurrence of the weekday, so a month with five Saturdays does not outrank
+// one with four.
+function WeekdayBreakdown({ rows }) {
+  const peak = Math.max(1, ...rows.map((row) => row.averageRevenue));
+  const busiest = rows.reduce((best, row) => (row.averageRevenue > (best?.averageRevenue || 0) ? row : best), null);
+
+  return (
+    <div className="weekday-breakdown">
+      {rows.map((row) => (
+        <div className={`weekday-row ${row.index === busiest?.index && row.occurrences ? 'is-peak' : ''}`} key={row.index}>
+          <span className="weekday-name">{row.short}</span>
+          <span className="weekday-track">
+            <i style={{ width: `${(row.averageRevenue / peak) * 100}%` }} />
+          </span>
+          <span className="weekday-value">
+            <strong>{row.occurrences ? `${money(row.averageRevenue)}` : '—'}</strong>
+            <em>
+              {row.occurrences
+                ? `${row.averageClients.toFixed(1).replace('.', ',')} клиента · ${row.occurrences} ${pluralRu(row.occurrences, 'день', 'дня', 'дней')}`
+                : 'нет данных'}
+            </em>
+          </span>
+        </div>
+      ))}
+      <p className="hint">Средняя выручка за один такой день недели в выбранном месяце.</p>
+    </div>
   );
 }
 
@@ -609,6 +662,7 @@ function OverviewView({ data, setView }) {
   const priorCheck = priorClients ? priorRevenue / priorClients : 0;
 
   const pendingSales = getPendingSales(data.sales);
+  const weekdayRows = weekdayBreakdown(monthSales);
   const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
   const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
     week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses || week.nonCashIncome
@@ -719,6 +773,9 @@ function OverviewView({ data, setView }) {
               expanded={expandedDetail === 'fines'}
               label="Штрафы за месяц"
               value={`${money(fineTotal)} сум`}
+              // Issued and withheld part company as soon as a fine outruns what
+              // the master earned, and only the withheld part reaches the salon.
+              hint={recognizedFines < fineTotal ? `удержано ${money(recognizedFines)}` : null}
               onToggle={setExpandedDetail}
             />
             {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
@@ -756,6 +813,24 @@ function OverviewView({ data, setView }) {
             {expandedDetail === 'total-profit' ? (
               <OverviewWeeklyDetails detailId="total-profit" title="Общий результат с взаимозачётами" rows={visibleWeeklyMetrics} valueKey="totalNetProfit" />
             ) : null}
+            <OverviewMetricTile
+              detailId="weekdays"
+              expanded={expandedDetail === 'weekdays'}
+              label="Сильные дни недели"
+              value={weekdayRows.some((row) => row.occurrences)
+                ? weekdayRows.reduce((best, row) => (row.averageRevenue > (best?.averageRevenue || 0) ? row : best), null).name
+                : '—'}
+              onToggle={setExpandedDetail}
+            />
+            {expandedDetail === 'weekdays' ? (
+              <div className="overview-details" id="overview-details-weekdays" role="region" aria-label="Выручка по дням недели">
+                <div className="overview-details-heading">
+                  <strong>Выручка по дням недели</strong>
+                  <span>в среднем за день</span>
+                </div>
+                <WeekdayBreakdown rows={weekdayRows} />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -769,9 +844,7 @@ function MasterView({ data, reload, setError }) {
   const [amount, setAmount] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [isNewClient, setIsNewClient] = useState(null);
-  const [period, setPeriod] = useState('day');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
   const [message, setMessage] = useState('');
   const [requestId, setRequestId] = useState(newRequestId);
   const { run, busy } = useAction(setError, setMessage);
@@ -1006,13 +1079,15 @@ function MasterView({ data, reload, setError }) {
 }
 
 function AdminView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('day');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
   const [message, setMessage] = useState('');
   const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
+  const [detailLimit, setDetailLimit] = useState(50);
+  const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.sales);
-  const priorRange = previousRange(range, period);
+  // Trimmed to the elapsed part of the period, so the first days of a month are
+  // not compared against a whole one.
+  const priorRange = comparablePreviousRange(range, period, TODAY);
   const pendingSales = getPendingSales(data.sales);
   const sales = data.sales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
@@ -1065,20 +1140,51 @@ function AdminView({ data, reload, setError }) {
   const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
   const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
+  const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  // The share of cash is an operational number, not trivia: it drives what has
+  // to be collected and banked. A share without its previous value is a fact
+  // with nothing to compare against.
+  const mix = paymentMix(sales);
+  const previousMix = paymentMix(previousSales);
+  const periodAttendance = data.attendance.filter((row) => inRange(rowDate(row), range.from, range.to));
+  const productivityByMaster = Object.fromEntries(
+    shiftProductivity(data.masters, sales, periodAttendance, fines).map((row) => [String(row.id), row]),
+  );
 
   async function setSaleApproval(id, status) {
-    setError('');
-    await callLegacyApi('setSaleApproval', { id, status });
-    setMessage(status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.');
-    await reload();
+    await run(
+      () => callLegacyApi('setSaleApproval', { id, status }).then(reload),
+      status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.',
+    );
+  }
+
+  // Monday morning used to be one tap and one full reload per sale. The queue
+  // is confirmed in one pass and the data is fetched once at the end.
+  async function approveAllPending() {
+    const queue = [...pendingSales];
+    if (!queue.length) return;
+    if (!await confirmAction(`Подтвердить все оплаты (${queue.length}) на ${money(pendingTotal)} сум?`)) return;
+
+    await run(async () => {
+      const failures = [];
+      for (const sale of queue) {
+        try {
+          await callLegacyApi('setSaleApproval', { id: sale.id, status: 'approved' });
+        } catch (error) {
+          failures.push(actionErrorText(error));
+        }
+      }
+      await reload();
+      // Thrown after the reload so the rows that did go through are already on
+      // screen when the message explains the ones that did not.
+      if (failures.length) throw new Error(`Не удалось подтвердить ${failures.length} из ${queue.length}: ${failures[0]}`);
+    }, `Подтверждено оплат: ${queue.length}.`);
   }
 
   async function deleteDetailedSale(sale) {
     if (!recentSaleCanBeDeleted(rowDate(sale))) return setError('Можно удалять только продажи не старше 2 дней.');
-    if (!confirm(`Удалить продажу ${sale.master} на ${money(saleTotal(sale))} сум?`)) return;
-    await callLegacyApi('delSale', { id: sale.id });
-    setMessage('Продажа удалена.');
-    await reload();
+    if (!await confirmAction(`Удалить продажу ${sale.master} на ${money(saleTotal(sale))} сум?`)) return;
+    await run(() => callLegacyApi('delSale', { id: sale.id }).then(reload), 'Продажа удалена.');
   }
 
   function changeMasterSort(key) {
@@ -1096,6 +1202,16 @@ function AdminView({ data, reload, setError }) {
     <section className="view-grid">
       <div className="card wide">
         <h2>Оплаты на подтверждение</h2>
+        {pendingSales.length > 1 ? (
+          <div className="approve-all">
+            <span>
+              {pendingSales.length} {pluralRu(pendingSales.length, 'оплата', 'оплаты', 'оплат')} на {money(pendingTotal)} сум
+            </span>
+            <button className="btn" type="button" onClick={approveAllPending} disabled={busy}>
+              {busy ? 'Подтверждаем…' : 'Подтвердить все'}
+            </button>
+          </div>
+        ) : null}
         <Rows
           rows={[...pendingSales].sort(newestFirst)}
           empty="Новых оплат от мастеров на подтверждение нет."
@@ -1109,16 +1225,17 @@ function AdminView({ data, reload, setError }) {
                 <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
               <div className="approval-actions">
-                <button className="btn approval-button" type="button" onClick={() => setSaleApproval(sale.id, 'approved')}>
+                <button className="btn approval-button" type="button" disabled={busy} onClick={() => setSaleApproval(sale.id, 'approved')}>
                   Подтвердить
                 </button>
-                <button className="btn ghost approval-button" type="button" onClick={() => setSaleApproval(sale.id, 'rejected')}>
+                <button className="btn ghost approval-button" type="button" disabled={busy} onClick={() => setSaleApproval(sale.id, 'rejected')}>
                   Отклонить
                 </button>
               </div>
             </div>
           )}
         />
+        {message ? <p className="success">{message}</p> : null}
       </div>
 
       <div className="card wide">
@@ -1137,7 +1254,7 @@ function AdminView({ data, reload, setError }) {
           <Tile label="Новые" value={newClients} {...comparison(newClients, previousNewClients)} />
           <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
         </div>
-        <PaymentBreakdownBar cash={paymentTotals.cash} card={paymentTotals.card} qr={paymentTotals.qr} />
+        <PaymentBreakdownBar cash={mix.cash} card={mix.card} qr={mix.qr} previous={previousMix} />
       </div>
 
       <div className="card wide">
@@ -1181,6 +1298,13 @@ function AdminView({ data, reload, setError }) {
                       {master.name === topMasterName ? <span className="master-top-mark" aria-label="Лидер по выручке" title="Лидер по выручке">★</span> : null}
                     </div>
                     <small>{rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</small>
+                    {/* Revenue alone cannot tell working more from earning
+                        more. The shift count is what separates them. */}
+                    <small className="master-shift-line">
+                      {productivityByMaster[String(master.id)]?.shifts
+                        ? `${productivityByMaster[String(master.id)].shifts} ${pluralRu(productivityByMaster[String(master.id)].shifts, 'смена', 'смены', 'смен')} · ${money(productivityByMaster[String(master.id)].revenuePerShift)} за смену`
+                        : 'нет отметок о приходе'}
+                    </small>
                   </td>
                   <td>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
@@ -1201,9 +1325,11 @@ function AdminView({ data, reload, setError }) {
       <div className="card wide detailed-report-card">
         <SectionHeading label="Детальный отчёт по мастерам" range={range} />
         <Rows
+          // Over a long period this list is thousands of rows, and rendering
+          // them all locks the phone for seconds before anything appears.
           rows={[...sales].sort((left, right) => (
             String(right.created_at || rowDate(right)).localeCompare(String(left.created_at || rowDate(left)))
-          ))}
+          )).slice(0, detailLimit)}
           empty="За выбранный период продаж нет."
           render={(sale) => {
             const master = data.byName[sale.master];
@@ -1227,19 +1353,23 @@ function AdminView({ data, reload, setError }) {
             );
           }}
         />
+        {sales.length > detailLimit ? (
+          <button className="btn ghost" type="button" onClick={() => setDetailLimit((limit) => limit + 100)}>
+            Показать ещё · осталось {sales.length - detailLimit}
+          </button>
+        ) : null}
       </div>
     </section>
   );
 }
 
 function AttendanceView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('day');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
   const [fineForm, setFineForm] = useState({
     master: data.activeMasters[0]?.name || '',
     d: TODAY,
     amount: '',
+    reason: FINE_REASONS[0].value,
   });
   const [settings, setSettings] = useState({
     shift_start: data.settings.shift_start || '09:00',
@@ -1250,6 +1380,7 @@ function AttendanceView({ data, reload, setError }) {
   const [message, setMessage] = useState('');
   const [savingFineKey, setSavingFineKey] = useState('');
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredAttendance = data.attendance
     .filter((item) => inRange(rowDate(item), range.from, range.to))
@@ -1264,18 +1395,19 @@ function AttendanceView({ data, reload, setError }) {
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
     .sort(newestFirst);
   const shiftStart = settings.shift_start || '09:00';
+  // Per-day rows answer "who is here today"; this answers "who is habitually
+  // late and what has it cost", which no screen could show before.
+  const lateness = latenessSummary(data.masters, filteredAttendance, filteredFines, shiftStart)
+    .filter((row) => row.shifts || row.fines);
 
   async function saveSettings(event) {
     event.preventDefault();
-    setError('');
-    await callLegacyApi('setSettings', {
+    await run(() => callLegacyApi('setSettings', {
       shift_start: settings.shift_start,
       salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
       salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
       salon_radius: Number(settings.salon_radius) || 100,
-    });
-    setMessage('Настройки сохранены.');
-    await reload();
+    }).then(reload), 'Настройки сохранены.');
   }
 
   async function useMyLocation() {
@@ -1295,10 +1427,14 @@ function AttendanceView({ data, reload, setError }) {
   }
 
   async function saveAttendance(master, date, arrived) {
-    setError('');
-    if (arrived) await callLegacyApi('setAttendance', { master, d: date, arrived });
-    else await callLegacyApi('delAttendance', { master, d: date });
-    await reload();
+    if (!arrived && !await confirmAction(`Убрать отметку о приходе: ${master}, ${displayDate(date)}?`)) return;
+    await run(
+      () => (arrived
+        ? callLegacyApi('setAttendance', { master, d: date, arrived })
+        : callLegacyApi('delAttendance', { master, d: date })
+      ).then(reload),
+      arrived ? 'Приход сохранён.' : 'Отметка убрана.',
+    );
   }
 
   async function toggleDayOff(master, date, enabled) {
@@ -1330,27 +1466,27 @@ function AttendanceView({ data, reload, setError }) {
     }
   }
 
-  async function createFine(master, date, amount) {
-    setError('');
-    setMessage('');
-    await callLegacyApi('addFine', { master, d: date || TODAY, amount });
-    setMessage(`Штраф ${money(amount)} сум выставлен: ${master}.`);
-    await reload();
+  async function createFine(master, date, amount, reason) {
+    return run(
+      () => callLegacyApi('addFine', { master, d: date || TODAY, amount, reason: reason || null }).then(reload),
+      `Штраф ${money(amount)} сум выставлен: ${master}.`,
+    );
   }
 
   async function addFine(event) {
     event.preventDefault();
     const amount = Number(fineForm.amount);
     if (!amount || amount <= 0) return setError('Введите сумму штрафа.');
-    await createFine(fineForm.master, fineForm.d, amount);
-    setFineForm((current) => ({ ...current, amount: '' }));
+    if (!fineForm.reason) return setError('Выберите причину штрафа.');
+    const ok = await createFine(fineForm.master, fineForm.d, amount, fineForm.reason);
+    if (ok) setFineForm((current) => ({ ...current, amount: '' }));
   }
 
   async function addLateFine(item) {
     const key = `${item.master}-${rowDate(item)}`;
     setSavingFineKey(key);
     try {
-      await createFine(item.master, rowDate(item), 50000);
+      await createFine(item.master, rowDate(item), 50000, 'late');
     } finally {
       setSavingFineKey('');
     }
@@ -1361,11 +1497,8 @@ function AttendanceView({ data, reload, setError }) {
       setError('Можно удалять только штрафы не старше 7 дней.');
       return;
     }
-    if (!confirm(`Удалить штраф ${fine.master} на ${money(fine.amount)} сум?`)) return;
-    setError('');
-    await callLegacyApi('delFine', { id: fine.id });
-    setMessage('Штраф удалён.');
-    await reload();
+    if (!await confirmAction(`Удалить штраф ${fine.master} на ${money(fine.amount)} сум?`)) return;
+    await run(() => callLegacyApi('delFine', { id: fine.id }).then(reload), 'Штраф удалён.');
   }
 
   return (
@@ -1380,6 +1513,41 @@ function AttendanceView({ data, reload, setError }) {
           customTo={customTo}
           setCustomTo={setCustomTo}
         />
+        {period !== 'day' && lateness.length ? (
+          <details className="lateness-summary">
+            <summary>
+              Сводка по опозданиям
+              <span>{lateness.filter((row) => row.lateDays).length} из {lateness.length} опаздывали</span>
+            </summary>
+            <div className="table-scroll">
+              <table className="master-table">
+                <thead>
+                  <tr>
+                    <th>Мастер</th>
+                    <th>Смен</th>
+                    <th>Опозданий</th>
+                    <th>Всего минут</th>
+                    <th>В среднем</th>
+                    <th>Штрафы</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lateness.map((row) => (
+                    <tr key={row.id ?? row.name}>
+                      <td>{row.name}</td>
+                      <td>{row.shifts}</td>
+                      <td className={row.lateDays ? 'is-late' : ''}>{row.lateDays}</td>
+                      <td>{row.totalLateMinutes}</td>
+                      <td>{row.averageLateMinutes ? `${row.averageLateMinutes} мин` : '—'}</td>
+                      <td>{row.fines ? `−${money(row.fines)}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="hint">Смена засчитывается по отметке о приходе. Опоздание считается от начала смены {shiftStart}.</p>
+          </details>
+        ) : null}
         <div className="attendance-list">
           {attendanceRows.length ? attendanceRows.map((item) => {
             const masterRecord = data.masters.find((master) => master.name === item.master);
@@ -1468,8 +1636,11 @@ function AttendanceView({ data, reload, setError }) {
           {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
         </select>
         <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
+        <select value={fineForm.reason} onChange={(event) => setFineForm({ ...fineForm, reason: event.target.value })}>
+          {FINE_REASONS.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+        </select>
         <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
-        <button className="btn" type="submit">Добавить штраф</button>
+        <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Добавить штраф'}</button>
         <Rows rows={filteredFines} empty="Штрафов за период нет." render={(fine) => {
           const canDelete = recentFineCanBeDeleted(rowDate(fine));
           return (
@@ -1477,6 +1648,7 @@ function AttendanceView({ data, reload, setError }) {
               <div>
                 <strong>{fine.master}</strong>
                 <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
+                <span>{fineReasonLabel(fine.reason)}</span>
               </div>
               <button
                 className="del"
@@ -1512,6 +1684,7 @@ function CalendarView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(canManage ? 'all' : String(ownMaster?.id || ''));
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const { run } = useAction(setError, setMessage);
   const [outcomeDialog, setOutcomeDialog] = useState(null);
   const [outcomeForm, setOutcomeForm] = useState({ reason_code: '', reason_note: '' });
   const [form, setForm] = useState({
@@ -1533,6 +1706,16 @@ function CalendarView({ data, reload, setError }) {
       visibleIds.has(String(appointment.master_id)) && tashkentDate(appointment.starts_at) === date
     ))
     .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
+
+  // A rolling month rather than the viewed day: a no-show rate computed from a
+  // single day is noise, and the owner reads this to decide about prepayment.
+  const outcomeRange = { from: shiftDate(TODAY, -29), to: TODAY };
+  const outcomes = appointmentOutcomeSummary(
+    data.appointments.filter((appointment) => {
+      const day = tashkentDate(appointment.starts_at);
+      return visibleIds.has(String(appointment.master_id)) && inRange(day, outcomeRange.from, outcomeRange.to);
+    }),
+  );
 
   function isDayOff(masterId) {
     return data.dayStatuses.some((day) => (
@@ -1576,11 +1759,10 @@ function CalendarView({ data, reload, setError }) {
   }
 
   async function setAppointmentStatus(appointment, status) {
-    setError('');
-    setMessage('');
-    await callLegacyApi('setAppointmentStatus', { id: appointment.id, status });
-    setMessage(`Статус изменён: ${APPOINTMENT_STATUS_LABELS[status]}.`);
-    await reload();
+    await run(
+      () => callLegacyApi('setAppointmentStatus', { id: appointment.id, status }).then(reload),
+      `Статус изменён: ${APPOINTMENT_STATUS_LABELS[status]}.`,
+    );
   }
 
   function openOutcomeDialog(appointment, outcome, cancelledBy = null) {
@@ -1678,6 +1860,31 @@ function CalendarView({ data, reload, setError }) {
         ) : null}
       </div>
 
+      {/* Empty chair time and what it cost. Every field here was already being
+          written; none of it was ever added up. */}
+      {canManage && outcomes.resolved ? (
+        <div className="card wide">
+          <SectionHeading label="Неявки и отмены за 30 дней" range={outcomeRange} />
+          <div className="tiles">
+            <Tile label="Записей завершено" value={outcomes.completed} />
+            <Tile
+              label="Неявки"
+              value={`${outcomes.noShow} · ${outcomes.noShowRate.toFixed(0)}%`}
+              danger={outcomes.noShowRate >= 10}
+            />
+            <Tile
+              label="Отмены"
+              value={`${outcomes.cancelled} · ${outcomes.cancelledRate.toFixed(0)}%`}
+              hint={outcomes.cancelled ? `клиентом ${outcomes.cancelledByClient} · салоном ${outcomes.cancelledBySalon}` : null}
+            />
+            <Tile label="Упущено" value={`${money(outcomes.lostAmount)} сум`} danger={outcomes.lostAmount > 0} tone="total" />
+          </div>
+          <p className="hint">
+            Считаются только состоявшиеся исходы: {outcomes.upcoming} предстоящих {pluralRu(outcomes.upcoming, 'запись', 'записи', 'записей')} в проценты не входят.
+          </p>
+        </div>
+      ) : null}
+
       {visibleMasters.map((master) => {
         const masterAppointments = appointments.filter((appointment) => String(appointment.master_id) === String(master.id));
         const dayOff = isDayOff(master.id);
@@ -1704,6 +1911,9 @@ function CalendarView({ data, reload, setError }) {
                     {appointment.client_is_blocked ? <span className="client-block-warning">Клиент заблокирован</span> : null}
                     {appointment.status_reason_code ? <span>Причина: {APPOINTMENT_REASON_LABELS[appointment.status_reason_code] || appointment.status_reason_code}</span> : null}
                     {appointment.status_reason_note ? <span>Комментарий: {appointment.status_reason_note}</span> : null}
+                    {/* Written by the booking form since day one and never
+                        rendered, so every note the owner typed was lost. */}
+                    {appointment.notes ? <span className="appointment-note">Заметка: {appointment.notes}</span> : null}
                   </div>
                   <b>{APPOINTMENT_STATUS_LABELS[appointment.status] || appointment.status}</b>
                   {(canManage || String(appointment.master_id) === String(ownMaster?.id)) && ['pending', 'confirmed'].includes(appointment.status) ? (
@@ -1787,6 +1997,11 @@ const CLIENT_CONSENT_LABELS = {
 function ClientsView({ data, reload, setError }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [message, setMessage] = useState('');
+  const [blockTarget, setBlockTarget] = useState(null);
+  const [blockReason, setBlockReason] = useState('');
+  const [visibleLimit, setVisibleLimit] = useState(60);
+  const { run, busy } = useAction(setError, setMessage);
   const clients = [...data.clients].sort((left, right) => (
     String(right.last_contact_at || '').localeCompare(String(left.last_contact_at || ''))
   ));
@@ -1828,16 +2043,23 @@ function ClientsView({ data, reload, setError }) {
   async function setClientBlocked(client, blocked) {
     let reason = null;
     if (blocked) {
-      reason = window.prompt(`Укажите обязательную причину блокировки клиента ${client.full_name}:`, '')?.trim();
-      if (!reason) return;
+      // window.prompt is unreliable inside the Telegram webview, so the reason
+      // is collected by an in-page field instead of a native dialog.
+      reason = blockReason.trim();
+      if (!reason) {
+        setBlockTarget(client);
+        return;
+      }
       if (reason.length > 500) return setError('Причина блокировки не должна превышать 500 символов.');
-    } else if (!window.confirm(`Разблокировать клиента ${client.full_name}?`)) return;
-    setError('');
-    try {
-      await callLegacyApi('setClientBlocked', { id: client.id, blocked, reason });
-      await reload();
-    } catch (clientError) {
-      setError(clientError.message || 'Не удалось изменить блокировку клиента.');
+    } else if (!await confirmAction(`Разблокировать клиента ${client.full_name}?`)) return;
+
+    const ok = await run(
+      () => callLegacyApi('setClientBlocked', { id: client.id, blocked, reason }).then(reload),
+      blocked ? 'Клиент заблокирован.' : 'Клиент разблокирован.',
+    );
+    if (ok) {
+      setBlockTarget(null);
+      setBlockReason('');
     }
   }
 
@@ -1896,7 +2118,7 @@ function ClientsView({ data, reload, setError }) {
         </div>
         <Rows
           empty="Клиенты по выбранному фильтру не найдены."
-          rows={filteredClients}
+          rows={filteredClients.slice(0, visibleLimit)}
           render={(client) => (
             <article className="client-row" key={client.id}>
               <div className="client-main">
@@ -1907,35 +2129,65 @@ function ClientsView({ data, reload, setError }) {
               <div className="client-meta">
                 <span>{CLIENT_STATUS_LABELS[client.lifecycle_status] || client.lifecycle_status}</span>
                 <span>Визитов: {Number(client.visit_count) || 0}</span>
-                <span>Последний визит: {client.last_visit_at ? displayDateTime(client.last_visit_at) : 'ещё не был'}</span>
+                <span>
+                  Последний визит: {client.last_visit_at ? displayDateTime(client.last_visit_at) : 'ещё не был'}
+                  {/* Already computed in the view, and far more actionable than
+                      a bare date when deciding who to call back. */}
+                  {client.days_since_last_visit != null
+                    ? ` · ${Math.round(client.days_since_last_visit)} ${pluralRu(Math.round(client.days_since_last_visit), 'день', 'дня', 'дней')} назад`
+                    : ''}
+                </span>
                 <span>Неявок: {Number(client.no_show_count) || 0}</span>
                 <span>Последняя неявка: {client.last_no_show_at ? displayDateTime(client.last_no_show_at) : 'нет'}</span>
                 <span>Рассылка: {CLIENT_CONSENT_LABELS[client.marketing_consent] || 'Не запрошено'}</span>
                 {client.blocked_at ? <span className="client-blocked-detail">Блокировка: {client.blocked_reason}</span> : null}
-                <button className={client.blocked_at ? 'btn ghost client-block-button' : 'btn danger client-block-button'} type="button" onClick={() => setClientBlocked(client, !client.blocked_at)}>
-                  {client.blocked_at ? 'Разблокировать' : 'Заблокировать'}
-                </button>
+                {blockTarget?.id === client.id ? (
+                  <div className="client-block-form">
+                    <input
+                      autoFocus
+                      maxLength={500}
+                      placeholder="Причина блокировки (обязательно)"
+                      value={blockReason}
+                      onChange={(event) => setBlockReason(event.target.value)}
+                    />
+                    <button className="btn danger" type="button" disabled={busy || !blockReason.trim()} onClick={() => setClientBlocked(client, true)}>
+                      Заблокировать
+                    </button>
+                    <button className="btn ghost" type="button" onClick={() => { setBlockTarget(null); setBlockReason(''); }}>
+                      Отмена
+                    </button>
+                  </div>
+                ) : (
+                  <button className={client.blocked_at ? 'btn ghost client-block-button' : 'btn danger client-block-button'} type="button" disabled={busy} onClick={() => setClientBlocked(client, !client.blocked_at)}>
+                    {client.blocked_at ? 'Разблокировать' : 'Заблокировать'}
+                  </button>
+                )}
               </div>
             </article>
           )}
         />
+        {filteredClients.length > visibleLimit ? (
+          <button className="btn ghost" type="button" onClick={() => setVisibleLimit((limit) => limit + 60)}>
+            Показать ещё · осталось {filteredClients.length - visibleLimit}
+          </button>
+        ) : null}
+        {message ? <p className="success">{message}</p> : null}
       </div>
     </section>
   );
 }
 
 function FinanceView({ data, reload, setError }) {
-  const [period, setPeriod] = useState('day');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
   const [message, setMessage] = useState('');
   const [offsetsOpen, setOffsetsOpen] = useState(false);
+  const { run, busy } = useAction(setError, setMessage);
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
-  const priorRange = previousRange(range, period);
+  const priorRange = comparablePreviousRange(range, period, TODAY);
   const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
   const previousExpenses = priorRange ? data.expenses.filter(
     (expense) => inRange(rowDate(expense, 'date'), priorRange.from, priorRange.to),
@@ -1954,10 +2206,9 @@ function FinanceView({ data, reload, setError }) {
 
   async function addExpense(event) {
     event.preventDefault();
-    setMessage('');
     const amount = Number(form.amount_uzs);
     if (!form.name.trim() || !amount) return setError('Введите название и сумму расхода.');
-    await callLegacyApi('addExpense', {
+    const ok = await run(() => callLegacyApi('addExpense', {
       date: form.date || TODAY,
       section: form.section,
       name: form.name.trim(),
@@ -1965,34 +2216,33 @@ function FinanceView({ data, reload, setError }) {
       amount_uzs: amount,
       usd_rate: Number(form.usd_rate) || null,
       minus_from: form.section === 'ishxona' ? form.minus_from || null : null,
-    });
+    }).then(reload), `Расход ${money(amount)} сум сохранён.`);
+    if (!ok) return;
     if (form.usd_rate) localStorage.setItem('usdRate', form.usd_rate);
     setForm((current) => ({ ...current, name: '', qty: '', amount_uzs: '' }));
-    await reload();
   }
 
   async function addRentOffset(event) {
     event.preventDefault();
-    setError('');
-    setMessage('');
     const amountUsd = Number(offsetForm.amount_usd);
     const usdRate = Number(offsetForm.usd_rate);
     if (!amountUsd || !usdRate) return setError('Введите сумму аренды в USD и курс USD.');
-    await callLegacyApi('addRentOffset', {
+    const ok = await run(() => callLegacyApi('addRentOffset', {
       date: offsetForm.date || TODAY,
       owner: offsetForm.owner,
       amount_usd: amountUsd,
       usd_rate: usdRate,
       note: offsetForm.note.trim() || null,
-    });
-    localStorage.setItem('usdRate', offsetForm.usd_rate);
-    setMessage(`Взаимозачёт $${money(amountUsd)} сохранён. Касса не изменилась.`);
-    await reload();
+    }).then(reload), `Взаимозачёт $${money(amountUsd)} сохранён. Касса не изменилась.`);
+    if (ok) localStorage.setItem('usdRate', offsetForm.usd_rate);
   }
 
-  async function deleteExpense(id) {
-    await callLegacyApi('delExpense', { id });
-    await reload();
+  async function deleteExpense(expense) {
+    // Deleting an expense is audited and irreversible, and the button sits a
+    // few pixels from the amount.
+    const label = `${expense.name || 'расход'} на ${money(expense.amount_uzs)} сум`;
+    if (!await confirmAction(`Удалить ${label}?`)) return;
+    await run(() => callLegacyApi('delExpense', { id: expense.id }).then(reload), 'Расход удалён.');
   }
 
   function sectionExpense(section) {
@@ -2077,7 +2327,7 @@ function FinanceView({ data, reload, setError }) {
                 {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${expense.minus_from}` : expense.section}
               </span>
             </div>
-            <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense.id)}>×</button></div>
+            <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense)}>×</button></div>
           </div>
         )} />
       </div>
@@ -2101,7 +2351,7 @@ function FinanceView({ data, reload, setError }) {
             <option value="jamshid">Жамшид</option>
           </select>
         ) : null}
-        <button className="btn" type="submit">Добавить расход</button>
+        <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Добавить расход'}</button>
       </form>
 
       <div className="card wide offset-history-card">
@@ -2145,7 +2395,7 @@ function FinanceView({ data, reload, setError }) {
               <p className="hint">
                 В отчёте: {money(Number(offsetForm.amount_usd || 0) * Number(offsetForm.usd_rate || 0))} сум без движения денег.
               </p>
-              <button className="btn" type="submit">Сохранить взаимозачёт</button>
+              <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить взаимозачёт'}</button>
             </form>
 
             <div className="section-title">
@@ -2179,7 +2429,7 @@ function FinanceView({ data, reload, setError }) {
                           <td>{rate ? usdMoneyPrecise(amount / rate) : '—'}</td>
                           <td>{money(amount)}</td>
                           <td className="offset-note">{expense.note || expense.name}</td>
-                          <td><button aria-label={`Удалить взаимозачёт от ${rowDate(expense, 'date')}`} className="del" type="button" onClick={() => deleteExpense(expense.id)}>×</button></td>
+                          <td><button aria-label={`Удалить взаимозачёт от ${rowDate(expense, 'date')}`} className="del" type="button" onClick={() => deleteExpense(expense)}>×</button></td>
                         </tr>
                       );
                     })}
@@ -2194,16 +2444,33 @@ function FinanceView({ data, reload, setError }) {
   );
 }
 
+const CHART_MAX_DAYS = 370;
+
 function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previousTo }) {
   const [selectedDay, setSelectedDay] = useState(null);
+  const scrollRef = useRef(null);
   const days = [];
-  const cursor = new Date(`${from}T12:00:00`);
   const end = new Date(`${to}T12:00:00`);
+  // Capped at the most recent stretch rather than the oldest: over "всё время"
+  // the chart used to draw the first year the salon existed and drop the
+  // present, while the legend summed only what was drawn.
+  const requestedStart = new Date(`${from}T12:00:00`);
+  const cappedStart = new Date(end);
+  cappedStart.setDate(cappedStart.getDate() - (CHART_MAX_DAYS - 1));
+  const truncated = requestedStart < cappedStart;
+  const cursor = truncated ? cappedStart : requestedStart;
 
-  while (cursor <= end && days.length < 370) {
+  while (cursor <= end) {
     days.push(localDate(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
+
+  // A month of bars is wider than the phone, and the view started at the left
+  // edge — so today, the day the owner opens this for, was off screen.
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node) node.scrollLeft = node.scrollWidth;
+  }, [from, to, days.length]);
 
   const totals = Object.fromEntries(days.map((day) => [day, { revenue: 0, clients: 0 }]));
   sales.forEach((sale) => {
@@ -2219,7 +2486,9 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   if (previousFrom && previousTo) {
     const previousCursor = new Date(`${previousFrom}T12:00:00`);
     const previousEnd = new Date(`${previousTo}T12:00:00`);
-    while (previousCursor <= previousEnd && previousDays.length < 370) {
+    // Bounded by the drawn window: the two series are read by index, so a
+    // longer previous period can only contribute days nothing lines up with.
+    while (previousCursor <= previousEnd && previousDays.length < days.length) {
       previousDays.push(localDate(previousCursor));
       previousCursor.setDate(previousCursor.getDate() + 1);
     }
@@ -2260,12 +2529,17 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   return (
     <div className="revenue-chart" aria-label="Выручка по дням">
       <div className="chart-period-summary">
-        <div><i className="chart-legend-current" /><span>{displayRange({ from, to })}</span><strong>{money(currentTotal)} сум</strong></div>
+        <div>
+          <i className="chart-legend-current" />
+          <span>{displayRange({ from: days[0] || from, to: days[days.length - 1] || to })}</span>
+          <strong>{money(currentTotal)} сум</strong>
+        </div>
+        {truncated ? <p className="hint">Показаны последние {CHART_MAX_DAYS} дней периода.</p> : null}
         {previousFrom && previousTo ? (
           <div><i className="chart-legend-previous" /><span>{displayRange({ from: previousFrom, to: previousTo })}</span><strong>{money(previousTotal)} сум</strong></div>
         ) : null}
       </div>
-      <div className="chart">
+      <div className="chart" ref={scrollRef}>
         <svg height="150" viewBox={`0 0 ${width} 150`} width={width}>
         {days.map((day, index) => {
           const height = Math.round((values[index] / max) * 100);
@@ -2357,299 +2631,6 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   );
 }
 
-function DebtsView({ data, reload, setError }) {
-  const [showClosed, setShowClosed] = useState(false);
-  const [openPaymentId, setOpenPaymentId] = useState(null);
-  const [historyIds, setHistoryIds] = useState([]);
-  const [message, setMessage] = useState('');
-  const [form, setForm] = useState({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
-  const [payments, setPayments] = useState({});
-  const [selectedDebtMonth, setSelectedDebtMonth] = useState(TODAY.slice(0, 7));
-  const myDebts = data.debts.filter((debt) => debt.direction === 'i_owe');
-  const activeDebts = myDebts.filter((debt) => !debt.is_closed).sort(newestFirst);
-  const closedDebts = myDebts.filter((debt) => debt.is_closed).sort(newestFirst);
-  const currentMonth = TODAY.slice(0, 7);
-  const openDebtTotals = totalOpenDebtsByCurrency(data);
-
-  function shiftDebtMonth(offset) {
-    const [year, month] = currentMonth.split('-').map(Number);
-    const date = new Date(year, month - 1 + offset, 1);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-  }
-
-  function debtMonthLabel(value) {
-    const labels = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
-    return labels[Number(value.slice(5, 7)) - 1];
-  }
-
-  function paid(debtId) {
-    return totalPaidForDebt(data.debtPayments, debtId);
-  }
-
-  function currencyPayments(currency, month) {
-    const ids = new Set(myDebts.filter((debt) => debt.currency === currency).map((debt) => String(debt.id)));
-    return data.debtPayments
-      .filter((payment) => ids.has(String(payment.debt_id)) && String(payment.date).startsWith(month))
-      .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
-  }
-
-  function plannedCurrencyPayment(currency) {
-    return myDebts
-      .filter((debt) => !debt.is_closed && debt.currency === currency)
-      .reduce((sum, debt) => {
-        const plan = debtPaymentPlan(debt);
-        const remaining = Math.max(0, Number(debt.amount) - paid(debt.id));
-        return sum + (plan ? Math.min(remaining, plan.monthly) : 0);
-      }, 0);
-  }
-
-  const dashboard = ['USD', 'UZS'].map((currency) => {
-    const currencyDebts = myDebts.filter((debt) => debt.currency === currency);
-    const remaining = openDebtTotals[currency];
-    const plannedPayment = plannedCurrencyPayment(currency);
-    const forecast = Math.max(0, remaining - plannedPayment);
-    const chartMonths = [-5, -4, -3, -2, -1, 0].map(shiftDebtMonth);
-    const points = chartMonths.map((month) => {
-      const started = currencyDebts
-        .filter((debt) => !debt.start_date || String(debt.start_date).slice(0, 7) <= month)
-        .reduce((sum, debt) => sum + (Number(debt.amount) || 0), 0);
-      const debtIds = new Set(currencyDebts.map((debt) => String(debt.id)));
-      const paidThroughMonth = data.debtPayments
-        .filter((payment) => debtIds.has(String(payment.debt_id)) && String(payment.date).slice(0, 7) <= month)
-        .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
-      return { month, value: Math.max(0, started - paidThroughMonth) };
-    });
-    points.push({ month: shiftDebtMonth(1), value: forecast, forecast: true });
-    return {
-      currency,
-      remaining,
-      paidThisMonth: currencyPayments(currency, currentMonth),
-      plannedPayment,
-      forecast,
-      points,
-    };
-  });
-  const dashboardByCurrency = Object.fromEntries(dashboard.map((item) => [item.currency, item]));
-  const selectedMonthIsForecast = selectedDebtMonth === shiftDebtMonth(1);
-  const selectedDebtPayments = {
-    UZS: selectedMonthIsForecast ? 0 : currencyPayments('UZS', selectedDebtMonth),
-    USD: selectedMonthIsForecast ? 0 : currencyPayments('USD', selectedDebtMonth),
-  };
-
-  async function addDebt(event) {
-    event.preventDefault();
-    const amount = Number(form.amount);
-    setError('');
-    setMessage('');
-    if (!form.counterparty.trim() || !amount) return setError('Укажите, кому вы должны, и сумму долга.');
-    await callLegacyApi('addDebt', { ...form, amount, start_date: form.start_date || TODAY });
-    setForm({ counterparty: '', direction: 'i_owe', amount: '', currency: 'UZS', start_date: TODAY });
-    setMessage('Долг добавлен.');
-    await reload();
-  }
-
-  async function addPayment(event, debt) {
-    event.preventDefault();
-    setError('');
-    setMessage('');
-    const payment = payments[debt.id] || {};
-    const amount = Number(payment.amount);
-    const remaining = Math.max(0, Number(debt.amount) - paid(debt.id));
-    if (!amount) return setError('Введите сумму платежа.');
-    if (amount > remaining) return setError(`Платёж больше остатка: ${money(remaining)} ${debt.currency}.`);
-    await callLegacyApi('addDebtPayment', { debt_id: debt.id, date: payment.date || TODAY, amount });
-    if (amount >= remaining && !debt.is_closed) {
-      await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: true });
-    }
-    setPayments((current) => ({ ...current, [debt.id]: { date: TODAY, amount: '' } }));
-    setOpenPaymentId(null);
-    setMessage('Платёж сохранён. Остаток пересчитан.');
-    await reload();
-  }
-
-  async function deletePayment(payment, debt) {
-    await callLegacyApi('delDebtPayment', { id });
-    if (debt.is_closed) await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: false });
-    setMessage('Платёж удалён.');
-    await reload();
-  }
-
-  async function reopenDebt(debt) {
-    await callLegacyApi('setDebtClosed', { id: debt.id, is_closed: false });
-    setMessage('Долг снова открыт.');
-    await reload();
-  }
-
-  async function deleteDebt(id) {
-    await callLegacyApi('delDebt', { id });
-    await reload();
-  }
-
-  const renderDebt = (debt) => {
-    const debtPayments = data.debtPayments
-      .filter((payment) => String(payment.debt_id) === String(debt.id))
-      .sort(newestFirst);
-    const paidAmount = paid(debt.id);
-    const remaining = Math.max(0, Number(debt.amount) - paidAmount);
-    const progress = Math.min(100, Math.round((paidAmount / Math.max(Number(debt.amount), 1)) * 100));
-    const paymentForm = payments[debt.id] || { date: TODAY, amount: '' };
-    const previousMonths = [-3, -2, -1].map(shiftDebtMonth);
-    const averagePayment = previousMonths.reduce((sum, month) => (
-      sum + debtPayments
-        .filter((payment) => String(payment.date).startsWith(month))
-        .reduce((monthSum, payment) => monthSum + (Number(payment.amount) || 0), 0)
-    ), 0) / 3;
-    const plan = debtPaymentPlan(debt);
-    const monthlyPayment = plan?.monthly || averagePayment;
-    const payoffMonths = monthlyPayment > 0 ? Math.ceil(remaining / monthlyPayment) : null;
-    const averagePayoffMonths = averagePayment > 0 ? Math.max(1, Math.ceil(remaining / averagePayment)) : null;
-    const payoffForecast = debt.is_closed
-      ? 'долг погашен'
-      : averagePayoffMonths
-        ? `ориентировочно закроется в ${futureMonthLabel(averagePayoffMonths)}`
-        : 'нет регулярных платежей для прогноза';
-    const showHistory = historyIds.includes(debt.id);
-    const showPayment = openPaymentId === debt.id;
-
-    return (
-      <article className={`debt-card debt-person-card ${debt.is_closed ? 'closed' : ''}`} key={debt.id}>
-        <div className="debt-person-heading">
-          <div>
-            <span className="debt-status">{debt.is_closed ? 'Погашен' : 'Активный долг'}</span>
-            <h4>{debt.counterparty}</h4>
-            <small>С {displayDate(debt.start_date)}</small>
-          </div>
-          <div className="debt-person-balance">
-            <span>Осталось</span>
-            <strong>{debt.currency === 'USD' ? usdMoney(remaining) : `${money(remaining)} сум`}</strong>
-            <small className="debt-payoff-forecast">{payoffForecast}</small>
-          </div>
-        </div>
-
-        <div className="debt-progress-track"><span style={{ width: `${progress}%` }} /></div>
-        <div className="debt-progress-meta">
-          <span>Погашено {money(paidAmount)} из {money(debt.amount)} {debt.currency}</span>
-          <strong>{progress}%</strong>
-        </div>
-
-        <div className="debt-person-stats">
-          <div><span>{plan ? 'Плановый платёж' : 'Средний платёж'}</span><strong>{money(monthlyPayment)} {debt.currency} / мес.{plan?.months ? ` · ${plan.months} мес.` : ''}</strong></div>
-          <div><span>Последний платёж</span><strong>{debtPayments[0] ? `${money(debtPayments[0].amount)} · ${displayDate(debtPayments[0].date)}` : 'Пока нет'}</strong></div>
-          <div><span>До погашения</span><strong>{debt.is_closed ? 'Погашен' : payoffMonths ? `≈ ${payoffMonths} мес.` : 'Нужны платежи'}</strong></div>
-        </div>
-
-        {showPayment ? (
-          <form className="debt-payment-form" onSubmit={(event) => addPayment(event, debt)}>
-            <label>Дата<input type="date" value={paymentForm.date || TODAY} onChange={(event) => setPayments({ ...payments, [debt.id]: { ...paymentForm, date: event.target.value } })} /></label>
-            <label>Сумма<MoneyInput placeholder="Сумма платежа" value={paymentForm.amount || ''} onChange={(amount) => setPayments({ ...payments, [debt.id]: { ...paymentForm, amount } })} /></label>
-            <button className="btn" type="submit">Сохранить платёж</button>
-          </form>
-        ) : null}
-
-        {showHistory ? (
-          <div className="debt-payment-history">
-            {debtPayments.length ? debtPayments.map((payment) => (
-              <div className="debt-payment-row" key={payment.id}>
-                <div><strong>{money(payment.amount)} {debt.currency}</strong><span>Погашение долга</span></div>
-                <time>{displayDate(payment.date)}</time>
-                <button className="debt-delete-payment" type="button" onClick={() => deletePayment(payment, debt)}>×</button>
-              </div>
-            )) : <p className="hint">Платежей пока нет.</p>}
-          </div>
-        ) : null}
-
-        <div className="debt-card-actions">
-          {!debt.is_closed ? <button className="btn" type="button" onClick={() => setOpenPaymentId(showPayment ? null : debt.id)}>{showPayment ? 'Отменить' : 'Внести платёж'}</button> : null}
-          <button className="btn ghost" type="button" onClick={() => setHistoryIds((current) => showHistory ? current.filter((id) => id !== debt.id) : [...current, debt.id])}>{showHistory ? 'Скрыть историю' : `История (${debtPayments.length})`}</button>
-          {debt.is_closed ? <button className="btn ghost" type="button" onClick={() => reopenDebt(debt)}>Открыть снова</button> : null}
-          {debt.is_closed && !debtPayments.length ? <button className="btn danger-btn" type="button" onClick={() => deleteDebt(debt.id)}>Удалить</button> : null}
-        </div>
-      </article>
-    );
-  };
-
-  return (
-    <section className="view-grid debt-dashboard">
-      <div className="card wide debt-page-heading">
-        <div>
-          <p className="debt-eyebrow">Мои обязательства</p>
-          <h2>Долги</h2>
-          <p>Остаток, история погашений и прогноз на следующий месяц.</p>
-        </div>
-      </div>
-
-      {message ? <div className="notice success">{message}</div> : null}
-
-      <div className="debt-summary-grid wide">
-        <article className="debt-summary-card debt-summary-card--combined">
-          <span>Осталось выплатить</span>
-          <strong>{money(dashboardByCurrency.UZS.remaining)} сум</strong>
-          <b className="debt-summary-usd">{usdMoney(dashboardByCurrency.USD.remaining)}</b>
-          <div>
-            <p><span>Погашено в этом месяце</span><b>{money(dashboardByCurrency.UZS.paidThisMonth)} сум</b><small>{usdMoney(dashboardByCurrency.USD.paidThisMonth)}</small></p>
-            <p><span>Остаток через месяц</span><b>{money(dashboardByCurrency.UZS.forecast)} сум</b><small>{usdMoney(dashboardByCurrency.USD.forecast)}</small></p>
-          </div>
-          <small>Прогноз по плановым платежам: {money(dashboardByCurrency.UZS.plannedPayment)} сум · {usdMoney(dashboardByCurrency.USD.plannedPayment)}</small>
-        </article>
-      </div>
-
-      <div className="card wide">
-        <div className="debt-section-heading">
-          <div><h2>Как уменьшается долг</h2><p>Выберите свечу, чтобы увидеть сумму погашения за выбранный месяц.</p></div>
-        </div>
-        <div className="debt-charts">
-          <article className="debt-chart-card debt-chart-card--combined">
-            <div className="debt-chart-heading">
-              <div><span>Остаток долгов</span><strong>{money(dashboardByCurrency.UZS.remaining)} сум</strong><b>{usdMoney(dashboardByCurrency.USD.remaining)}</b></div>
-              <small>последняя свеча — прогноз</small>
-            </div>
-            {dashboard.map((item) => {
-              const maxValue = Math.max(...item.points.map((point) => point.value), 1);
-              return (
-                <div className="debt-chart-currency" key={item.currency}>
-                  <span>{item.currency === 'UZS' ? 'Сумы' : 'USD'}</span>
-                  <div className="debt-mini-bars">
-                    {item.points.map((point) => (
-                      <button aria-label={`${debtMonthLabel(point.month)}: ${money(point.value)} ${item.currency}`} aria-pressed={selectedDebtMonth === point.month} className={`${point.forecast ? 'forecast ' : ''}${selectedDebtMonth === point.month ? 'selected' : ''}`} key={point.month} onClick={() => setSelectedDebtMonth(point.month)} type="button">
-                        <span title={`${money(point.value)} ${item.currency}`} style={{ height: `${Math.max(5, (point.value / maxValue) * 100)}%` }} />
-                        <small>{debtMonthLabel(point.month)}</small>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-            <div className="debt-chart-selection">
-              <span>{selectedMonthIsForecast ? `Прогноз на ${debtMonthLabel(selectedDebtMonth)}` : `Погашено за ${debtMonthLabel(selectedDebtMonth)}`}</span>
-              <strong>{money(selectedDebtPayments.UZS)} сум</strong>
-              <small>{usdMoney(selectedDebtPayments.USD)}</small>
-            </div>
-          </article>
-        </div>
-      </div>
-
-      <div className="card wide">
-        <div className="debt-section-heading">
-          <div><h2>Кому я должен</h2><p>{activeDebts.length} активных · {closedDebts.length} погашенных</p></div>
-          <button className={`btn ghost ${showClosed ? 'on' : ''}`} type="button" onClick={() => setShowClosed(!showClosed)}>{showClosed ? 'Скрыть погашенные' : 'Показать погашенные'}</button>
-        </div>
-        <div className="debt-card-list">
-          <Rows rows={showClosed ? [...activeDebts, ...closedDebts] : activeDebts} empty="Активных долгов нет." render={renderDebt} />
-        </div>
-      </div>
-
-      <form className="card wide debt-new-form" onSubmit={addDebt}>
-        <div className="debt-section-heading"><div><h2>Добавить новый долг</h2><p>Выплаты будут автоматически уменьшать остаток.</p></div></div>
-        <label>Кому я должен<input placeholder="Имя или организация" value={form.counterparty} onChange={(event) => setForm({ ...form, counterparty: event.target.value })} /></label>
-        <label>Валюта<select value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value })}><option value="UZS">UZS — сум</option><option value="USD">USD — доллар</option></select></label>
-        <label>Сумма<MoneyInput placeholder="Сумма долга" value={form.amount} onChange={(amount) => setForm({ ...form, amount })} /></label>
-        <label>Дата начала<input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} /></label>
-        <button className="btn" type="submit">Добавить долг</button>
-      </form>
-    </section>
-  );
-}
-
 function PeriodPicker({ period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo }) {
   return (
     <>
@@ -2710,7 +2691,7 @@ const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
 // navigation to hide nothing.
 const VIEW_GROUPS = [
   { id: 'overview', label: 'Обзор', views: ['overview'] },
-  { id: 'money', label: 'Деньги', views: ['admin', 'finance', 'debts'] },
+  { id: 'money', label: 'Деньги', views: ['admin', 'finance'] },
   { id: 'people', label: 'Люди', views: ['attendance', 'clients', 'master'] },
   { id: 'calendar', label: 'Календарь', views: ['calendar'] },
 ];
@@ -2721,7 +2702,6 @@ const VIEW_TAB_LABELS = {
   overview: 'Обзор',
   admin: 'Продажи',
   finance: 'Расходы',
-  debts: 'Долги',
   attendance: 'Посещаемость',
   clients: 'Клиенты',
   master: 'Мастера',
@@ -2981,7 +2961,6 @@ export default function App() {
     calendar: CalendarView,
     clients: ClientsView,
     finance: FinanceView,
-    debts: DebtsView,
   }[view] || MasterView;
 
   return (
