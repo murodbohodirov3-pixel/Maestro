@@ -1,4 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Pinned like the other functions: an unpinned major let a redeploy change the
+// shape of error objects without a single line of code changing.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
 
@@ -16,6 +18,23 @@ function tashkentDate(offsetDays = 0) {
   const date = new Date(Date.now() + 5 * 60 * 60 * 1000);
   date.setUTCDate(date.getUTCDate() + offsetDays);
   return date.toISOString().slice(0, 10);
+}
+
+function tashkentTime() {
+  return new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(11, 16);
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// A single haircut cannot cost this much. The ceiling exists so a stray extra
+// digit is rejected at the door instead of skewing every report behind it.
+const MAX_SALE_AMOUNT = 100_000_000;
+
+function isValidIsoDate(value: unknown) {
+  const text = String(value ?? '');
+  if (!ISO_DATE.test(text)) return false;
+  const parsed = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === text;
 }
 
 const cors = {
@@ -197,11 +216,24 @@ async function exchangeTelegramOAuthCode(payload: Record<string, string>) {
   return { id: String(telegramId), first_name: verifiedToken.given_name ? String(verifiedToken.given_name) : undefined };
 }
 
+// Telegram credentials carry the moment they were issued. Without this check a
+// blob captured once (a shared phone, a browser backup, the query string the
+// widget redirect leaves in history) authenticates forever.
+const TELEGRAM_AUTH_MAX_AGE_SECONDS = 24 * 60 * 60;
+
+function authDateIsFresh(value: unknown) {
+  const authDate = Number(value);
+  if (!Number.isFinite(authDate) || authDate <= 0) return false;
+  const ageSeconds = Date.now() / 1000 - authDate;
+  return ageSeconds >= -300 && ageSeconds <= TELEGRAM_AUTH_MAX_AGE_SECONDS;
+}
+
 async function verifyMiniApp(initData: string): Promise<{ id: number; first_name?: string } | null> {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get('hash');
     if (!hash) return null;
+    if (!authDateIsFresh(params.get('auth_date'))) return null;
 
     params.delete('hash');
     const dataCheckString = [...params.entries()]
@@ -222,6 +254,7 @@ async function verifyMiniApp(initData: string): Promise<{ id: number; first_name
 async function verifyWidget(auth: Record<string, unknown>): Promise<{ id: number; first_name?: string } | null> {
   try {
     if (!auth || !auth.hash) return null;
+    if (!authDateIsFresh(auth.auth_date)) return null;
 
     const hash = String(auth.hash);
     const dataCheckString = Object.keys(auth)
@@ -333,6 +366,11 @@ Deno.serve(async (req) => {
     const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
     const canManageCalendar = ['owner', 'admin'].includes(appUserResult.data.role);
     const canManageClients = ['owner', 'admin'].includes(appUserResult.data.role);
+    // isAdmin is the read gate. Approving a master's sale and rewriting salon
+    // settings are owner decisions, and a bookkeeper should not inherit them
+    // just because he needs to see the numbers.
+    const canApproveSales = ['owner', 'admin'].includes(appUserResult.data.role);
+    const canEditSettings = ['owner', 'admin'].includes(appUserResult.data.role);
     let myMaster: string | null = null;
     let myMasterId: number | null = null;
     let myMasterPct: number | null = null;
@@ -361,7 +399,7 @@ Deno.serve(async (req) => {
         .from('audit_events')
         .select('id,occurred_at,entity_type,entity_id,operation,event_name,actor_user_id,actor_name,actor_role,actor_external_id,source,correlation_id,changed_fields,old_values,new_values,metadata')
         .eq('operation', 'delete')
-        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment'])
+        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment', 'sale', 'attendance'])
         .order('id', { ascending: false })
         .limit(limit + 1);
       if (/^\d+$/.test(cursor)) query = query.lt('id', cursor);
@@ -471,8 +509,17 @@ Deno.serve(async (req) => {
             ? false
             : null;
 
-      if (!master || !payload.d || cash + card + qr <= 0) {
+      const d = String(payload.d ?? '');
+      if (!master || !isValidIsoDate(d) || cash + card + qr <= 0) {
         return json({ error: 'invalid_sale' }, 400);
+      }
+      // An unbounded date turns into a row nobody can delete: the admin window
+      // is two days, so anything older is permanent once it is approved.
+      if (!isAdmin && (d > tashkentDate(1) || d < tashkentDate(-7))) {
+        return json({ error: 'sale_date_out_of_range' }, 400);
+      }
+      if (cash + card + qr > MAX_SALE_AMOUNT) {
+        return json({ error: 'sale_amount_too_large' }, 400);
       }
 
       const masterRecord = isAdmin
@@ -483,9 +530,9 @@ Deno.serve(async (req) => {
         return json({ error: 'master_not_active' }, 409);
       }
 
-      const { error } = await sb.from('sales').insert({
+      const row: Record<string, unknown> = {
         master,
-        d: payload.d,
+        d,
         cash,
         card,
         qr,
@@ -498,24 +545,44 @@ Deno.serve(async (req) => {
         approved_by: requiresOwnerApproval ? null : String(appUserResult.data.id),
         approved_at: requiresOwnerApproval ? null : new Date().toISOString(),
         comment: requiresOwnerApproval ? 'owner_approval_required' : null,
-      });
+      };
+
+      // The client keeps one id across its own retries, so a resend of a
+      // request that already landed is absorbed instead of doubling the sale.
+      const requestId = String(payload.client_request_id ?? '');
+      const hasRequestId = UUID_PATTERN.test(requestId);
+      if (hasRequestId) row.client_request_id = requestId;
+
+      let { error } = await sb.from('sales').insert(row);
+      if (error && hasRequestId) {
+        if (error.code === '23505') return json({ ok: true, deduplicated: true });
+        // Deployed ahead of the migration that adds the column: keep the sale
+        // rather than losing it, and fall back to the client-side guard.
+        if (error.code === '42703' || error.code === 'PGRST204') {
+          delete row.client_request_id;
+          ({ error } = await sb.from('sales').insert(row));
+        }
+      }
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
     if (action === 'setSaleApproval') {
-      if (!isAdmin) return json({ error: 'forbidden' }, 403);
+      if (!canApproveSales) return json({ error: 'forbidden' }, 403);
       if (!['approved', 'rejected'].includes(payload.status)) {
         return json({ error: 'invalid_sale_status' }, 400);
       }
 
+      // An already-approved row stays reversible: approving by mistake used to
+      // be permanent once the two-day delete window closed.
+      const decidable = ['owner_approval_required', 'owner_approval_rejected', 'owner_approval_approved'];
       const existing = await sb
         .from('sales')
         .select('id, comment')
         .eq('id', payload.id)
         .maybeSingle();
       if (existing.error) return json({ error: existing.error.message }, 500);
-      if (!existing.data || !['owner_approval_required', 'owner_approval_rejected'].includes(existing.data.comment)) {
+      if (!existing.data || !decidable.includes(existing.data.comment)) {
         return json({ error: 'sale_does_not_require_owner_approval' }, 409);
       }
 
@@ -529,7 +596,10 @@ Deno.serve(async (req) => {
             ? 'owner_approval_approved'
             : 'owner_approval_rejected',
         })
-        .eq('id', payload.id);
+        .eq('id', payload.id)
+        // Keeping the guard on the write itself makes two racing decisions
+        // resolve to one winner instead of an undefined interleaving.
+        .in('comment', decidable);
       if (error) {
         console.error('[maestro-api] sale approval failed', { saleId: payload.id, error: error.message });
         return json({ error: error.message }, 500);
@@ -539,6 +609,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'delSale') {
+      // Best effort: names the actor for the delete-audit trigger. Deliberately
+      // not fatal, so a sale stays deletable if the journal is unavailable.
+      await sb.rpc('maestro_set_audit_actor', {
+        p_actor_user_id: appUserResult.data.id,
+        p_source: 'web_app',
+        p_correlation_id: requestId,
+      }).then(() => undefined, () => undefined);
+
       if (isAdmin) {
         const existing = await sb.from('sales').select('id,d').eq('id', payload.id).maybeSingle();
         if (existing.error) return json({ error: existing.error.message }, 500);
@@ -558,15 +636,31 @@ Deno.serve(async (req) => {
 
     if (action === 'setAttendance') {
       const master = isAdmin ? payload.master : myMaster;
-      await sb
+      if (!master) return json({ error: 'invalid_attendance' }, 400);
+      // A master checking himself in does not get to choose when or for which
+      // day: the device clock is his to change, and a late arrival is money.
+      const d = isAdmin ? String(payload.d ?? '') : tashkentDate();
+      const arrived = isAdmin ? String(payload.arrived ?? '') : tashkentTime();
+      if (!isValidIsoDate(d) || !/^\d{2}:\d{2}$/.test(arrived)) {
+        return json({ error: 'invalid_attendance' }, 400);
+      }
+      const { error } = await sb
         .from('attendance')
-        .upsert({ master, d: payload.d, arrived: payload.arrived }, { onConflict: 'master,d' });
+        .upsert({ master, d, arrived }, { onConflict: 'master,d' });
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
     if (action === 'delAttendance') {
       const master = isAdmin ? payload.master : myMaster;
-      await sb.from('attendance').delete().eq('master', master).eq('d', payload.d);
+      const d = String(payload.d ?? '');
+      if (!master || !isValidIsoDate(d)) return json({ error: 'invalid_attendance' }, 400);
+      // Clearing today's mistaken check-in is fair; rewriting last week is not.
+      if (!isAdmin && d !== tashkentDate()) {
+        return json({ error: 'attendance_edit_window_expired' }, 403);
+      }
+      const { error } = await sb.from('attendance').delete().eq('master', master).eq('d', d);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
@@ -700,8 +794,17 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'setSettings') {
-      if (!isAdmin) return json({ error: 'forbidden' }, 403);
-      await sb.from('settings').update(payload).eq('id', 1);
+      if (!canEditSettings) return json({ error: 'forbidden' }, 403);
+      // The only place a client names columns. Passing the payload straight
+      // through let it rewrite the row's own id and orphan every setting.
+      const allowed = ['shift_start', 'salon_lat', 'salon_lng', 'salon_radius'];
+      const patch: Record<string, unknown> = {};
+      for (const key of allowed) {
+        if (payload[key] !== undefined) patch[key] = payload[key];
+      }
+      if (!Object.keys(patch).length) return json({ error: 'no_settings_to_update' }, 400);
+      const { error } = await sb.from('settings').update(patch).eq('id', 1);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
@@ -710,16 +813,22 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'addExpense') {
-      await sb.from('expenses').insert({
-        date: payload.date,
+      const date = String(payload.date ?? '');
+      const amountUzs = Math.round(Number(payload.amount_uzs));
+      if (!isValidIsoDate(date) || !Number.isFinite(amountUzs) || amountUzs <= 0) {
+        return json({ error: 'invalid_expense' }, 400);
+      }
+      const { error } = await sb.from('expenses').insert({
+        date,
         section: payload.section,
         name: payload.name,
         qty: payload.qty || null,
-        amount_uzs: payload.amount_uzs,
+        amount_uzs: amountUzs,
         usd_rate: payload.usd_rate || null,
         minus_from: payload.minus_from || null,
         note: payload.note || null,
       });
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
@@ -765,24 +874,36 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'addDebt') {
-      await sb.from('debts').insert({
+      const amount = Number(payload.amount);
+      const currency = payload.currency === 'USD' ? 'USD' : 'UZS';
+      if (!payload.counterparty || !Number.isFinite(amount) || amount <= 0) {
+        return json({ error: 'invalid_debt' }, 400);
+      }
+      const { error } = await sb.from('debts').insert({
         counterparty: payload.counterparty,
         direction: payload.direction,
-        amount: payload.amount,
-        currency: payload.currency || 'UZS',
+        amount,
+        currency,
         start_date: payload.start_date || null,
         note: payload.note || null,
       });
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
     if (action === 'addDebtPayment') {
-      await sb.from('debt_payments').insert({
+      const amount = Number(payload.amount);
+      const date = String(payload.date ?? '');
+      if (!payload.debt_id || !isValidIsoDate(date) || !Number.isFinite(amount) || amount <= 0) {
+        return json({ error: 'invalid_debt_payment' }, 400);
+      }
+      const { error } = await sb.from('debt_payments').insert({
         debt_id: payload.debt_id,
-        date: payload.date,
-        amount: payload.amount,
+        date,
+        amount,
         note: payload.note || null,
       });
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
@@ -807,13 +928,19 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'setDebtClosed') {
-      await sb.from('debts').update({ is_closed: payload.is_closed }).eq('id', payload.id);
+      if (!payload.id || typeof payload.is_closed !== 'boolean') {
+        return json({ error: 'invalid_debt_state' }, 400);
+      }
+      const { error } = await sb.from('debts')
+        .update({ is_closed: payload.is_closed })
+        .eq('id', payload.id);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
     return json({ error: 'unknown_action' }, 400);
   } catch (error) {
-    console.error('[maestro-api] unhandled error', { action: 'unknown', error: String(error) });
+    console.error('[maestro-api] unhandled error', { action: monitoredAction, error: String(error) });
     await captureEdgeException(error, {
       function: 'api',
       action: monitoredAction,

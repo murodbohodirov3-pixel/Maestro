@@ -62,14 +62,38 @@ function saleTotal(sale: Row) {
 }
 
 function commissionPctForSale(sale: Row, master: Row) {
-  const snapshot = Number(sale.commission_pct);
-  return Number.isFinite(snapshot) ? snapshot : number(master.pct || 40);
+  // Number(null) is 0 and passes isFinite, so an absent snapshot has to be
+  // rejected before the conversion or the master is paid nothing.
+  if (sale.commission_pct != null && sale.commission_pct !== '') {
+    const snapshot = Number(sale.commission_pct);
+    if (Number.isFinite(snapshot)) return snapshot;
+  }
+  return number(master.pct || 40);
 }
 
 function grossMasterPayForSales(sales: Row[], master: Row) {
   return sales.reduce((sum, sale) => (
     sum + (saleTotal(sale) * commissionPctForSale(sale, master)) / 100
   ), 0);
+}
+
+// Mirrors belongsToMaster in the app. Matching on the name alone loses a
+// master's whole history the moment the profile is renamed.
+function belongsToMaster(row: Row, master: Row) {
+  if (row.master_id != null && master.id != null) {
+    return String(row.master_id) === String(master.id);
+  }
+  return row.master === master.name;
+}
+
+// A deactivated master still has to be paid for the shifts he already worked.
+// Filtering him out here while his revenue stays in the total overstates profit.
+function mastersForPeriod(masters: Row[], sales: Row[], fines: Row[] = []) {
+  return masters.filter((master) => (
+    master.active !== false
+    || sales.some((sale) => belongsToMaster(sale, master))
+    || fines.some((fine) => belongsToMaster(fine, master))
+  ));
 }
 
 function saleClients(sale: Row) {
@@ -138,7 +162,11 @@ async function fetchAllRows(
 ) {
   const rows: Row[] = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    let query = sb.from(table).select(select).order(orderColumn, { ascending: true });
+    // Ordering by date alone leaves rows that share a date in an undefined
+    // order, so a page boundary can repeat or skip one. id breaks the tie.
+    let query = sb.from(table).select(select)
+      .order(orderColumn, { ascending: true })
+      .order('id', { ascending: true });
     if (from) query = query.gte(orderColumn, from);
     if (to) query = query.lte(orderColumn, to);
     const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
@@ -219,14 +247,14 @@ function masterReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods:
   const previousSales = data.sales.filter((sale) => isCountedSale(sale) && inRange(sale, periods.previous.from, periods.previous.to));
   const currentFines = data.fines.filter((fine) => inRange(fine, periods.current.from, periods.current.to));
   const salonRevenue = currentSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const masters = data.masters.filter((master) => master.active !== false).map((master) => {
+  const masters = mastersForPeriod(data.masters, currentSales, currentFines).map((master) => {
     const name = String(master.name || '');
-    const currentRows = currentSales.filter((sale) => sale.master === name);
-    const previousRows = previousSales.filter((sale) => sale.master === name);
+    const currentRows = currentSales.filter((sale) => belongsToMaster(sale, master));
+    const previousRows = previousSales.filter((sale) => belongsToMaster(sale, master));
     const revenue = currentRows.reduce((sum, sale) => sum + saleTotal(sale), 0);
     const previousRevenue = previousRows.reduce((sum, sale) => sum + saleTotal(sale), 0);
     const clients = currentRows.reduce((sum, sale) => sum + saleClients(sale), 0);
-    const fines = currentFines.filter((fine) => fine.master === name).reduce((sum, fine) => sum + number(fine.amount), 0);
+    const fines = currentFines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + number(fine.amount), 0);
     return {
       id: master.id,
       name,
@@ -257,10 +285,9 @@ function financeReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods
   const rentOffsets = expenses.filter((expense) => expense.category === 'rent_offset');
   const expenseRows = expenses.filter((expense) => expense.category !== 'rent_offset');
   const revenue = sales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const masterPayouts = data.masters.filter((master) => master.active !== false).reduce((sum, master) => {
-    const name = String(master.name || '');
-    const masterFines = fines.filter((fine) => fine.master === name).reduce((total, fine) => total + number(fine.amount), 0);
-    return sum + Math.max(0, grossMasterPayForSales(sales.filter((sale) => sale.master === name), master) - masterFines);
+  const masterPayouts = mastersForPeriod(data.masters, sales, fines).reduce((sum, master) => {
+    const masterFines = fines.filter((fine) => belongsToMaster(fine, master)).reduce((total, fine) => total + number(fine.amount), 0);
+    return sum + Math.max(0, grossMasterPayForSales(sales.filter((sale) => belongsToMaster(sale, master)), master) - masterFines);
   }, 0);
   const expensesBySection = expenseRows.reduce((result: Record<string, number>, expense) => {
     const section = String(expense.section || 'unknown');
@@ -336,9 +363,9 @@ function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, peri
   const fines = data.fines.filter((item) => inRange(item, periods.current.from, periods.current.to));
   const shiftStart = String(data.settings[0]?.shift_start || '09:00');
   const shiftMinutes = timeMinutes(shiftStart) ?? 540;
-  const masters = data.masters.filter((master) => master.active !== false).map((master) => {
+  const masters = mastersForPeriod(data.masters, rows, fines).map((master) => {
     const name = String(master.name || '');
-    const records = rows.filter((item) => item.master === name);
+    const records = rows.filter((item) => belongsToMaster(item, master));
     const lateMinutes = records.map((item) => {
       const arrived = timeMinutes(item.arrived_at || item.arrived);
       return arrived == null ? 0 : Math.max(0, arrived - shiftMinutes);
@@ -350,7 +377,7 @@ function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, peri
       lateDays,
       totalLateMinutes: lateMinutes.reduce((sum, value) => sum + value, 0),
       averageLateMinutes: lateDays ? Math.round(lateMinutes.reduce((sum, value) => sum + value, 0) / lateDays) : 0,
-      fines: fines.filter((fine) => fine.master === name).reduce((sum, fine) => sum + number(fine.amount), 0),
+      fines: fines.filter((fine) => belongsToMaster(fine, master)).reduce((sum, fine) => sum + number(fine.amount), 0),
     };
   });
   return {
