@@ -440,7 +440,9 @@ Deno.serve(async (req) => {
           canManageCalendar ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
           canManageCalendar ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
           canManageCalendar ? fetchAppointments() : Promise.resolve([]),
-          canManageCalendar ? fetchAllRows('master_schedule_rules', 'iso_weekday') : Promise.resolve([]),
+          // Everyone who sees attendance needs the schedule: a late arrival is
+          // measured against the master's own shift, not only the salon cutoff.
+          fetchAllRows('master_schedule_rules', 'iso_weekday'),
           canManageClients ? fetchAllRows('client_export', 'last_contact_at') : Promise.resolve([]),
         ]);
 

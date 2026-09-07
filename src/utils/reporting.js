@@ -187,6 +187,11 @@ export function timeToMinutes(value) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function minutesToTime(total) {
+  const value = Math.max(0, Math.trunc(Number(total) || 0));
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+}
+
 export function minutesLate(arrived, shiftStart = '09:00') {
   const arrivedMinutes = timeToMinutes(arrived);
   const shiftMinutes = timeToMinutes(shiftStart);
@@ -242,12 +247,38 @@ export function weekdayBreakdown(sales) {
   });
 }
 
+// The salon keeps one cutoff for everyone, but a master whose shift starts
+// after it cannot be late before he is due: two of them now start in the
+// afternoon. The threshold is the later of the two, so a shift that begins
+// earlier than the cutoff keeps the cutoff, grace included.
+export function shiftStartFor(master, date, scheduleRules = [], shiftStart = '09:00') {
+  const weekday = weekdayIndex(date);
+  if (!master || weekday == null) return shiftStart;
+
+  const scheduled = scheduleRules
+    .filter((rule) => (
+      String(rule.master_id) === String(master.id)
+      && Number(rule.iso_weekday) === weekday + 1
+      && rule.active !== false
+    ))
+    .map((rule) => timeToMinutes(rule.starts_at))
+    .filter((minutes) => minutes != null);
+  if (!scheduled.length) return shiftStart;
+
+  const earliestShift = Math.min(...scheduled);
+  const cutoff = timeToMinutes(shiftStart);
+  return cutoff == null || earliestShift > cutoff ? minutesToTime(earliestShift) : shiftStart;
+}
+
 // Who is systematically late and what it cost. The bot already computed this;
 // the app never showed it.
-export function latenessSummary(masters, attendance, fines, shiftStart = '09:00') {
+export function latenessSummary(masters, attendance, fines, shiftStart = '09:00', scheduleRules = []) {
   return mastersForPeriod(masters, attendance, fines).map((master) => {
     const records = attendance.filter((row) => belongsToMaster(row, master));
-    const lateMinutes = records.map((row) => minutesLate(row.arrived_at || row.arrived, shiftStart));
+    const lateMinutes = records.map((row) => minutesLate(
+      row.arrived_at || row.arrived,
+      shiftStartFor(master, rowDate(row), scheduleRules, shiftStart),
+    ));
     const lateDays = lateMinutes.filter((value) => value > 0).length;
     const totalLateMinutes = lateMinutes.reduce((sum, value) => sum + value, 0);
     return {

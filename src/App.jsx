@@ -34,6 +34,7 @@ import {
   masterPayoutForPeriod,
   mastersForPeriod,
   minutesLate,
+  shiftStartFor,
   overviewWeeklyMetrics,
   paymentMix,
   percentageDifference,
@@ -869,7 +870,12 @@ function MasterView({ data, reload, setError }) {
   const fineTotal = totalFines(visibleFines);
   const pay = masterNetPay(grossMasterPayForSales(visibleSales, masterProfile), fineTotal);
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
-  const shiftStart = data.settings.shift_start || '09:00';
+  const shiftStart = shiftStartFor(
+    masterProfile,
+    TODAY,
+    data.scheduleRules,
+    data.settings.shift_start || '09:00',
+  );
 
   useEffect(() => {
     if (!masterName && data.activeMasters[0]?.name) setSelectedMaster(data.activeMasters[0].name);
@@ -1423,7 +1429,7 @@ function AttendanceView({ data, reload, setError }) {
   const shiftStart = settings.shift_start || '09:00';
   // Per-day rows answer "who is here today"; this answers "who is habitually
   // late and what has it cost", which no screen could show before.
-  const lateness = latenessSummary(data.masters, filteredAttendance, filteredFines, shiftStart)
+  const lateness = latenessSummary(data.masters, filteredAttendance, filteredFines, shiftStart, data.scheduleRules)
     .filter((row) => row.shifts || row.fines);
 
   async function saveSettings(event) {
@@ -1571,7 +1577,7 @@ function AttendanceView({ data, reload, setError }) {
                 </tbody>
               </table>
             </div>
-            <p className="hint">Смена засчитывается по отметке о приходе. Опоздание считается от начала смены {shiftStart}.</p>
+            <p className="hint">Смена засчитывается по отметке о приходе. Опоздание — от начала смены мастера по графику, но не раньше {shiftStart}.</p>
           </details>
         ) : null}
         <div className="attendance-list">
@@ -1581,7 +1587,8 @@ function AttendanceView({ data, reload, setError }) {
               String(day.master_id) === String(masterRecord?.id) && day.work_date === rowDate(item)
             ));
             const arrived = displayTime(item.arrived || item.arrived_at);
-            const lateBy = arrived ? minutesLate(arrived, shiftStart) : 0;
+            const rowShiftStart = shiftStartFor(masterRecord, rowDate(item), data.scheduleRules, shiftStart);
+            const lateBy = arrived ? minutesLate(arrived, rowShiftStart) : 0;
             const status = dayOff ? 'day-off' : !arrived ? 'missing' : lateBy > 0 ? 'late' : 'on-time';
             const fineKey = `${item.master}-${rowDate(item)}`;
             const quickFineExists = data.fines.some((fine) => (
@@ -1648,6 +1655,7 @@ function AttendanceView({ data, reload, setError }) {
         </summary>
         <form className="collapsible-content" onSubmit={saveSettings}>
           <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
+          <p className="hint">Общий порог опоздания. У мастера, чья смена по графику начинается позже, опоздание считается от его смены.</p>
           <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
           <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
           <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>

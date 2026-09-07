@@ -177,15 +177,16 @@ async function fetchAllRows(
 }
 
 async function loadPeriodData(previousFrom: string, currentTo: string) {
-  const [sales, fines, expenses, attendance, masters, settings] = await Promise.all([
+  const [sales, fines, expenses, attendance, masters, settings, scheduleRules] = await Promise.all([
     fetchAllRows('sales', 'id,master,master_id,d,sale_date,cash,card,qr,cl,clients_count,is_new_client,status,comment,commission_pct', 'd', previousFrom, currentTo),
     fetchAllRows('fines', 'id,master,master_id,d,fine_date,amount,reason', 'd', previousFrom, currentTo),
     fetchAllRows('expenses', 'id,date,section,name,amount_uzs,usd_rate,minus_from,category', 'date', previousFrom, currentTo),
     fetchAllRows('attendance', 'id,master,master_id,d,attendance_date,arrived,arrived_at', 'd', previousFrom, currentTo),
     fetchAllRows('masters', 'id,name,pct,active', 'id'),
     fetchAllRows('settings', 'id,shift_start', 'id'),
+    fetchAllRows('master_schedule_rules', 'id,master_id,iso_weekday,starts_at,active', 'iso_weekday'),
   ]);
-  return { sales, fines, expenses, attendance, masters, settings };
+  return { sales, fines, expenses, attendance, masters, settings, scheduleRules };
 }
 
 function summarizeBusiness(sales: Row[], from: string, to: string) {
@@ -358,6 +359,31 @@ function timeMinutes(value: unknown) {
   return match ? Number(match[1]) * 60 + Number(match[2]) : null;
 }
 
+// Monday is 1, Sunday is 7, read at noon UTC so no timezone shifts the day.
+function isoWeekdayOf(date: string) {
+  const parsed = Date.parse(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed)) return null;
+  return ((new Date(parsed).getUTCDay() + 6) % 7) + 1;
+}
+
+// The same rule the app uses: the salon cutoff, unless this master's shift on
+// that weekday starts later, in which case he cannot be late before it.
+function shiftMinutesFor(master: Row, date: string, rules: Row[], cutoffMinutes: number) {
+  const weekday = isoWeekdayOf(date);
+  if (weekday == null) return cutoffMinutes;
+
+  const scheduled = rules
+    .filter((rule) => (
+      String(rule.master_id) === String(master.id)
+      && Number(rule.iso_weekday) === weekday
+      && rule.active !== false
+    ))
+    .map((rule) => timeMinutes(rule.starts_at))
+    .filter((value): value is number => value != null);
+
+  return scheduled.length ? Math.max(cutoffMinutes, Math.min(...scheduled)) : cutoffMinutes;
+}
+
 function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods: ReturnType<typeof getPeriods>) {
   const rows = data.attendance.filter((item) => inRange(item, periods.current.from, periods.current.to));
   const fines = data.fines.filter((item) => inRange(item, periods.current.from, periods.current.to));
@@ -368,7 +394,8 @@ function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, peri
     const records = rows.filter((item) => belongsToMaster(item, master));
     const lateMinutes = records.map((item) => {
       const arrived = timeMinutes(item.arrived_at || item.arrived);
-      return arrived == null ? 0 : Math.max(0, arrived - shiftMinutes);
+      const due = shiftMinutesFor(master, rowDate(item), data.scheduleRules, shiftMinutes);
+      return arrived == null ? 0 : Math.max(0, arrived - due);
     });
     const lateDays = lateMinutes.filter((value) => value > 0).length;
     return {

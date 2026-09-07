@@ -16,6 +16,7 @@ import {
   previousRange,
   recognizedFinesTotal,
   shiftProductivity,
+  shiftStartFor,
   weekdayBreakdown,
   weekdayIndex,
 } from '../src/utils/reporting.js';
@@ -191,6 +192,40 @@ test('lateness summary counts only the days that were actually late', () => {
   assert.equal(worst.totalLateMinutes, 90);
   assert.equal(worst.averageLateMinutes, 45);
   assert.equal(worst.fines, 50_000);
+});
+
+// 2026-09-07 is a Monday and 2026-09-06 the Sunday before it.
+const AFTERNOON_RULES = [
+  { master_id: 3, iso_weekday: 1, starts_at: '14:00:00', active: true },
+  { master_id: 3, iso_weekday: 7, starts_at: '10:00:00', active: true },
+];
+
+test('a shift that starts after the salon cutoff moves the late threshold', () => {
+  const javlon = MASTERS[1];
+  assert.equal(shiftStartFor(javlon, '2026-09-07', AFTERNOON_RULES, '10:10'), '14:00');
+  // Sunday puts him back on the morning shift, where the salon cutoff and its
+  // ten minutes of grace still rule.
+  assert.equal(shiftStartFor(javlon, '2026-09-06', AFTERNOON_RULES, '10:10'), '10:10');
+  // Nobody else is touched: no rule of his own means the salon cutoff.
+  assert.equal(shiftStartFor(MASTERS[0], '2026-09-07', AFTERNOON_RULES, '10:10'), '10:10');
+  const disabled = AFTERNOON_RULES.map((rule) => ({ ...rule, active: false }));
+  assert.equal(shiftStartFor(javlon, '2026-09-07', disabled, '10:10'), '10:10');
+});
+
+test('lateness is measured against the afternoon shift, not the salon cutoff', () => {
+  const attendance = [
+    { master_id: 3, d: '2026-09-07', arrived: '13:55' },
+    { master_id: 3, d: '2026-09-07', arrived: '14:20' },
+  ];
+  const scheduled = latenessSummary(MASTERS, attendance, [], '10:10', AFTERNOON_RULES)
+    .find((row) => row.id === 3);
+  assert.equal(scheduled.lateDays, 1);
+  assert.equal(scheduled.totalLateMinutes, 20);
+
+  // Without the schedule both arrivals read as hours of lateness.
+  const blind = latenessSummary(MASTERS, attendance, [], '10:10').find((row) => row.id === 3);
+  assert.equal(blind.lateDays, 2);
+  assert.equal(blind.totalLateMinutes, 475);
 });
 
 test('productivity separates working more from earning more', () => {
