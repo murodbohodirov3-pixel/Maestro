@@ -372,3 +372,18 @@ export function paymentMix(sales) {
     qrShare: total ? (qr / total) * 100 : 0,
   };
 }
+
+// New against returning is the only figure that says whether a master is
+// building a base or living off one. The flag is null on rows written before it
+// existed and on zero-client rows, so those are reported on their own rather
+// than folded into either side and quietly inflating it.
+export function clientBreakdown(sales) {
+  return sales.reduce((summary, sale) => {
+    const count = saleClientsCount(sale);
+    summary.clients += count;
+    if (sale.is_new_client === true) summary.newClients += count;
+    else if (sale.is_new_client === false) summary.returningClients += count;
+    else summary.unlabeled += count;
+    return summary;
+  }, { clients: 0, newClients: 0, returningClients: 0, unlabeled: 0 });
+}

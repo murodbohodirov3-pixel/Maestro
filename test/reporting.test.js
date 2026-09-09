@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   appointmentOutcomeSummary,
   belongsToMaster,
+  clientBreakdown,
   comparablePreviousRange,
   dayCount,
   latenessSummary,
@@ -318,4 +319,29 @@ test('payment mix shares add up and survive an empty period', () => {
   const empty = paymentMix([]);
   assert.equal(empty.total, 0);
   assert.equal(empty.cashShare, 0);
+});
+
+test('client breakdown counts heads, not rows, and keeps unlabeled rows apart', () => {
+  const sales = [
+    { cash: 100, clients_count: 2, is_new_client: true },
+    { cash: 100, clients_count: 1, is_new_client: true },
+    { cash: 100, clients_count: 3, is_new_client: false },
+    { cash: 100, clients_count: 1, is_new_client: null },
+    { cash: 100, clients_count: 1 },
+  ];
+  assert.deepEqual(clientBreakdown(sales), {
+    clients: 8,
+    newClients: 3,
+    returningClients: 3,
+    unlabeled: 2,
+  });
+});
+
+test('client breakdown of an empty period is all zeros', () => {
+  assert.deepEqual(clientBreakdown([]), {
+    clients: 0,
+    newClients: 0,
+    returningClients: 0,
+    unlabeled: 0,
+  });
 });

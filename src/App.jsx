@@ -28,6 +28,7 @@ import { downloadClientWorkbook } from './utils/clientExport.js';
 import {
   appointmentOutcomeSummary,
   belongsToMaster,
+  clientBreakdown,
   comparablePreviousRange,
   inRange,
   latenessSummary,
@@ -482,12 +483,12 @@ function PaymentBreakdownBar({ cash, card, qr, previous }) {
   );
 }
 
-function MasterMetricComparison({ current, previous }) {
+function MasterMetricComparison({ current, previous, format = money }) {
   const percent = percentageDifference(current, previous);
   const tone = percent > 0 ? 'positive' : percent < 0 ? 'negative' : '';
   return (
     <small className={`master-period-change ${tone}`}>
-      {percent > 0 ? '+' : ''}{percent}% <span>· было {money(previous)}</span>
+      {percent > 0 ? '+' : ''}{percent}% <span>· было {format(previous)}</span>
     </small>
   );
 }
@@ -1145,6 +1146,8 @@ function AdminView({ data, reload, setError }) {
     const previousRows = previousSales.filter((sale) => belongsToMaster(sale, master));
     const previousRevenue = totalSalesAmount(previousRows);
     const previousFine = totalFines(previousFines.filter((fine) => belongsToMaster(fine, master)));
+    const clientMix = clientBreakdown(rows);
+    const previousClientMix = clientBreakdown(previousRows);
     return {
       master,
       rows,
@@ -1152,6 +1155,11 @@ function AdminView({ data, reload, setError }) {
       pay: masterNetPay(grossMasterPayForSales(rows, master), masterFine),
       previousRevenue,
       previousPay: masterNetPay(grossMasterPayForSales(previousRows, master), previousFine),
+      clientMix,
+      previousClientMix,
+      // Flat copies so the column sort reads them the way it reads revenue.
+      newClients: clientMix.newClients,
+      returningClients: clientMix.returningClients,
     };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
@@ -1306,6 +1314,8 @@ function AdminView({ data, reload, setError }) {
                   ['name', 'Мастер'],
                   ['revenue', 'Выручка'],
                   ['pay', 'К выплате'],
+                  ['newClients', 'Новые'],
+                  ['returningClients', 'Постоянные'],
                 ].map(([key, label]) => (
                   <th aria-sort={masterSort.key === key ? (masterSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key}>
                     <button className="master-sort" type="button" onClick={() => changeMasterSort(key)}>
@@ -1316,14 +1326,25 @@ function AdminView({ data, reload, setError }) {
               </tr>
             </thead>
             <tbody>
-              {sortedMasterSummaries.map(({ master, rows, revenue: masterRevenue, pay, previousRevenue: masterPreviousRevenue, previousPay }) => (
+              {sortedMasterSummaries.map(({ master, revenue: masterRevenue, pay, previousRevenue: masterPreviousRevenue, previousPay, clientMix, previousClientMix }) => (
                 <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
                   <td>
                     <div className="master-name-line">
                       <strong>{master.name}</strong>
                       {master.name === topMasterName ? <span className="master-top-mark" aria-label="Лидер по выручке" title="Лидер по выручке">★</span> : null}
                     </div>
-                    <small>{rows.reduce((sum, sale) => sum + clients(sale), 0)} клиентов</small>
+                    <small>
+                      {clientMix.clients} клиентов
+                      {clientMix.unlabeled ? ` · тип не указан: ${clientMix.unlabeled}` : ''}
+                    </small>
+                    {/* The split is repeated here on purpose: on a phone the
+                        table shows the name and the revenue without scrolling,
+                        and the columns further right carry the sort and the
+                        comparison. Its own line, or the name column grows to
+                        fit it and pushes the revenue off the screen. */}
+                    {clientMix.clients ? (
+                      <small>новых {clientMix.newClients} · постоянных {clientMix.returningClients}</small>
+                    ) : null}
                     {/* Revenue alone cannot tell working more from earning
                         more. The shift count is what separates them — but only
                         when the check-ins actually cover the days he sold on. */}
@@ -1345,6 +1366,20 @@ function AdminView({ data, reload, setError }) {
                   <td>
                     <strong className="master-metric-value">{money(pay)} сум</strong>
                     {priorRange ? <MasterMetricComparison current={pay} previous={previousPay} /> : null}
+                  </td>
+                  {/* Revenue says how much he earned; new against returning
+                      says whether he is building a base or living off one.
+                      The change against the previous period tells growing
+                      from lagging before the revenue does. Rows written
+                      before the flag existed are counted in the name cell
+                      and in neither column. */}
+                  <td>
+                    <span className="master-metric-value">{clientMix.newClients}</span>
+                    {priorRange ? <MasterMetricComparison current={clientMix.newClients} previous={previousClientMix.newClients} format={String} /> : null}
+                  </td>
+                  <td>
+                    <span className="master-metric-value">{clientMix.returningClients}</span>
+                    {priorRange ? <MasterMetricComparison current={clientMix.returningClients} previous={previousClientMix.returningClients} format={String} /> : null}
                   </td>
                 </tr>
               ))}
