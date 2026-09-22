@@ -183,8 +183,11 @@ export function percentChange(current, previous) {
 
 export function summarizeDigest(sales, today) {
   const ranges = digestRanges(today);
+  // A master's sale waits for the owner's approval and stays out of every
+  // count until then, exactly as in the app. The owner chose not to mention
+  // the waiting ones in the message, so a late approval simply shows up in
+  // the next morning's totals.
   const counted = sales.filter(isCountedSale);
-  const pending = sales.filter(isPendingOwnerApproval);
 
   const days = [];
   for (let date = ranges.week.from; date <= ranges.week.to; date = addDays(date, 1)) {
@@ -209,11 +212,6 @@ export function summarizeDigest(sales, today) {
       totalNewClients: newClientsIn(counted, ranges.previousMonth.from, ranges.previousMonth.to),
     },
     changePercent: percentChange(monthNewClients, previousSamePeriod),
-    // A master's sale waits for the owner's approval and is invisible to every
-    // count until then. Yesterday's evening sales are often still waiting at
-    // ten in the morning, so the digest says how many new clients it is not
-    // showing instead of silently under-reporting.
-    pendingNewClients: newClientsIn(pending, ranges.load.from, ranges.load.to),
   };
 }
 
@@ -271,11 +269,6 @@ export function formatDigest(summary) {
     '',
     `Вчера, ${WEEKDAYS_IN[yesterday.weekday - 1]} ${formatDay(yesterday.date)}, ${arrivedSentence(yesterday.newClients)}.`,
   ];
-
-  if (summary.pendingNewClients > 0) {
-    const count = summary.pendingNewClients;
-    lines.push(`⏳ Ещё ${newClientsPhrase(count)} — в продажах, которые ждут подтверждения владельца (не ${pluralRu(count, 'учтён', 'учтены', 'учтены')} выше).`);
-  }
 
   const weekTitle = yesterday.weekday === 7 ? 'Прошлая неделя' : 'Эта неделя';
   lines.push('', `📅 ${weekTitle} (${formatRange(week.from, week.to)}): ${bold(newClientsPhrase(week.newClients))}`);

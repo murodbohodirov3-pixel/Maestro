@@ -88,7 +88,7 @@ test('summarizeDigest counts new clients the way the app does', () => {
     sale('2026-09-21', { clients_count: 2 }),
     sale('2026-09-21', { is_new_client: false }),
     sale('2026-09-21', { is_new_client: null, comment: null }),
-    // A master's sale still waiting for approval is not counted but is reported.
+    // A master's sale still waiting for approval is not counted.
     sale('2026-09-21', { status: 'pending', comment: 'owner_approval_required' }),
     // Rejected by the owner: ignored entirely.
     sale('2026-09-21', { status: 'rejected', comment: 'owner_approval_rejected' }),
@@ -107,7 +107,7 @@ test('summarizeDigest counts new clients the way the app does', () => {
 
   assert.equal(summary.yesterday.newClients, 2);
   assert.equal(summary.yesterday.weekday, 1);
-  assert.equal(summary.pendingNewClients, 1);
+  assert.equal('pendingNewClients' in summary, false);
   assert.equal(summary.week.newClients, 2);
   assert.deepEqual(summary.week.days, [{ date: '2026-09-21', weekday: 1, newClients: 2 }]);
   assert.equal(summary.month.newClients, 2 + 1 + 3 + 4);
@@ -141,13 +141,11 @@ test('formatDigest: the everyday message', () => {
     month: { from: '2026-09-01', to: '2026-09-21', full: false, newClients: 124 },
     previousMonth: { from: '2026-08-01', to: '2026-08-31', sameTo: '2026-08-21', samePeriodNewClients: 133, totalNewClients: 185 },
     changePercent: -7,
-    pendingNewClients: 1,
   };
   assert.equal(formatDigest(summary), [
     '☀️ Доброе утро! Сегодня вторник, 22 сентября.',
     '',
     'Вчера, в понедельник 21 сентября, пришёл <b>1 новый клиент</b>.',
-    '⏳ Ещё 1 новый клиент — в продажах, которые ждут подтверждения владельца (не учтён выше).',
     '',
     '📅 Эта неделя (21 сентября): <b>1 новый клиент</b>',
     'пн 21.09 — 1 новый',
@@ -201,7 +199,6 @@ test('formatDigest: Monday recap covers the previous week, and an empty previous
   assert.match(text, /📅 Прошлая неделя \(14–20 сентября\): <b>5 новых клиентов<\/b>/);
   assert.match(text, /вт 15\.09 — 2 новых\nср 16\.09 — 0\n/);
   assert.match(text, /📈 Сентябрь, 1–20 число: <b>5 новых клиентов<\/b>\.\nЗа 1–20 августа новых клиентов не было\.\nЗа весь август — 0 новых клиентов\./);
-  assert.doesNotMatch(text, /⏳/);
 });
 
 test('formatDigest: a day without new clients, and an equal previous period', () => {
