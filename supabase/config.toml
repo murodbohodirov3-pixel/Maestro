@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.customer-notifications]
 verify_jwt = false
+
+[functions.marketing-digest]
+verify_jwt = false

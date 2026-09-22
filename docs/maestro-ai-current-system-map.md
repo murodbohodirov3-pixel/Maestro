@@ -17,7 +17,7 @@ Verified on 2026-07-13. This document separates live behavior from code that mer
 
 - Project ref: `ivowbhraaistxvoymxpf`.
 - Project status: `ACTIVE_HEALTHY`, Postgres 17, region `ap-southeast-1`.
-- Active Edge Functions: `api`, `telegram-auth`, `agents-report`, `agents-content`.
+- Active Edge Functions: `api`, `telegram-auth`, `agents-report`, `agents-content`, `marketing-digest` (scheduled morning new-client message for the marketing group, see AGENTS.md).
 - Remote `api` contains Telegram OAuth, persistent `app_sessions`, and owner-approval logic.
 - RLS is enabled on every current public table. No public RLS policies exist. The server-side functions use a server secret to access data.
 

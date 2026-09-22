@@ -78,6 +78,7 @@ For large restoration work, maintain `to-do.md` in the project root:
   - `supabase/functions/api`
   - `supabase/functions/agents-report`
   - `supabase/functions/agents-content`
+  - `supabase/functions/marketing-digest` — the 10:00 Tashkent new-client message for the marketing Telegram group. Called by the pg_cron job `maestro-marketing-digest` (`0 5 * * *` UTC) through pg_net with the `x-marketing-digest-secret` header; the secret is `MARKETING_DIGEST_SECRET` in function secrets and `marketing_digest_secret` in Vault, the target chat is `MARKETING_DIGEST_CHAT_ID`, and it sends through the same `BOT_TOKEN` (`@Maestro_uzbot`) as Telegram login. It only reads `sales` and only ever posts to that one chat; the bot has no webhook and reacts to nothing.
 - Current verified remote Edge Functions (2026-07-13):
   - `api`
   - `telegram-auth`
