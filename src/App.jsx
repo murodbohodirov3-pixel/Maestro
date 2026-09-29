@@ -166,6 +166,42 @@ function displayRange(range) {
   return `${displayDate(range.from)}–${displayDate(range.to)}`;
 }
 
+const PAYMENT_METHODS = [
+  ['cash', 'Наличные'],
+  ['card', 'Карта'],
+  ['qr', 'QR Paynet'],
+];
+
+// A sale has always had three amount columns; the form simply only ever filled
+// one. A client who paid part by card and part in cash is one sale with two
+// non-zero columns, not two rows.
+function paymentParts(sale) {
+  return PAYMENT_METHODS
+    .filter(([key]) => (Number(sale[key]) || 0) > 0)
+    .map(([key, label]) => ({ key, label, amount: Number(sale[key]) }));
+}
+
+function paymentLabel(sale) {
+  const parts = paymentParts(sale);
+  if (parts.length <= 1) return parts[0]?.label || '—';
+  return parts.map((part) => `${part.label} ${money(part.amount)}`).join(' + ');
+}
+
+function PaymentChips({ sale }) {
+  const parts = paymentParts(sale);
+  const split = parts.length > 1;
+  return (
+    <span className="pay-chips">
+      {parts.map((part) => (
+        <span className={`pay-chip ${part.key}`} key={part.key}>
+          <i className="payment-dot" aria-hidden="true" />
+          {part.label}{split ? ` ${money(part.amount)}` : ''}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function clientType(sale) {
   if (sale.is_new_client === true) return 'новый';
   if (sale.is_new_client === false) return 'постоянный';
@@ -876,6 +912,8 @@ function MasterView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
   const [payType, setPayType] = useState(null);
   const [amount, setAmount] = useState('');
+  const [split, setSplit] = useState(false);
+  const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '', qr: '' });
   const [clientCount, setClientCount] = useState(1);
   const [isNewClient, setIsNewClient] = useState(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
@@ -919,22 +957,27 @@ function MasterView({ data, reload, setError }) {
     setError('');
     setMessage('');
 
-    const numericAmount = Number(amount);
-    if (!payType) return setError('Выберите способ оплаты.');
-    if (!numericAmount || numericAmount <= 0) return setError('Введите сумму продажи.');
+    const amounts = split
+      ? {
+          cash: Number(splitAmounts.cash) || 0,
+          card: Number(splitAmounts.card) || 0,
+          qr: Number(splitAmounts.qr) || 0,
+        }
+      : { cash: 0, card: 0, qr: 0, ...(payType ? { [payType]: Number(amount) || 0 } : {}) };
+    if (!split && !payType) return setError('Выберите способ оплаты.');
+    if (amounts.cash + amounts.card + amounts.qr <= 0) {
+      return setError(split ? 'Введите сумму хотя бы для одного способа оплаты.' : 'Введите сумму продажи.');
+    }
     if (!masterName) return setError('Сначала выберите мастера.');
     if (clientCount > 0 && isNewClient == null) return setError('Отметьте, клиент новый или постоянный.');
 
     const payload = {
       master: masterName,
       d: TODAY,
-      cash: 0,
-      card: 0,
-      qr: 0,
+      ...amounts,
       cl: clientCount,
       clients_count: clientCount,
       is_new_client: clientCount === 0 ? null : isNewClient,
-      [payType]: numericAmount,
       // Held across retries of this same sale, so a reply lost on a bad
       // connection cannot turn one haircut into two rows.
       client_request_id: requestId,
@@ -949,9 +992,29 @@ function MasterView({ data, reload, setError }) {
     setRequestId(newRequestId());
     setPayType(null);
     setAmount('');
+    setSplit(false);
+    setSplitAmounts({ cash: '', card: '', qr: '' });
     setClientCount(1);
     setIsNewClient(null);
   }
+
+  // Switching carries the amount already typed across, so opening the split
+  // halfway through does not make the master type it again.
+  function toggleSplit() {
+    if (!split) {
+      setSplitAmounts({ cash: '', card: '', qr: '', ...(payType && amount ? { [payType]: amount } : {}) });
+      setSplit(true);
+      return;
+    }
+    const filled = PAYMENT_METHODS.filter(([key]) => Number(splitAmounts[key]) > 0);
+    if (filled.length === 1) {
+      setPayType(filled[0][0]);
+      setAmount(splitAmounts[filled[0][0]]);
+    }
+    setSplit(false);
+  }
+
+  const splitTotal = PAYMENT_METHODS.reduce((sum, [key]) => sum + (Number(splitAmounts[key]) || 0), 0);
 
   async function deleteSale(id) {
     if (!await confirmAction('Удалить эту продажу?')) return;
@@ -1038,28 +1101,46 @@ function MasterView({ data, reload, setError }) {
 
       <form className="card" onSubmit={submitSale}>
         <h2>Новая продажа</h2>
-        <div className="pay-types">
-          {[
-            ['cash', 'Наличные'],
-            ['card', 'Карта'],
-            ['qr', 'QR Paynet'],
-          ].map(([value, label]) => (
-            <button
-              aria-pressed={payType === value}
-              className={`pay-type ${value} ${payType === value ? 'on' : ''}`}
-              key={value}
-              type="button"
-              onClick={() => setPayType(value)}
-            >
-              <span className="payment-dot" />{label}
-            </button>
-          ))}
-        </div>
-        <MoneyInput
-          placeholder="например, 150 000"
-          value={amount}
-          onChange={setAmount}
-        />
+        {split ? (
+          <div className="split-amounts">
+            {PAYMENT_METHODS.map(([key, label]) => (
+              <label className={`split-amount ${key}`} key={key}>
+                <span><i className="payment-dot" aria-hidden="true" />{label}</span>
+                <MoneyInput
+                  aria-label={`${label}, сумма`}
+                  placeholder="0"
+                  value={splitAmounts[key]}
+                  onChange={(value) => setSplitAmounts((current) => ({ ...current, [key]: value }))}
+                />
+              </label>
+            ))}
+            <p className="split-total">Одна продажа на <strong>{money(splitTotal)} сум</strong></p>
+          </div>
+        ) : (
+          <>
+            <div className="pay-types">
+              {PAYMENT_METHODS.map(([value, label]) => (
+                <button
+                  aria-pressed={payType === value}
+                  className={`pay-type ${value} ${payType === value ? 'on' : ''}`}
+                  key={value}
+                  type="button"
+                  onClick={() => setPayType(value)}
+                >
+                  <span className="payment-dot" />{label}
+                </button>
+              ))}
+            </div>
+            <MoneyInput
+              placeholder="например, 150 000"
+              value={amount}
+              onChange={setAmount}
+            />
+          </>
+        )}
+        <button className="split-toggle" type="button" onClick={toggleSplit}>
+          {split ? 'Оплата одним способом' : 'Разделить оплату: часть картой, часть наличными'}
+        </button>
         <div className="counter">
           <button type="button" onClick={() => setClientCount(Math.max(0, clientCount - 1))}>-</button>
           <strong>{clientCount}</strong>
@@ -1085,7 +1166,7 @@ function MasterView({ data, reload, setError }) {
             <div className="row" key={sale.id}>
               <div>
                 <strong>{money(saleTotal(sale))} сум</strong>
-                <span>{sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)} · {clientType(sale)}</span>
+                <span>{paymentLabel(sale)} · клиентов {clients(sale)} · {clientType(sale)}</span>
                 <span>Внесено: {displayDateTime(sale.created_at)}</span>
                 {isPendingOwnerApproval(sale) ? <span className="approval pending">Ожидает owner</span> : null}
                 {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено owner</span> : null}
@@ -1212,6 +1293,7 @@ function AdminView({ data, reload, setError }) {
     priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress: dayInProgress }) : {}
   );
   const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const pendingMix = paymentMix(pendingSales);
   // The share of cash is an operational number, not trivia: it drives what has
   // to be collected and banked. A share without its previous value is a fact
   // with nothing to compare against.
@@ -1286,6 +1368,20 @@ function AdminView({ data, reload, setError }) {
             </button>
           </div>
         ) : null}
+        {/* Card and QR money can be checked against the bank the moment it
+            lands; cash only once the till is counted. The total is split the
+            same way, so neither has to be picked out of the list by eye. */}
+        {pendingSales.length > 1 ? (
+          <div className="pending-mix" aria-label="Сумма на подтверждение по способам оплаты">
+            {PAYMENT_METHODS.filter(([key]) => pendingMix[key] > 0).map(([key, label]) => (
+              <span className={`pending-mix-item ${key}`} key={key}>
+                <i className="payment-dot" aria-hidden="true" />
+                {label}
+                <strong>{money(pendingMix[key])}</strong>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <Rows
           rows={[...pendingSales].sort(newestFirst)}
           empty="Новых оплат от мастеров на подтверждение нет."
@@ -1293,8 +1389,9 @@ function AdminView({ data, reload, setError }) {
             <div className="row approval-row" key={sale.id}>
               <div>
                 <strong>{sale.master} · {money(saleTotal(sale))} сум</strong>
+                <PaymentChips sale={sale} />
                 <span>
-                  {rowDate(sale)} · {sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet'} · клиентов {clients(sale)} · {clientType(sale)}
+                  {rowDate(sale)} · клиентов {clients(sale)} · {clientType(sale)}
                 </span>
                 <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
@@ -1456,7 +1553,7 @@ function AdminView({ data, reload, setError }) {
             const master = data.byName[sale.master];
             const amount = saleTotal(sale);
             const masterEarning = masterGrossPay(amount, commissionPctForSale(sale, master));
-            const payment = sale.cash ? 'Наличные' : sale.card ? 'Карта' : 'QR Paynet';
+            const payment = paymentLabel(sale);
             const canDelete = recentSaleCanBeDeleted(rowDate(sale));
             return (
               <div className="row detailed-sale" key={sale.id}>

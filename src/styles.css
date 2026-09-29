@@ -1205,6 +1205,136 @@ small {
   background: var(--qr);
 }
 
+.pay-chip.cash .payment-dot,
+.pending-mix-item.cash .payment-dot,
+.split-amount.cash .payment-dot {
+  background: var(--cash);
+}
+
+.pay-chip.card .payment-dot,
+.pending-mix-item.card .payment-dot,
+.split-amount.card .payment-dot {
+  background: var(--card);
+}
+
+.pay-chip.qr .payment-dot,
+.pending-mix-item.qr .payment-dot,
+.split-amount.qr .payment-dot {
+  background: var(--qr);
+}
+
+.row .pay-chips,
+.pay-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 5px 0 3px;
+}
+
+.row .pay-chip,
+.pay-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pay-chip.cash {
+  border-color: color-mix(in srgb, var(--cash) 40%, var(--line));
+  background: color-mix(in srgb, var(--cash) 8%, var(--surface));
+}
+
+.pay-chip.card {
+  border-color: color-mix(in srgb, var(--card) 40%, var(--line));
+  background: color-mix(in srgb, var(--card) 8%, var(--surface));
+}
+
+.pay-chip.qr {
+  border-color: color-mix(in srgb, var(--qr) 40%, var(--line));
+  background: color-mix(in srgb, var(--qr) 8%, var(--surface));
+}
+
+.pending-mix {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pending-mix-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pending-mix-item strong {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.split-amounts {
+  display: grid;
+  gap: 8px;
+}
+
+.split-amount {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.split-amount > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.split-total {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.split-total strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.split-toggle {
+  justify-self: start;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--brass);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .pay-type.cash.on {
   border-color: var(--cash);
   background: #edf8f2;
