@@ -8,7 +8,8 @@
 - [x] Split payments: one sale paid partly by card and partly in cash, one client, one approval; pending total broken down by cash/card/QR. Frontend only; the api already accepted it.
 - [x] Owner analytics: month forecast, "Что происходит" signals, 12-month trend, master card, returning-client share (`src/utils/insights.js`, `test/insights.test.js`).
 - [x] Monthly revenue goal: `settings.monthly_revenue_goal` applied and recorded 2026-09-29; `api` deployed with the owner's approval and verified byte-for-byte with `functions download`; unauthenticated setSettings returns 401. The owner sets the goal value himself.
-- [ ] Step 2: new light, blue visual design — the first mockups were not "wow" enough; needs another round of concepts before any code.
+- [x] Comparisons use finished days only (`comparisonRanges`); "Подробнее" removed from Обзор; fines in the master card; clearer returning-clients tile; Новые/Постоянные columns removed from the master table.
+- [ ] Step 2: new light, blue visual design. Keep the approved structure: bottom tab bar (Главная · Продажи · Расходы · Команда) and a gear screen for theme, shift settings and the deletion log; count-up numbers, Telegram haptics, leader crown, record-day and all-approved moments. The first mockups — the first mockups were not "wow" enough; needs another round of concepts before any code.
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 - [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.

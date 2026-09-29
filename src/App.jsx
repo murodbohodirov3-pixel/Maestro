@@ -27,20 +27,17 @@ import {
 import {
   belongsToMaster,
   clientBreakdown,
-  comparablePreviousRange,
+  comparisonRanges,
   inRange,
   latenessSummary,
   masterPayoutForPeriod,
   mastersForPeriod,
   minutesLate,
   shiftStartFor,
-  overviewWeeklyMetrics,
   paymentMix,
   percentageDifference,
   previousRange,
-  recognizedFinesTotal,
   shiftProductivity,
-  weekdayBreakdown,
 } from './utils/reporting.js';
 import {
   localDate,
@@ -543,155 +540,9 @@ function MasterMetricComparison({ current, previous, format = money, inProgress 
 }
 
 
-function overviewFineRanking(data, fines) {
-  const mastersById = new Map(data.masters.map((master) => [String(master.id), master]));
-  const totals = new Map();
-
-  fines.forEach((fine) => {
-    const master = fine.master_id != null ? mastersById.get(String(fine.master_id)) : null;
-    const name = master?.name || fine.master || 'Без мастера';
-    const key = master?.id != null ? `id:${master.id}` : `name:${name}`;
-    const current = totals.get(key) || { key, name, amount: 0, count: 0 };
-    current.amount += Number(fine.amount) || 0;
-    current.count += 1;
-    totals.set(key, current);
-  });
-
-  return [...totals.values()].sort((left, right) => (
-    right.amount - left.amount || left.name.localeCompare(right.name, 'ru')
-  ));
-}
-
-function fineCountLabel(count) {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  if (mod100 >= 11 && mod100 <= 14) return 'штрафов';
-  if (mod10 === 1) return 'штраф';
-  if (mod10 >= 2 && mod10 <= 4) return 'штрафа';
-  return 'штрафов';
-}
-
-function OverviewMetricTile({ detailId, label, value, tone, danger, expanded, hint, onToggle }) {
-  return (
-    <button
-      aria-controls={expanded ? `overview-details-${detailId}` : undefined}
-      aria-expanded={expanded}
-      className={`tile overview-metric-tile ${expanded ? 'is-expanded' : ''} ${danger ? 'danger' : ''} ${tone ? `tile-${tone}` : ''}`}
-      type="button"
-      onClick={() => onToggle(expanded ? null : detailId)}
-    >
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {hint ? <em className="tile-hint">{hint}</em> : null}
-      <i className="overview-metric-chevron" aria-hidden="true" />
-    </button>
-  );
-}
-
-// Which days deserve five masters and which deserve three. Averaged per
-// occurrence of the weekday, so a month with five Saturdays does not outrank
-// one with four.
-function WeekdayBreakdown({ rows }) {
-  const peak = Math.max(1, ...rows.map((row) => row.averageRevenue));
-  const busiest = rows.reduce((best, row) => (row.averageRevenue > (best?.averageRevenue || 0) ? row : best), null);
-
-  return (
-    <div className="weekday-breakdown">
-      {rows.map((row) => (
-        <div className={`weekday-row ${row.index === busiest?.index && row.occurrences ? 'is-peak' : ''}`} key={row.index}>
-          <span className="weekday-name">{row.short}</span>
-          <span className="weekday-track">
-            <i style={{ width: `${(row.averageRevenue / peak) * 100}%` }} />
-          </span>
-          <span className="weekday-value">
-            <strong>{row.occurrences ? `${money(row.averageRevenue)}` : '—'}</strong>
-            <em>
-              {row.occurrences
-                ? `${row.averageClients.toFixed(1).replace('.', ',')} клиента · ${row.occurrences} ${pluralRu(row.occurrences, 'день', 'дня', 'дней')}`
-                : 'нет данных'}
-            </em>
-          </span>
-        </div>
-      ))}
-      <p className="hint">Средняя выручка за один такой день недели в выбранном месяце.</p>
-    </div>
-  );
-}
-
-function OverviewWeeklyDetails({ detailId, title, rows, valueKey }) {
-  return (
-    <div className="overview-details" id={`overview-details-${detailId}`} role="region" aria-label={title}>
-      <div className="overview-details-heading">
-        <strong>{title}</strong>
-        <span>по календарным неделям</span>
-      </div>
-      <div className="overview-details-list">
-        {rows.map((row) => (
-          <div className="overview-detail-row" key={row.from}>
-            <span>{displayRange(row)}</span>
-            <strong>{money(row[valueKey])} сум</strong>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function shortRange(range) {
   const short = (day) => `${day.slice(8, 10)}.${day.slice(5, 7)}`;
   return range.from === range.to ? short(range.from) : `${short(range.from)}–${short(range.to)}`;
-}
-
-// Revenue and profit week by week used to be two separate tiles that repeated
-// the month totals already shown above them. One table carries both.
-function OverviewWeeklyTable({ rows }) {
-  return (
-    <div className="overview-details" id="overview-details-weeks" role="region" aria-label="Выручка и прибыль по неделям">
-      <div className="overview-details-heading">
-        <strong>Выручка и прибыль</strong>
-        <span>по календарным неделям</span>
-      </div>
-      <div className="overview-details-list">
-        <div className="overview-week-row is-head">
-          <span>Неделя</span>
-          <span>Выручка</span>
-          <span>Прибыль</span>
-        </div>
-        {rows.map((row) => (
-          <div className="overview-week-row" key={row.from}>
-            <span>{shortRange(row)}</span>
-            <strong>{money(row.revenue)}</strong>
-            <strong className={row.netProfit < 0 ? 'danger' : ''}>{money(row.netProfit)}</strong>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function OverviewFineDetails({ rows }) {
-  return (
-    <div className="overview-details" id="overview-details-fines" role="region" aria-label="Штрафы по мастерам">
-      <div className="overview-details-heading">
-        <strong>Штрафы по мастерам</strong>
-        <span>от большей суммы к меньшей</span>
-      </div>
-      {rows.length ? (
-        <ol className="overview-fine-ranking">
-          {rows.map((row, index) => (
-            <li className={index === 0 ? 'is-first' : ''} key={row.key}>
-              <span className="overview-rank-number">{index + 1}</span>
-              <span className="overview-rank-master">
-                <strong>{row.name}</strong>
-                <small>{row.count} {fineCountLabel(row.count)}</small>
-              </span>
-              <strong className="overview-rank-amount">{money(row.amount)} сум</strong>
-            </li>
-          ))}
-        </ol>
-      ) : <p className="hint overview-details-empty">В этом месяце штрафов нет.</p>}
-    </div>
-  );
 }
 
 const MONTH_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -705,13 +556,13 @@ function shareText(value) {
   return value == null ? '—' : `${Math.round(value)}%`;
 }
 
-// A share moves in points, not percent: 59% → 70% is eleven points, and "+19%"
-// would describe the same change as something it is not.
+// A share is compared by showing the old share, not a percent of a percent:
+// "70%, было 59%" reads at a glance where "+11 п.п." needed explaining.
 function shareComparison(current, previous, comparisonRange) {
   if (current == null || previous == null) return {};
-  const points = Math.round(current - previous);
+  const points = Math.round(current) - Math.round(previous);
   return {
-    secondary: `${points > 0 ? '+' : points < 0 ? '−' : ''}${Math.abs(points)} п.п. · было ${shareText(previous)}`,
+    secondary: `было ${shareText(previous)}`,
     secondaryTone: points > 0 ? 'positive' : points < 0 ? 'negative' : '',
     hint: comparisonLabel(comparisonRange, TODAY),
   };
@@ -879,7 +730,7 @@ function SignalsCard({ result }) {
   );
 }
 
-function MastersOfMonth({ rows, comparisonRange, onOpen }) {
+function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen }) {
   const leader = rows[0]?.revenue > 0 ? rows[0].master.id : null;
   return (
     <div className="card wide masters-month-card">
@@ -901,7 +752,9 @@ function MastersOfMonth({ rows, comparisonRange, onOpen }) {
               </span>
               <span className="master-rank-value">
                 <strong>{compactMoney(row.revenue)}</strong>
-                {comparisonRange ? <MasterMetricComparison current={row.revenue} previous={row.previousRevenue} format={compactMoney} /> : null}
+                {comparisonRange ? (
+                  <MasterMetricComparison current={row.compareRevenue} previous={row.previousRevenue} format={compactMoney} inProgress={inProgress} />
+                ) : null}
               </span>
             </button>
           </li>
@@ -1020,25 +873,33 @@ function MasterSheet({ data, master, onClose }) {
   }, [onClose]);
 
   const monthRange = currentMonthRange();
-  const priorRange = comparablePreviousRange(monthRange, 'month', TODAY);
+  const { current: compareRange, previous: priorRange, inProgress } = comparisonRanges(monthRange, 'month', TODAY);
   const mine = data.sales.filter((sale) => isCountedSale(sale) && belongsToMaster(sale, master));
-  const inPeriod = (rows, range, key = 'd') => rows.filter((row) => inRange(rowDate(row, key), range.from, range.to));
-  const nowSales = inPeriod(mine, monthRange);
-  const beforeSales = priorRange ? inPeriod(mine, priorRange) : [];
   const myFines = data.fines.filter((fine) => belongsToMaster(fine, master));
+  const within = (rows, range, key = 'd') => (
+    range ? rows.filter((row) => inRange(rowDate(row, key), range.from, range.to)) : []
+  );
+  const payFor = (range) => masterNetPay(
+    grossMasterPayForSales(within(mine, range), master),
+    totalFines(within(myFines, range)),
+  );
+  const nowSales = within(mine, monthRange);
+  const monthFines = [...within(myFines, monthRange)].sort(newestFirst);
   const now = summarizeSales(nowSales);
-  const before = summarizeSales(beforeSales);
-  const payNow = masterNetPay(grossMasterPayForSales(nowSales, master), totalFines(inPeriod(myFines, monthRange)));
-  const payBefore = priorRange ? masterNetPay(grossMasterPayForSales(beforeSales, master), totalFines(inPeriod(myFines, priorRange))) : 0;
+  const compare = summarizeSales(within(mine, compareRange));
+  const before = summarizeSales(within(mine, priorRange));
+  const fineTotal = totalFines(monthFines);
   const productivity = shiftProductivity(
     [master],
     nowSales,
-    inPeriod(data.attendance.filter((row) => belongsToMaster(row, master)), monthRange),
+    within(data.attendance.filter((row) => belongsToMaster(row, master)), monthRange),
   )[0];
-  const history = monthlySeries({ sales: mine, today: TODAY, months: 6 }).reverse();
-  // Every tile compares against the same days, so that is said once in the
+  const history = monthlySeries({ sales: mine, fines: myFines, today: TODAY, months: 6 }).reverse();
+  // Every tile compares the same finished days, so that is said once in the
   // header rather than under each figure.
-  const versus = (current, previous) => (priorRange ? { ...comparisonToPrevious(current, previous, priorRange), hint: null } : {});
+  const versus = (current, previous) => (
+    priorRange ? { ...comparisonToPrevious(current, previous, priorRange, money, { inProgress }), hint: null } : {}
+  );
 
   return (
     <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
@@ -1054,28 +915,56 @@ function MasterSheet({ data, master, onClose }) {
             <strong>{master.name}</strong>
             <small>
               {monthName(monthRange.from)} · {Number(master.pct) || 40}% мастеру
-              {priorRange ? ` · сравнение ${comparisonLabel(priorRange, TODAY)}` : ''}
+              {priorRange
+                ? inProgress
+                  ? ` · сравнение ${comparisonLabel(priorRange, TODAY)}`
+                  : ` · сравнение ${shortRange(compareRange)} с ${shortRange(priorRange)}`
+                : ''}
             </small>
           </div>
           <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
         </div>
         <div className="tiles sheet-tiles">
-          <Tile label="Выручка" value={money(now.revenue)} tone="total" {...versus(now.revenue, before.revenue)} />
-          <Tile label="К выплате" value={money(payNow)} {...versus(payNow, payBefore)} />
-          <Tile label="Клиентов" value={now.clients} {...versus(now.clients, before.clients)} />
-          <Tile label="Новые" value={now.newClients} {...versus(now.newClients, before.newClients)} />
-          <Tile label="Постоянные" value={now.returningClients} {...versus(now.returningClients, before.returningClients)} />
-          <Tile label="Доля постоянных" value={shareText(now.returningShare)} {...shareComparison(now.returningShare, before.returningShare, priorRange)} hint={null} />
-          <Tile label="Средний чек" value={averageCheck(now.revenue, now.clients)} {...versus(now.averageCheck, before.averageCheck)} />
+          <Tile label="Выручка" value={money(now.revenue)} tone="total" {...versus(compare.revenue, before.revenue)} />
+          <Tile label="К выплате" value={money(payFor(monthRange))} {...versus(payFor(compareRange), payFor(priorRange))} />
+          <Tile label="Клиентов" value={now.clients} {...versus(compare.clients, before.clients)} />
+          <Tile label="Средний чек" value={averageCheck(now.revenue, now.clients)} {...versus(compare.averageCheck, before.averageCheck)} />
+          <Tile label="Новые" value={now.newClients} {...versus(compare.newClients, before.newClients)} />
+          <Tile label="Постоянные" value={now.returningClients} {...versus(compare.returningClients, before.returningClients)} />
+          <Tile
+            label="Штрафы"
+            value={fineTotal ? `−${money(fineTotal)}` : '0'}
+            danger={Boolean(fineTotal)}
+            hint={monthFines.length ? `${monthFines.length} ${pluralRu(monthFines.length, 'штраф', 'штрафа', 'штрафов')}` : 'в этом месяце нет'}
+          />
           {productivity?.reliable ? (
             <Tile label="Выручка за смену" value={money(productivity.revenuePerShift)} hint={`${productivity.shifts} ${pluralRu(productivity.shifts, 'смена', 'смены', 'смен')}`} />
           ) : null}
         </div>
+        {/* The payout already has the fines taken out; this is what they were. */}
+        {monthFines.length ? (
+          <>
+            <h2 className="master-sheet-subtitle">Штрафы за {monthName(monthRange.from)}</h2>
+            <Rows
+              rows={monthFines}
+              empty=""
+              render={(fine) => (
+                <div className="row" key={fine.id}>
+                  <div>
+                    <strong>{fineReasonLabel(fine.reason)}</strong>
+                    <span>{displayDate(rowDate(fine))}</span>
+                  </div>
+                  <strong className="danger">−{money(fine.amount)}</strong>
+                </div>
+              )}
+            />
+          </>
+        ) : null}
         <h2 className="master-sheet-subtitle">По месяцам</h2>
         <div className="table-scroll">
           <table className="master-history">
             <thead>
-              <tr><th>Месяц</th><th>Выручка</th><th>Клиенты</th><th>Новые</th><th>Пост.</th></tr>
+              <tr><th>Месяц</th><th>Выручка</th><th>Клиенты</th><th>Новые</th><th>Штрафы</th></tr>
             </thead>
             <tbody>
               {history.map((row) => (
@@ -1084,7 +973,7 @@ function MasterSheet({ data, master, onClose }) {
                   <td>{money(row.revenue)}</td>
                   <td>{row.clients}</td>
                   <td>{row.labelledClients ? row.newClients : '—'}</td>
-                  <td>{row.labelledClients ? row.returningClients : '—'}</td>
+                  <td className={row.fines ? 'danger' : ''}>{row.fines ? `−${money(row.fines)}` : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -1096,8 +985,6 @@ function MasterSheet({ data, master, onClose }) {
 }
 
 function OverviewView({ data, reload, setError, setView }) {
-  const [expandedDetail, setExpandedDetail] = useState(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError);
@@ -1110,69 +997,52 @@ function OverviewView({ data, reload, setError, setView }) {
     );
   }
   const monthRange = currentMonthRange();
-  // Trimmed to the days that have already happened. Comparing three days of a
-  // new month against a whole previous month reported a collapse every time the
-  // month turned over.
-  const priorMonthRange = comparablePreviousRange(monthRange, 'month', TODAY);
+  // The figures are the month so far; their comparisons use finished days only,
+  // against the same days of the last month (see comparisonRanges).
+  const {
+    current: compareRange,
+    previous: priorMonthRange,
+    inProgress: monthInProgress,
+  } = comparisonRanges(monthRange, 'month', TODAY);
   // Not yesterday: a Thursday is compared with the previous Thursday, because a
   // barbershop's week has a shape and a Wednesday is a different kind of day.
   const lastWeekSameDay = sameWeekdayLastWeek(TODAY);
 
   const countedSales = data.sales.filter(isCountedSale);
-  const inMonth = (row, key = 'd', range = monthRange) => inRange(rowDate(row, key), range.from, range.to);
+  const within = (rows, range, key = 'd') => (
+    range ? rows.filter((row) => inRange(rowDate(row, key), range.from, range.to)) : []
+  );
+  // Revenue less master pay less operating expenses — the same chain for the
+  // headline and for every window it is compared across.
+  const profitFor = (range) => {
+    const sales = within(countedSales, range);
+    return totalSalesAmount(sales)
+      - masterPayoutForPeriod(data.masters, sales, within(data.fines, range))
+      - totalExpenses(operatingExpenses(within(data.expenses, range, 'date')));
+  };
 
   const todaySales = countedSales.filter((sale) => rowDate(sale) === TODAY);
   const lastWeekSales = countedSales.filter((sale) => rowDate(sale) === lastWeekSameDay);
-  const monthSales = countedSales.filter((sale) => inMonth(sale));
-  const monthFines = data.fines.filter((fine) => inMonth(fine));
-  const priorSales = priorMonthRange ? countedSales.filter((sale) => inMonth(sale, 'd', priorMonthRange)) : [];
-  const priorFines = priorMonthRange ? data.fines.filter((fine) => inMonth(fine, 'd', priorMonthRange)) : [];
-
-  const expensesFor = (range) => data.expenses.filter((expense) => inMonth(expense, 'date', range));
-  const operatingFor = (range) => totalExpenses(operatingExpenses(expensesFor(range)));
-  const rentOffsetsFor = (range) => rentOffsetIncome(expensesFor(range));
+  const monthSales = within(countedSales, monthRange);
+  const compareSales = within(countedSales, compareRange);
+  const priorSales = within(countedSales, priorMonthRange);
 
   const todayRevenue = totalSalesAmount(todaySales);
   const monthRevenue = totalSalesAmount(monthSales);
-  const payouts = masterPayoutForPeriod(data.masters, monthSales, monthFines);
-  const salonRemainder = monthRevenue - payouts;
-  const fineTotal = totalFines(monthFines);
-  // Issued and withheld differ whenever a fine outruns what a master earned;
-  // only the withheld part ever reaches the salon.
-  const recognizedFines = recognizedFinesTotal(data.masters, monthSales, monthFines);
-  const netProfit = salonRemainder - operatingFor(monthRange);
-  const nonCashIncome = rentOffsetsFor(monthRange);
-  const totalNetProfit = netProfit + nonCashIncome;
+  const netProfit = profitFor(monthRange);
 
-  const priorRevenue = totalSalesAmount(priorSales);
-  const priorNetProfit = priorMonthRange
-    ? priorRevenue - masterPayoutForPeriod(data.masters, priorSales, priorFines) - operatingFor(priorMonthRange)
-    : 0;
-
-  // Average check is the number that moves before revenue does: the same takings
-  // spread over more clients means each one is paying less.
-  const monthClients = monthSales.reduce((sum, sale) => sum + clients(sale), 0);
-  const priorClients = priorSales.reduce((sum, sale) => sum + clients(sale), 0);
-  const monthCheck = monthClients ? monthRevenue / monthClients : 0;
-  const priorCheck = priorClients ? priorRevenue / priorClients : 0;
-
+  const monthMix = summarizeSales(monthSales);
+  const compareMix = summarizeSales(compareSales);
+  const priorMix = summarizeSales(priorSales);
   const pendingSales = getPendingSales(data.sales);
-  const weekdayRows = weekdayBreakdown(monthSales);
-  const weeklyMetrics = overviewWeeklyMetrics(data, monthRange, monthSales, monthFines);
-  const visibleWeeklyMetrics = weeklyMetrics.filter((week) => (
-    week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses || week.nonCashIncome
-  ));
-  const fineRanking = overviewFineRanking(data, monthFines);
-  const bestWeek = visibleWeeklyMetrics.reduce((best, week) => (week.revenue > (best?.revenue || 0) ? week : best), null);
 
   // The month tiles all compare against the same days, named once under them.
   const versusPriorMonth = (current, previous) => (
-    priorMonthRange ? { ...comparisonToPrevious(current, previous, priorMonthRange), hint: null } : {}
+    priorMonthRange
+      ? { ...comparisonToPrevious(current, previous, priorMonthRange, money, { inProgress: monthInProgress }), hint: null }
+      : {}
   );
-  const profitVersusPriorMonth = versusPriorMonth(netProfit, priorNetProfit);
-
-  const monthMix = summarizeSales(monthSales);
-  const priorMix = summarizeSales(priorSales);
+  const profitVersusPriorMonth = versusPriorMonth(profitFor(compareRange), priorMonthRange ? profitFor(priorMonthRange) : 0);
   const forecast = monthForecast(countedSales, TODAY);
   const signals = attentionSignals({ sales: countedSales, masters: data.masters, today: TODAY });
   const series = monthlySeries({
@@ -1185,11 +1055,13 @@ function OverviewView({ data, reload, setError, setView }) {
   });
   const masterRows = mastersForPeriod(data.masters, [...monthSales, ...priorSales])
     .map((master) => {
-      const rows = monthSales.filter((sale) => belongsToMaster(sale, master));
+      const mine = (rows) => rows.filter((sale) => belongsToMaster(sale, master));
+      const rows = mine(monthSales);
       return {
         master,
         revenue: totalSalesAmount(rows),
-        previousRevenue: totalSalesAmount(priorSales.filter((sale) => belongsToMaster(sale, master))),
+        compareRevenue: totalSalesAmount(mine(compareSales)),
+        previousRevenue: totalSalesAmount(mine(priorSales)),
         summary: summarizeSales(rows),
       };
     })
@@ -1243,125 +1115,36 @@ function OverviewView({ data, reload, setError, setView }) {
           <Tile
             label="Выручка за месяц"
             value={`${money(monthRevenue)} сум`}
-            {...versusPriorMonth(monthRevenue, priorRevenue)}
+            {...versusPriorMonth(compareMix.revenue, priorMix.revenue)}
           />
           <Tile
             label="Средний чек"
-            value={averageCheck(monthRevenue, monthClients)}
-            {...versusPriorMonth(monthCheck, priorCheck)}
+            value={averageCheck(monthRevenue, monthMix.clients)}
+            {...versusPriorMonth(compareMix.averageCheck, priorMix.averageCheck)}
           />
           <Tile
             label="Клиентов за месяц"
-            value={monthClients}
-            {...versusPriorMonth(monthClients, priorClients)}
+            value={monthMix.clients}
+            {...versusPriorMonth(compareMix.clients, priorMix.clients)}
           />
           <Tile
             label="Новые клиенты"
             value={monthMix.newClients}
-            {...versusPriorMonth(monthMix.newClients, priorMix.newClients)}
+            {...versusPriorMonth(compareMix.newClients, priorMix.newClients)}
           />
           <Tile
-            label="Доля постоянных"
+            label="Постоянные клиенты"
             value={shareText(monthMix.returningShare)}
-            {...(priorMonthRange ? shareComparison(monthMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
-            hint={null}
+            {...(priorMonthRange ? shareComparison(compareMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
+            hint={monthMix.labelledClients ? `${monthMix.returningClients} из ${monthMix.labelledClients} клиентов` : null}
           />
         </div>
         {priorMonthRange ? (
-          <p className="hint overview-compare-note">Прибыль и цифры месяца — сравнение {comparisonLabel(priorMonthRange, TODAY)}</p>
-        ) : null}
-
-        {/* The month's breakdowns are unchanged, just one tap down: they answer
-            questions the owner asks occasionally, not on every open. */}
-        <button
-          aria-expanded={detailsOpen}
-          className="overview-more"
-          type="button"
-          onClick={() => setDetailsOpen((open) => !open)}
-        >
-          {detailsOpen ? 'Свернуть' : 'Подробнее'}
-        </button>
-
-        {detailsOpen ? (
-          <div className="tiles overview-tiles">
-            <OverviewMetricTile
-              detailId="weeks"
-              expanded={expandedDetail === 'weeks'}
-              label="По неделям"
-              value={bestWeek?.revenue ? `${money(bestWeek.revenue)} сум` : '—'}
-              hint={bestWeek?.revenue ? `лучшая неделя · ${shortRange(bestWeek)}` : null}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'weeks' ? <OverviewWeeklyTable rows={visibleWeeklyMetrics} /> : null}
-            <OverviewMetricTile
-              detailId="salon"
-              expanded={expandedDetail === 'salon'}
-              label="Остаток салону"
-              tone="salon"
-              value={`${money(salonRemainder)} сум`}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'salon' ? (
-              <OverviewWeeklyDetails detailId="salon" title="Остаток салону" rows={visibleWeeklyMetrics} valueKey="salonRemainder" />
-            ) : null}
-            <OverviewMetricTile
-              detailId="fines"
-              expanded={expandedDetail === 'fines'}
-              label="Штрафы за месяц"
-              value={`${money(fineTotal)} сум`}
-              // Issued and withheld part company as soon as a fine outruns what
-              // the master earned, and only the withheld part reaches the salon.
-              hint={recognizedFines < fineTotal ? `удержано ${money(recognizedFines)}` : null}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
-            {/* A rent offset is rare. With none this month both tiles only
-                repeated a zero and the profit already shown at the top. */}
-            {nonCashIncome ? (
-              <>
-                <OverviewMetricTile
-                  detailId="rent-offsets"
-                  expanded={expandedDetail === 'rent-offsets'}
-                  label="Безденежный доход"
-                  value={`${money(nonCashIncome)} сум`}
-                  onToggle={setExpandedDetail}
-                />
-                {expandedDetail === 'rent-offsets' ? (
-                  <OverviewWeeklyDetails detailId="rent-offsets" title="Взаимозачёты аренды" rows={visibleWeeklyMetrics} valueKey="nonCashIncome" />
-                ) : null}
-                <OverviewMetricTile
-                  danger={totalNetProfit < 0}
-                  detailId="total-profit"
-                  expanded={expandedDetail === 'total-profit'}
-                  label="Общий результат"
-                  tone="total"
-                  value={`${money(totalNetProfit)} сум`}
-                  onToggle={setExpandedDetail}
-                />
-                {expandedDetail === 'total-profit' ? (
-                  <OverviewWeeklyDetails detailId="total-profit" title="Общий результат с взаимозачётами" rows={visibleWeeklyMetrics} valueKey="totalNetProfit" />
-                ) : null}
-              </>
-            ) : null}
-            <OverviewMetricTile
-              detailId="weekdays"
-              expanded={expandedDetail === 'weekdays'}
-              label="Сильные дни недели"
-              value={weekdayRows.some((row) => row.occurrences)
-                ? weekdayRows.reduce((best, row) => (row.averageRevenue > (best?.averageRevenue || 0) ? row : best), null).name
-                : '—'}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'weekdays' ? (
-              <div className="overview-details" id="overview-details-weekdays" role="region" aria-label="Выручка по дням недели">
-                <div className="overview-details-heading">
-                  <strong>Выручка по дням недели</strong>
-                  <span>в среднем за день</span>
-                </div>
-                <WeekdayBreakdown rows={weekdayRows} />
-              </div>
-            ) : null}
-          </div>
+          <p className="hint overview-compare-note">
+            {monthInProgress
+              ? `Сравнение ${comparisonLabel(priorMonthRange, TODAY)}`
+              : `Сравнение по законченным дням: ${shortRange(compareRange)} против ${shortRange(priorMonthRange)}`}
+          </p>
         ) : null}
       </div>
 
@@ -1374,7 +1157,7 @@ function OverviewView({ data, reload, setError, setView }) {
         onSaveGoal={saveGoal}
       />
       <SignalsCard result={signals} />
-      <MastersOfMonth rows={masterRows} comparisonRange={priorMonthRange} onOpen={setOpenMaster} />
+      <MastersOfMonth rows={masterRows} comparisonRange={priorMonthRange} inProgress={monthInProgress} onOpen={setOpenMaster} />
       <MonthlyTrend series={series} forecast={forecast} />
       {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
@@ -1612,7 +1395,7 @@ function MasterView({ data, reload, setError }) {
           </>
         )}
         <button className="split-toggle" type="button" onClick={toggleSplit}>
-          {split ? 'Оплата одним способом' : 'Разделить оплату: часть картой, часть наличными'}
+          {split ? 'Одним способом' : 'Разделить оплату'}
         </button>
         <div className="counter">
           <button type="button" onClick={() => setClientCount(Math.max(0, clientCount - 1))}>-</button>
@@ -1701,20 +1484,20 @@ function AdminView({ data, reload, setError }) {
   const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.sales);
-  // Trimmed to the elapsed part of the period, so the first days of a month are
-  // not compared against a whole one.
-  const priorRange = comparablePreviousRange(range, period, TODAY);
+  // The figures cover the whole period; their comparisons use its finished
+  // days against the same days before it (see comparisonRanges).
+  const { current: compareRange, previous: priorRange, inProgress } = comparisonRanges(range, period, TODAY);
   const pendingSales = getPendingSales(data.sales);
-  const sales = data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
+  const countedIn = (from, to) => data.sales.filter(
+    (sale) => isCountedSale(sale) && inRange(rowDate(sale), from, to),
   );
-  const fines = data.fines.filter((fine) => inRange(rowDate(fine), range.from, range.to));
-  const previousSales = priorRange ? data.sales.filter(
-    (sale) => isCountedSale(sale) && inRange(rowDate(sale), priorRange.from, priorRange.to),
-  ) : [];
-  const previousFines = priorRange ? data.fines.filter(
-    (fine) => inRange(rowDate(fine), priorRange.from, priorRange.to),
-  ) : [];
+  const finesIn = (from, to) => data.fines.filter((fine) => inRange(rowDate(fine), from, to));
+  const sales = countedIn(range.from, range.to);
+  const fines = finesIn(range.from, range.to);
+  const compareSales = countedIn(compareRange.from, compareRange.to);
+  const compareFines = finesIn(compareRange.from, compareRange.to);
+  const previousSales = priorRange ? countedIn(priorRange.from, priorRange.to) : [];
+  const previousFines = priorRange ? finesIn(priorRange.from, priorRange.to) : [];
   const revenue = totalSalesAmount(sales);
   const totalClients = sales.reduce((sum, sale) => sum + clients(sale), 0);
   const paymentTotals = {
@@ -1729,26 +1512,19 @@ function AdminView({ data, reload, setError }) {
     [...fines, ...previousFines],
   );
   const masterSummaries = reportMasters.map((master) => {
-    const rows = sales.filter((sale) => belongsToMaster(sale, master));
-    const masterRevenue = totalSalesAmount(rows);
-    const masterFine = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
-    const previousRows = previousSales.filter((sale) => belongsToMaster(sale, master));
-    const previousRevenue = totalSalesAmount(previousRows);
-    const previousFine = totalFines(previousFines.filter((fine) => belongsToMaster(fine, master)));
-    const clientMix = clientBreakdown(rows);
-    const previousClientMix = clientBreakdown(previousRows);
+    const mine = (rows) => rows.filter((row) => belongsToMaster(row, master));
+    const payOf = (saleRows, fineRows) => masterNetPay(grossMasterPayForSales(mine(saleRows), master), totalFines(mine(fineRows)));
+    const rows = mine(sales);
     return {
       master,
       rows,
-      revenue: masterRevenue,
-      pay: masterNetPay(grossMasterPayForSales(rows, master), masterFine),
-      previousRevenue,
-      previousPay: masterNetPay(grossMasterPayForSales(previousRows, master), previousFine),
-      clientMix,
-      previousClientMix,
-      // Flat copies so the column sort reads them the way it reads revenue.
-      newClients: clientMix.newClients,
-      returningClients: clientMix.returningClients,
+      revenue: totalSalesAmount(rows),
+      pay: payOf(sales, fines),
+      compareRevenue: totalSalesAmount(mine(compareSales)),
+      comparePay: payOf(compareSales, compareFines),
+      previousRevenue: totalSalesAmount(mine(previousSales)),
+      previousPay: payOf(previousSales, previousFines),
+      clientMix: clientBreakdown(rows),
     };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
@@ -1759,13 +1535,11 @@ function AdminView({ data, reload, setError }) {
     return (left[masterSort.key] - right[masterSort.key]) * multiplier;
   });
   const totalMasterPayout = masterSummaries.reduce((sum, item) => sum + item.pay, 0);
-  const previousRevenue = totalSalesAmount(previousSales);
-  const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
-  const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
+  const compareSummary = summarizeSales(compareSales);
+  const previousSummary = summarizeSales(previousSales);
   // Today against the whole of yesterday is a race the morning always loses.
-  const dayInProgress = range.from === TODAY && range.to === TODAY;
   const comparison = (current, previous) => (
-    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress: dayInProgress }) : {}
+    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress }) : {}
   );
   const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const pendingMix = paymentMix(pendingSales);
@@ -1896,9 +1670,9 @@ function AdminView({ data, reload, setError }) {
               here only invited the question of whether the two agree.
               "Постоянные" was "Клиентов" minus "Новые" — a tile for a
               subtraction the eye does anyway. */}
-          <Tile label="Выручка" value={money(revenue)} {...comparison(revenue, previousRevenue)} tone="total" />
-          <Tile label="Клиентов" value={totalClients} {...comparison(totalClients, previousClients)} />
-          <Tile label="Новые" value={newClients} {...comparison(newClients, previousNewClients)} />
+          <Tile label="Выручка" value={money(revenue)} {...comparison(compareSummary.revenue, previousSummary.revenue)} tone="total" />
+          <Tile label="Клиентов" value={totalClients} {...comparison(compareSummary.clients, previousSummary.clients)} />
+          <Tile label="Новые" value={newClients} {...comparison(compareSummary.newClients, previousSummary.newClients)} />
           <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
         </div>
         <PaymentBreakdownBar cash={mix.cash} card={mix.card} qr={mix.qr} previous={previousMix} />
@@ -1918,7 +1692,13 @@ function AdminView({ data, reload, setError }) {
 
       <div className="card wide">
         <h2>По мастерам</h2>
-        {priorRange ? <p className="master-comparison-range">Сравнение {comparisonLabel(priorRange, TODAY)}</p> : null}
+        {priorRange ? (
+          <p className="master-comparison-range">
+            {inProgress
+              ? `Сравнение ${comparisonLabel(priorRange, TODAY)}`
+              : `Сравнение по законченным дням: ${shortRange(compareRange)} против ${shortRange(priorRange)}`}
+          </p>
+        ) : null}
         <div className="master-table-wrap">
           <table className="master-table">
             <thead>
@@ -1927,8 +1707,6 @@ function AdminView({ data, reload, setError }) {
                   ['name', 'Мастер'],
                   ['revenue', 'Выручка'],
                   ['pay', 'К выплате'],
-                  ['newClients', 'Новые'],
-                  ['returningClients', 'Постоянные'],
                 ].map(([key, label]) => (
                   <th aria-sort={masterSort.key === key ? (masterSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key}>
                     <button className="master-sort" type="button" onClick={() => changeMasterSort(key)}>
@@ -1939,7 +1717,7 @@ function AdminView({ data, reload, setError }) {
               </tr>
             </thead>
             <tbody>
-              {sortedMasterSummaries.map(({ master, revenue: masterRevenue, pay, previousRevenue: masterPreviousRevenue, previousPay, clientMix, previousClientMix }) => (
+              {sortedMasterSummaries.map(({ master, revenue: masterRevenue, pay, compareRevenue, comparePay, previousRevenue: masterPreviousRevenue, previousPay, clientMix }) => (
                 <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
                   <td>
                     <div className="master-name-line">
@@ -1976,25 +1754,11 @@ function AdminView({ data, reload, setError }) {
                   </td>
                   <td>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
-                    {priorRange ? <MasterMetricComparison current={masterRevenue} previous={masterPreviousRevenue} inProgress={dayInProgress} /> : null}
+                    {priorRange ? <MasterMetricComparison current={compareRevenue} previous={masterPreviousRevenue} inProgress={inProgress} /> : null}
                   </td>
                   <td>
                     <strong className="master-metric-value">{money(pay)} сум</strong>
-                    {priorRange ? <MasterMetricComparison current={pay} previous={previousPay} inProgress={dayInProgress} /> : null}
-                  </td>
-                  {/* Revenue says how much he earned; new against returning
-                      says whether he is building a base or living off one.
-                      The change against the previous period tells growing
-                      from lagging before the revenue does. Rows written
-                      before the flag existed are counted in the name cell
-                      and in neither column. */}
-                  <td>
-                    <span className="master-metric-value">{clientMix.newClients}</span>
-                    {priorRange ? <MasterMetricComparison current={clientMix.newClients} previous={previousClientMix.newClients} format={String} inProgress={dayInProgress} /> : null}
-                  </td>
-                  <td>
-                    <span className="master-metric-value">{clientMix.returningClients}</span>
-                    {priorRange ? <MasterMetricComparison current={clientMix.returningClients} previous={previousClientMix.returningClients} format={String} inProgress={dayInProgress} /> : null}
+                    {priorRange ? <MasterMetricComparison current={comparePay} previous={previousPay} inProgress={inProgress} /> : null}
                   </td>
                 </tr>
               ))}
@@ -2378,15 +2142,18 @@ function FinanceView({ data, reload, setError }) {
   const { run, busy } = useAction(setError, setMessage);
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
-  const priorRange = comparablePreviousRange(range, period, TODAY);
-  const expenses = data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), range.from, range.to));
+  const { current: compareRange, previous: priorRange, inProgress } = comparisonRanges(range, period, TODAY);
+  const expensesIn = (window) => data.expenses.filter((expense) => inRange(rowDate(expense, 'date'), window.from, window.to));
+  const expenses = expensesIn(range);
   const previousExpenses = priorRange ? data.expenses.filter(
     (expense) => inRange(rowDate(expense, 'date'), priorRange.from, priorRange.to),
   ) : [];
   const ishxonaExpenses = totalExpenses(operatingExpenses(expenses));
   const previousIshxonaExpenses = totalExpenses(operatingExpenses(previousExpenses));
   const offsetIncome = rentOffsetIncome(expenses);
-  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
+  const comparison = (current, previous) => (
+    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress }) : {}
+  );
   const visibleExpenses = expenses
     .filter((expense) => expense.section === tab && expense.category !== 'rent_offset')
     .sort(newestFirst);
@@ -2459,7 +2226,7 @@ function FinanceView({ data, reload, setError }) {
               belong on Продажи; profit is the sum of both sides and belongs on
               Обзор, which is the only screen allowed to add them up. Showing
               them here too was what made the same figures appear three times. */}
-          <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(ishxonaExpenses, previousIshxonaExpenses)} danger />
+          <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(totalExpenses(operatingExpenses(expensesIn(compareRange))), previousIshxonaExpenses)} danger />
           {offsetIncome ? <Tile label="Безденежный доход" value={money(offsetIncome)} hint="касса не меняется" /> : null}
         </div>
       </div>

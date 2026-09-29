@@ -105,6 +105,31 @@ export function comparablePreviousRange(range, period, today) {
   return { from: previous.from, to: trimmedTo < previous.to ? trimmedTo : previous.to };
 }
 
+// The part of a range that has already finished. A period that runs into today
+// stops at yesterday; one that starts today has nothing finished yet.
+export function finishedRange(range, today) {
+  if (!range?.from || !range?.to || !today || range.to < today) return range;
+  if (range.from >= today) return null;
+  return { from: range.from, to: shiftDate(today, -1) };
+}
+
+// Comparisons count finished days only. With today inside the window, a few
+// hours of today stood against a whole day last month: on the 29th at noon
+// that turned +27% into +18%. `current` is the part of the range to measure
+// against `previous`; `inProgress` means nothing has finished yet (today alone,
+// or the first day of a month) and the comparison is only a target to beat.
+export function comparisonRanges(range, period, today) {
+  const current = finishedRange(range, today);
+  if (!current) {
+    return { current: range, previous: comparablePreviousRange(range, period, today), inProgress: true };
+  }
+  return {
+    current,
+    previous: comparablePreviousRange(range, period, shiftDate(today, -1)),
+    inProgress: false,
+  };
+}
+
 export function monthWeekRanges(range) {
   const ranges = [];
   const monthEnd = new Date(`${range.to}T12:00:00`);

@@ -13,7 +13,7 @@ import {
   percentageDifference,
   shiftDate,
 } from './reporting.js';
-import { operatingExpenses, totalExpenses, totalSalesAmount } from './calculations.js';
+import { operatingExpenses, totalExpenses, totalFines, totalSalesAmount } from './calculations.js';
 
 export function monthStart(day) {
   return `${String(day).slice(0, 7)}-01`;
@@ -102,10 +102,17 @@ export function monthlySeries({ sales, fines = [], expenses = [], masters = null
     if (firstSale && from < monthStart(firstSale)) continue;
     const to = monthEnd(from);
     const monthSales = salesIn(sales, from, to);
-    const row = { key: from.slice(0, 7), from, to, isCurrent: back === 0, ...summarizeSales(monthSales) };
+    const monthFines = fines.filter((fine) => inRange(rowDate(fine), from, to));
+    const row = {
+      key: from.slice(0, 7),
+      from,
+      to,
+      isCurrent: back === 0,
+      ...summarizeSales(monthSales),
+      fines: totalFines(monthFines),
+    };
 
     if (masters) {
-      const monthFines = fines.filter((fine) => inRange(rowDate(fine), from, to));
       const monthExpenses = expenses.filter((expense) => inRange(rowDate(expense, 'date'), from, to));
       row.profit = row.revenue
         - masterPayoutForPeriod(masters, monthSales, monthFines)

@@ -74,6 +74,13 @@ test('monthly profit is revenue less master pay and operating expenses', () => {
   assert.equal(row.profit, 1_000_000 - 400_000 - 100_000);
 });
 
+test('each month carries the fines issued in it', () => {
+  const sales = [sale('2026-08-05', 100_000), sale('2026-09-05', 100_000)];
+  const fines = [{ d: '2026-09-10', amount: 50_000 }, { d: '2026-09-12', amount: 30_000 }, { d: '2026-08-02', amount: 20_000 }];
+  const series = monthlySeries({ sales, fines, today: '2026-09-29', months: 2 });
+  assert.deepEqual(series.map((row) => row.fines), [20_000, 80_000]);
+});
+
 test('returning share ignores clients whose type was never recorded', () => {
   assert.equal(returningShare([
     sale('2026-09-01', 1, { is_new_client: true }),

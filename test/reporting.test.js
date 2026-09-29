@@ -4,7 +4,9 @@ import {
   belongsToMaster,
   clientBreakdown,
   comparablePreviousRange,
+  comparisonRanges,
   dayCount,
+  finishedRange,
   latenessSummary,
   masterPayoutForPeriod,
   mastersForPeriod,
@@ -318,4 +320,38 @@ test('client breakdown of an empty period is all zeros', () => {
     returningClients: 0,
     unlabeled: 0,
   });
+});
+
+test('the finished part of a period stops at yesterday', () => {
+  assert.deepEqual(finishedRange({ from: '2026-09-01', to: '2026-09-30' }, '2026-09-29'), { from: '2026-09-01', to: '2026-09-28' });
+  assert.deepEqual(finishedRange({ from: '2026-08-01', to: '2026-08-31' }, '2026-09-29'), { from: '2026-08-01', to: '2026-08-31' });
+  assert.equal(finishedRange({ from: '2026-09-29', to: '2026-09-29' }, '2026-09-29'), null);
+});
+
+test('a running month is compared on finished days only', () => {
+  const result = comparisonRanges({ from: '2026-09-01', to: '2026-09-30' }, 'month', '2026-09-29');
+  assert.deepEqual(result.current, { from: '2026-09-01', to: '2026-09-28' });
+  assert.deepEqual(result.previous, { from: '2026-08-01', to: '2026-08-28' });
+  assert.equal(result.inProgress, false);
+});
+
+test('a running week is compared on its finished days', () => {
+  const result = comparisonRanges({ from: '2026-09-28', to: '2026-10-04' }, 'week', '2026-09-30');
+  assert.deepEqual(result.current, { from: '2026-09-28', to: '2026-09-29' });
+  assert.deepEqual(result.previous, { from: '2026-09-21', to: '2026-09-22' });
+});
+
+test('today alone and the first of a month have nothing finished yet', () => {
+  const today = comparisonRanges({ from: '2026-09-29', to: '2026-09-29' }, 'day', '2026-09-29');
+  assert.equal(today.inProgress, true);
+  assert.deepEqual(today.previous, { from: '2026-09-28', to: '2026-09-28' });
+  const firstDay = comparisonRanges({ from: '2026-10-01', to: '2026-10-31' }, 'month', '2026-10-01');
+  assert.equal(firstDay.inProgress, true);
+  assert.deepEqual(firstDay.previous, { from: '2026-09-01', to: '2026-09-01' });
+});
+
+test('a past period is compared whole', () => {
+  const result = comparisonRanges({ from: '2026-08-01', to: '2026-08-31' }, 'custom', '2026-09-29');
+  assert.deepEqual(result.current, { from: '2026-08-01', to: '2026-08-31' });
+  assert.deepEqual(result.previous, { from: '2026-07-01', to: '2026-07-31' });
 });
