@@ -573,7 +573,18 @@ function useCountUp(value, duration = 900) {
       if (progress < 1) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    // Animation frames stop while a page is not being painted (a hidden
+    // webview, a backgrounded tab). The figure must never be left stranded
+    // part-way, so it is set to its value once the animation should be over.
+    const settle = window.setTimeout(() => {
+      cancelAnimationFrame(frame);
+      fromRef.current = target;
+      setShown(target);
+    }, duration + 120);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
+    };
   }, [target, duration]);
 
   return shown;
