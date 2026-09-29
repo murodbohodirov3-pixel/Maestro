@@ -918,9 +918,24 @@ function MasterSheet({ data, master, onClose }) {
           </div>
           <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
         </div>
+        <div className="hero-card revenue-hero master-hero">
+          <div className="revenue-hero-top">
+            <span>Выручка за {monthName(monthRange.from)}</span>
+            {priorRange ? <DeltaChip current={compare.revenue} previous={before.revenue} inProgress={inProgress} /> : null}
+          </div>
+          <div className="revenue-hero-value">
+            <strong><CountUp value={now.revenue} /></strong>
+            <span>сум</span>
+          </div>
+          {priorRange ? (
+            <span className="revenue-hero-note">{comparisonLabel(priorRange, TODAY)} было {compactMoney(before.revenue)}</span>
+          ) : null}
+          <div className="revenue-hero-inset">
+            <span>К выплате</span>
+            <strong>{money(payFor(monthRange))}</strong>
+          </div>
+        </div>
         <div className="tiles sheet-tiles">
-          <Tile label="Выручка" value={money(now.revenue)} tone="total" {...versus(compare.revenue, before.revenue)} />
-          <Tile label="К выплате" value={money(payFor(monthRange))} {...versus(payFor(compareRange), payFor(priorRange))} />
           <Tile label="Клиентов" value={now.clients} {...versus(compare.clients, before.clients)} />
           <Tile label="Средний чек" value={averageCheck(now.revenue, now.clients)} {...versus(compare.averageCheck, before.averageCheck)} />
           <Tile label="Новые" value={now.newClients} {...versus(compare.newClients, before.newClients)} />
@@ -1476,7 +1491,7 @@ function MasterView({ data, reload, setError }) {
         />
       </div>
 
-      <div className="card wide">
+      <div className="card wide hero-card master-earnings">
         <SectionHeading label="Мой заработок" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(pay)} <small>сум к выплате</small></div>
@@ -1869,6 +1884,9 @@ function AttendanceView({ data, reload, setError }) {
   const [savingFineKey, setSavingFineKey] = useState('');
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
   const [showAllDays, setShowAllDays] = useState(false);
+  const [fineFormOpen, setFineFormOpen] = useState(false);
+  const [openMaster, setOpenMaster] = useState(null);
+  const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredFines = data.fines
@@ -1892,6 +1910,32 @@ function AttendanceView({ data, reload, setError }) {
   const newestRows = [...grid].sort((left, right) => right.d.localeCompare(left.d));
   const needsAttention = newestRows.filter((row) => row.status === 'missing' || row.status === 'late');
   const attendanceRows = period === 'day' ? grid : showAllDays ? newestRows : needsAttention;
+  const todayRows = grid.filter((row) => row.d === TODAY && row.status !== 'day-off');
+  const expectedToday = period === 'day' ? todayRows.length : 0;
+  const presentToday = todayRows.filter((row) => row.status === 'on-time' || row.status === 'late').length;
+  const fineTotalForPeriod = totalFines(filteredFines);
+  const fineSummary = Object.values(filteredFines.reduce((groups, fine) => {
+    const name = fine.master || 'Без мастера';
+    const entry = groups[name] || { name, count: 0, amount: 0 };
+    entry.count += 1;
+    entry.amount += Number(fine.amount) || 0;
+    groups[name] = entry;
+    return groups;
+  }, {})).sort((left, right) => right.amount - left.amount);
+  // Who is on the team this month and what each brought in; the card behind
+  // each name holds everything else.
+  const monthWindow = currentMonthRange();
+  const teamRows = data.activeMasters
+    .map((master) => ({
+      master,
+      revenue: totalSalesAmount(data.sales.filter((sale) => (
+        isCountedSale(sale) && belongsToMaster(sale, master) && inRange(rowDate(sale), monthWindow.from, monthWindow.to)
+      ))),
+      shifts: data.attendance.filter((row) => (
+        belongsToMaster(row, master) && inRange(rowDate(row), monthWindow.from, monthWindow.to)
+      )).length,
+    }))
+    .sort((left, right) => right.revenue - left.revenue);
 
   async function saveAttendance(master, date, arrived) {
     if (!arrived && !await confirmAction(`Убрать отметку о приходе: ${master}, ${displayDate(date)}?`)) return;
@@ -1970,8 +2014,7 @@ function AttendanceView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
-      <div className="card wide">
-        <SectionHeading label="Посещаемость" range={range} />
+      <div className="wide period-block">
         <PeriodPicker
           period={period}
           setPeriod={setPeriod}
@@ -1980,6 +2023,18 @@ function AttendanceView({ data, reload, setError }) {
           customTo={customTo}
           setCustomTo={setCustomTo}
         />
+        <p className="period-range">{displayRange(range)}</p>
+      </div>
+
+      <div className="card wide attendance-card">
+        <div className="section-heading">
+          <h2>{period === 'day' ? 'Смена сегодня' : 'Табель'}</h2>
+          {period === 'day' && expectedToday ? (
+            <span className={`date-badge ${presentToday === expectedToday ? 'is-positive' : ''}`}>
+              {presentToday} из {expectedToday} на месте
+            </span>
+          ) : null}
+        </div>
         {period !== 'day' && totals.length ? (
           <div className="attendance-totals" aria-label="Табель за период">
             {totals.map((total) => {
@@ -2089,40 +2144,95 @@ function AttendanceView({ data, reload, setError }) {
         </div>
       </div>
 
-      <form className="card" onSubmit={addFine}>
-        <h2>Штрафы</h2>
-        <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
-          {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
-        </select>
-        <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
-        <select value={fineForm.reason} onChange={(event) => setFineForm({ ...fineForm, reason: event.target.value })}>
-          {FINE_REASONS.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-        </select>
-        <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
-        <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Добавить штраф'}</button>
-        <Rows rows={filteredFines} empty="Штрафов за период нет." render={(fine) => {
-          const canDelete = recentFineCanBeDeleted(rowDate(fine));
-          return (
-            <div className="row fine-row" key={fine.id}>
-              <div>
-                <strong>{fine.master}</strong>
-                <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
-                <span>{fineReasonLabel(fine.reason)}</span>
+      <div className="card wide fines-card">
+        <div className="section-heading">
+          <span className="fines-heading">
+            <h2>Штрафы</h2>
+            <small>
+              {filteredFines.length
+                ? `${filteredFines.length} ${pluralRu(filteredFines.length, 'штраф', 'штрафа', 'штрафов')} за период`
+                : 'за период штрафов нет'}
+            </small>
+          </span>
+          {fineTotalForPeriod ? <strong className="fines-total">−{money(fineTotalForPeriod)}</strong> : null}
+        </div>
+        {fineSummary.length ? (
+          <div className="fine-summary">
+            {fineSummary.map((row) => (
+              <div className="fine-summary-row" key={row.name}>
+                <div>
+                  <strong>{row.name}</strong>
+                  <span>{row.count} {pluralRu(row.count, 'штраф', 'штрафа', 'штрафов')} · <b>−{money(row.amount)}</b></span>
+                </div>
+                <i aria-hidden="true"><b style={{ width: `${(row.amount / fineSummary[0].amount) * 100}%` }} /></i>
               </div>
-              <button
-                className="del"
-                disabled={!canDelete}
-                title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
-                type="button"
-                onClick={() => deleteFine(fine)}
-              >
-                ×
-              </button>
+            ))}
+          </div>
+        ) : null}
+        {fineFormOpen ? (
+          <form className="fine-form" onSubmit={addFine}>
+            <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
+              {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
+            </select>
+            <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
+            <select value={fineForm.reason} onChange={(event) => setFineForm({ ...fineForm, reason: event.target.value })}>
+              {FINE_REASONS.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+            </select>
+            <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
+            <div className="fine-form-actions">
+              <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Выставить штраф'}</button>
+              <button className="btn ghost" type="button" onClick={() => setFineFormOpen(false)}>Отмена</button>
             </div>
-          );
-        }} />
+          </form>
+        ) : (
+          <button className="btn ghost fine-open" type="button" onClick={() => setFineFormOpen(true)}>+ Выставить штраф</button>
+        )}
+        {filteredFines.length ? (
+          <details className="fine-list">
+            <summary>Все штрафы за период · {filteredFines.length}</summary>
+          <Rows rows={filteredFines} empty="Штрафов за период нет." render={(fine) => {
+            const canDelete = recentFineCanBeDeleted(rowDate(fine));
+            return (
+              <div className="row fine-row" key={fine.id}>
+                <div>
+                  <strong>{fine.master}</strong>
+                  <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
+                  <span>{fineReasonLabel(fine.reason)}</span>
+                </div>
+                <button
+                  className="del"
+                  disabled={!canDelete}
+                  title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
+                  type="button"
+                  onClick={() => deleteFine(fine)}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          }} />
+          </details>
+        ) : null}
         {message ? <p className="success">{message}</p> : null}
-      </form>
+      </div>
+
+      <div className="card wide team-masters">
+        <div className="section-heading">
+          <h2>Мастера</h2>
+          <span className="date-badge">выручка за {monthName(TODAY)}</span>
+        </div>
+        {teamRows.map((row) => (
+          <button className="team-master" key={row.master.id ?? row.master.name} type="button" onClick={() => setOpenMaster(row.master)}>
+            <span>
+              <strong>{row.master.name}</strong>
+              <small>{Number(row.master.pct) || 40}% · {row.shifts} {pluralRu(row.shifts, 'смена', 'смены', 'смен')}</small>
+            </span>
+            <b>{compactMoney(row.revenue)}</b>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+          </button>
+        ))}
+      </div>
+      {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
   );
 }
