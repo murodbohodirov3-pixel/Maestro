@@ -727,13 +727,12 @@ function SignalsCard({ result }) {
 
 // A ranking, not a leaderboard game: place, revenue, change, and a thin bar
 // showing how far each master is from the leader.
-function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen, onShowAll }) {
+function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen }) {
   const leaderRevenue = rows[0]?.revenue || 0;
   return (
     <div className="card wide masters-month-card">
       <div className="section-heading">
         <h2>Мастера месяца</h2>
-        {onShowAll ? <button className="link-button" type="button" onClick={onShowAll}>Все {rows.length}</button> : null}
       </div>
       <ol className="master-rank">
         {rows.map((row, index) => {
@@ -1156,7 +1155,6 @@ function OverviewView({ data, reload, setError, setView }) {
         comparisonRange={priorMonthRange}
         inProgress={monthInProgress}
         onOpen={setOpenMaster}
-        onShowAll={() => setView('attendance')}
       />
       <MonthlyTrend series={series} forecast={forecast} />
       {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
@@ -1896,8 +1894,6 @@ function AttendanceView({ data, reload, setError }) {
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
   const [showAllDays, setShowAllDays] = useState(false);
   const [fineFormOpen, setFineFormOpen] = useState(false);
-  const [openMaster, setOpenMaster] = useState(null);
-  const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredFines = data.fines
@@ -1933,20 +1929,6 @@ function AttendanceView({ data, reload, setError }) {
     groups[name] = entry;
     return groups;
   }, {})).sort((left, right) => right.amount - left.amount);
-  // Who is on the team this month and what each brought in; the card behind
-  // each name holds everything else.
-  const monthWindow = currentMonthRange();
-  const teamRows = data.activeMasters
-    .map((master) => ({
-      master,
-      revenue: totalSalesAmount(data.sales.filter((sale) => (
-        isCountedSale(sale) && belongsToMaster(sale, master) && inRange(rowDate(sale), monthWindow.from, monthWindow.to)
-      ))),
-      shifts: data.attendance.filter((row) => (
-        belongsToMaster(row, master) && inRange(rowDate(row), monthWindow.from, monthWindow.to)
-      )).length,
-    }))
-    .sort((left, right) => right.revenue - left.revenue);
 
   async function saveAttendance(master, date, arrived) {
     if (!arrived && !await confirmAction(`Убрать отметку о приходе: ${master}, ${displayDate(date)}?`)) return;
@@ -2226,24 +2208,6 @@ function AttendanceView({ data, reload, setError }) {
         ) : null}
         {message ? <p className="success">{message}</p> : null}
       </div>
-
-      <div className="card wide team-masters">
-        <div className="section-heading">
-          <h2>Мастера</h2>
-          <span className="date-badge">выручка за {monthName(TODAY)}</span>
-        </div>
-        {teamRows.map((row) => (
-          <button className="team-master" key={row.master.id ?? row.master.name} type="button" onClick={() => setOpenMaster(row.master)}>
-            <span>
-              <strong>{row.master.name}</strong>
-              <small>{Number(row.master.pct) || 40}% · {row.shifts} {pluralRu(row.shifts, 'смена', 'смены', 'смен')}</small>
-            </span>
-            <b>{compactMoney(row.revenue)}</b>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
-          </button>
-        ))}
-      </div>
-      {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
   );
 }

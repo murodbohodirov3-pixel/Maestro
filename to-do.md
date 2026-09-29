@@ -12,6 +12,7 @@
 - [x] Attendance register: every master has a status every day (`attendanceGrid`/`attendanceTotals`); masters see sales the owner rejected in the last 7 days until they acknowledge them; "Ишхона" shown as "Салон".
 - [x] «Банк» design ported (2026-09-29): tokens, Onest/Unbounded, header with gear, bottom tab bar (Главная · Продажи · Расходы · Команда), Настройки (goal, shift/salon, deletion log), navy hero cards, ranking without crown, Команда with register, fines summary and master list, navy master earnings card.
 - [ ] Polish pass after the owner uses it on his phone (tell apart what he wants changed).
+  - [x] Masters list removed from Команда: it repeated «Мастера месяца» on Главная, which opens the same master card.
 - [x] Step 2: new light, blue visual design. Keep the approved structure: bottom tab bar (Главная · Продажи · Расходы · Команда) and a gear screen for theme, shift settings and the deletion log; count-up numbers, Telegram haptics, leader crown, record-day and all-approved moments. Second round (А «Кобальт», Б «Небо», В «Барбершоп») is on the owner's design canvas, waiting for a pick. The first mockups — the first mockups were not "wow" enough; needs another round of concepts before any code.
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
