@@ -24,9 +24,7 @@ import {
   totalQr,
   totalSalesAmount,
 } from './utils/calculations.js';
-import { downloadClientWorkbook } from './utils/clientExport.js';
 import {
-  appointmentOutcomeSummary,
   belongsToMaster,
   clientBreakdown,
   comparablePreviousRange,
@@ -41,7 +39,6 @@ import {
   percentageDifference,
   previousRange,
   recognizedFinesTotal,
-  shiftDate,
   shiftProductivity,
   weekdayBreakdown,
 } from './utils/reporting.js';
@@ -52,15 +49,8 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
-import { sameWeekdayLastWeek } from './utils/periods.js';
-import {
-  APPOINTMENT_OUTCOME_REASONS,
-  APPOINTMENT_REASON_LABELS,
-  appointmentOutcomeAllowed,
-  reasonRequiresNote,
-} from './utils/appointmentOutcomes.js';
+import { comparisonLabel, sameWeekdayLastWeek } from './utils/periods.js';
 
-const APP_VERSION = 'auto-refresh-v1';
 const TODAY = localDate();
 const THEMES = {
   brass: {
@@ -274,20 +264,39 @@ function newRequestId() {
 }
 
 // The period lived in each view's own state, so stepping from Продажи to
-// Расходы to check one figure silently threw the chosen month away. One shared,
-// remembered selection instead.
-const PERIOD_KEYS = { period: 'maestroPeriod', from: 'maestroPeriodFrom', to: 'maestroPeriodTo' };
+// Расходы to check one figure silently threw the chosen month away. The money
+// screens share one selection; attendance and a master's own day keep theirs,
+// because "who came today" and "what did the salon earn" start from different
+// periods. It lasts for the session only: remembered across launches, a day
+// picked once kept opening Продажи on an empty morning.
+function readSessionValue(key, fallback) {
+  try {
+    return sessionStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-function usePeriodSelection(defaultPeriod = 'day') {
-  const [period, setPeriod] = useState(() => localStorage.getItem(PERIOD_KEYS.period) || defaultPeriod);
-  const [customFrom, setCustomFrom] = useState(() => localStorage.getItem(PERIOD_KEYS.from) || '');
-  const [customTo, setCustomTo] = useState(() => localStorage.getItem(PERIOD_KEYS.to) || '');
+function writeSessionValue(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable in a private webview; the choice then simply
+    // does not outlive the screen.
+  }
+}
+
+function usePeriodSelection(scope, defaultPeriod) {
+  const key = `maestroPeriod:${scope}`;
+  const [period, setPeriod] = useState(() => readSessionValue(key, defaultPeriod));
+  const [customFrom, setCustomFrom] = useState(() => readSessionValue(`${key}:from`, ''));
+  const [customTo, setCustomTo] = useState(() => readSessionValue(`${key}:to`, ''));
 
   useEffect(() => {
-    localStorage.setItem(PERIOD_KEYS.period, period);
-    localStorage.setItem(PERIOD_KEYS.from, customFrom);
-    localStorage.setItem(PERIOD_KEYS.to, customTo);
-  }, [period, customFrom, customTo]);
+    writeSessionValue(key, period);
+    writeSessionValue(`${key}:from`, customFrom);
+    writeSessionValue(`${key}:to`, customTo);
+  }, [key, period, customFrom, customTo]);
 
   return { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo };
 }
@@ -360,27 +369,22 @@ function getRange(period, customFrom, customTo, rows = [], key = 'd') {
 
 // A percentage alone cannot be acted on: "+12%" hides whether the salon gained
 // two million or twenty thousand. The figure it grew from is shown next to it,
-// and the dates it came from drop to the quiet line underneath.
-function comparisonToPrevious(current, previous, comparisonRange, formatValue = money) {
+// and what it is compared with drops to the quiet line underneath.
+//
+// A day that is still running cannot have fallen behind a finished one: at
+// noon "−100%" is only the morning. Until it overtakes, it states the target
+// in a neutral tone instead of a red loss.
+function comparisonToPrevious(current, previous, comparisonRange, formatValue = money, { inProgress = false } = {}) {
   const percent = percentageDifference(current, previous);
+  const hint = comparisonLabel(comparisonRange, TODAY);
+  if (inProgress && (Number(current) || 0) <= (Number(previous) || 0)) {
+    return { secondary: `было ${formatValue(previous)}`, secondaryTone: '', hint };
+  }
   return {
     secondary: `${percent > 0 ? '+' : ''}${percent}% · было ${formatValue(previous)}`,
     secondaryTone: percent > 0 ? 'positive' : percent < 0 ? 'negative' : '',
-    hint: displayRange(comparisonRange),
+    hint,
   };
-}
-
-function tashkentDate(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const parts = new Intl.DateTimeFormat('en', {
-    timeZone: 'Asia/Tashkent',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${map.year}-${map.month}-${map.day}`;
 }
 
 function appointmentTime(value) {
@@ -407,11 +411,8 @@ function normalizeData(data) {
     sales: data.sales || [],
     fines: data.fines || [],
     attendance: data.attendance || [],
-    bookingServices: data.booking_services || [],
     dayStatuses: data.master_day_statuses || [],
-    appointments: data.appointments || [],
     scheduleRules: data.master_schedule_rules || [],
-    clients: data.clients || [],
     expenses: data.expenses || [],
     settings,
   };
@@ -483,9 +484,12 @@ function PaymentBreakdownBar({ cash, card, qr, previous }) {
   );
 }
 
-function MasterMetricComparison({ current, previous, format = money }) {
+function MasterMetricComparison({ current, previous, format = money, inProgress = false }) {
   const percent = percentageDifference(current, previous);
   const tone = percent > 0 ? 'positive' : percent < 0 ? 'negative' : '';
+  if (inProgress && (Number(current) || 0) <= (Number(previous) || 0)) {
+    return <small className="master-period-change"><span>было {format(previous)}</span></small>;
+  }
   return (
     <small className={`master-period-change ${tone}`}>
       {percent > 0 ? '+' : ''}{percent}% <span>· было {format(previous)}</span>
@@ -588,6 +592,38 @@ function OverviewWeeklyDetails({ detailId, title, rows, valueKey }) {
   );
 }
 
+function shortRange(range) {
+  const short = (day) => `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+  return range.from === range.to ? short(range.from) : `${short(range.from)}–${short(range.to)}`;
+}
+
+// Revenue and profit week by week used to be two separate tiles that repeated
+// the month totals already shown above them. One table carries both.
+function OverviewWeeklyTable({ rows }) {
+  return (
+    <div className="overview-details" id="overview-details-weeks" role="region" aria-label="Выручка и прибыль по неделям">
+      <div className="overview-details-heading">
+        <strong>Выручка и прибыль</strong>
+        <span>по календарным неделям</span>
+      </div>
+      <div className="overview-details-list">
+        <div className="overview-week-row is-head">
+          <span>Неделя</span>
+          <span>Выручка</span>
+          <span>Прибыль</span>
+        </div>
+        {rows.map((row) => (
+          <div className="overview-week-row" key={row.from}>
+            <span>{shortRange(row)}</span>
+            <strong>{money(row.revenue)}</strong>
+            <strong className={row.netProfit < 0 ? 'danger' : ''}>{money(row.netProfit)}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OverviewFineDetails({ rows }) {
   return (
     <div className="overview-details" id="overview-details-fines" role="region" aria-label="Штрафы по мастерам">
@@ -670,6 +706,7 @@ function OverviewView({ data, setView }) {
     week.from <= TODAY || week.revenue || week.grossMasterPay || week.recognizedFines || week.expenses || week.nonCashIncome
   ));
   const fineRanking = overviewFineRanking(data, monthFines);
+  const bestWeek = visibleWeeklyMetrics.reduce((best, week) => (week.revenue > (best?.revenue || 0) ? week : best), null);
 
   const versusPriorMonth = (current, previous) => (
     priorMonthRange ? comparisonToPrevious(current, previous, priorMonthRange) : {}
@@ -717,6 +754,8 @@ function OverviewView({ data, setView }) {
               todayRevenue,
               totalSalesAmount(lastWeekSales),
               { from: lastWeekSameDay, to: lastWeekSameDay },
+              money,
+              { inProgress: true },
             )}
           />
           <Tile
@@ -744,21 +783,20 @@ function OverviewView({ data, setView }) {
           type="button"
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? 'Свернуть подробности' : 'Подробнее: остаток салону, взаимозачёты, по неделям'}
+          {detailsOpen ? 'Свернуть' : 'Подробнее'}
         </button>
 
         {detailsOpen ? (
           <div className="tiles overview-tiles">
             <OverviewMetricTile
-              detailId="revenue"
-              expanded={expandedDetail === 'revenue'}
-              label="Выручка за месяц"
-              value={`${money(monthRevenue)} сум`}
+              detailId="weeks"
+              expanded={expandedDetail === 'weeks'}
+              label="По неделям"
+              value={bestWeek?.revenue ? `${money(bestWeek.revenue)} сум` : '—'}
+              hint={bestWeek?.revenue ? `лучшая неделя · ${shortRange(bestWeek)}` : null}
               onToggle={setExpandedDetail}
             />
-            {expandedDetail === 'revenue' ? (
-              <OverviewWeeklyDetails detailId="revenue" title="Выручка за месяц" rows={visibleWeeklyMetrics} valueKey="revenue" />
-            ) : null}
+            {expandedDetail === 'weeks' ? <OverviewWeeklyTable rows={visibleWeeklyMetrics} /> : null}
             <OverviewMetricTile
               detailId="salon"
               expanded={expandedDetail === 'salon'}
@@ -781,39 +819,33 @@ function OverviewView({ data, setView }) {
               onToggle={setExpandedDetail}
             />
             {expandedDetail === 'fines' ? <OverviewFineDetails rows={fineRanking} /> : null}
-            <OverviewMetricTile
-              danger={netProfit < 0}
-              detailId="cash-profit"
-              expanded={expandedDetail === 'cash-profit'}
-              label="Денежная чистая прибыль"
-              tone="total"
-              value={`${money(netProfit)} сум`}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'cash-profit' ? (
-              <OverviewWeeklyDetails detailId="cash-profit" title="Денежная чистая прибыль" rows={visibleWeeklyMetrics} valueKey="netProfit" />
-            ) : null}
-            <OverviewMetricTile
-              detailId="rent-offsets"
-              expanded={expandedDetail === 'rent-offsets'}
-              label="Безденежный доход"
-              value={`${money(nonCashIncome)} сум`}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'rent-offsets' ? (
-              <OverviewWeeklyDetails detailId="rent-offsets" title="Взаимозачёты аренды" rows={visibleWeeklyMetrics} valueKey="nonCashIncome" />
-            ) : null}
-            <OverviewMetricTile
-              danger={totalNetProfit < 0}
-              detailId="total-profit"
-              expanded={expandedDetail === 'total-profit'}
-              label="Общий результат"
-              tone="total"
-              value={`${money(totalNetProfit)} сум`}
-              onToggle={setExpandedDetail}
-            />
-            {expandedDetail === 'total-profit' ? (
-              <OverviewWeeklyDetails detailId="total-profit" title="Общий результат с взаимозачётами" rows={visibleWeeklyMetrics} valueKey="totalNetProfit" />
+            {/* A rent offset is rare. With none this month both tiles only
+                repeated a zero and the profit already shown at the top. */}
+            {nonCashIncome ? (
+              <>
+                <OverviewMetricTile
+                  detailId="rent-offsets"
+                  expanded={expandedDetail === 'rent-offsets'}
+                  label="Безденежный доход"
+                  value={`${money(nonCashIncome)} сум`}
+                  onToggle={setExpandedDetail}
+                />
+                {expandedDetail === 'rent-offsets' ? (
+                  <OverviewWeeklyDetails detailId="rent-offsets" title="Взаимозачёты аренды" rows={visibleWeeklyMetrics} valueKey="nonCashIncome" />
+                ) : null}
+                <OverviewMetricTile
+                  danger={totalNetProfit < 0}
+                  detailId="total-profit"
+                  expanded={expandedDetail === 'total-profit'}
+                  label="Общий результат"
+                  tone="total"
+                  value={`${money(totalNetProfit)} сум`}
+                  onToggle={setExpandedDetail}
+                />
+                {expandedDetail === 'total-profit' ? (
+                  <OverviewWeeklyDetails detailId="total-profit" title="Общий результат с взаимозачётами" rows={visibleWeeklyMetrics} valueKey="totalNetProfit" />
+                ) : null}
+              </>
             ) : null}
             <OverviewMetricTile
               detailId="weekdays"
@@ -846,7 +878,7 @@ function MasterView({ data, reload, setError }) {
   const [amount, setAmount] = useState('');
   const [clientCount, setClientCount] = useState(1);
   const [isNewClient, setIsNewClient] = useState(null);
-  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
   const [message, setMessage] = useState('');
   const [requestId, setRequestId] = useState(newRequestId);
   const { run, busy } = useAction(setError, setMessage);
@@ -1106,10 +1138,11 @@ function MasterView({ data, reload, setError }) {
 }
 
 function AdminView({ data, reload, setError }) {
-  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
   const [message, setMessage] = useState('');
   const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
   const [detailLimit, setDetailLimit] = useState(50);
+  const [salesListOpen, setSalesListOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.sales);
   // Trimmed to the elapsed part of the period, so the first days of a month are
@@ -1173,7 +1206,11 @@ function AdminView({ data, reload, setError }) {
   const previousRevenue = totalSalesAmount(previousSales);
   const previousNewClients = previousSales.filter((sale) => sale.is_new_client === true).reduce((sum, sale) => sum + clients(sale), 0);
   const previousClients = previousSales.reduce((sum, sale) => sum + clients(sale), 0);
-  const comparison = (current, previous) => priorRange ? comparisonToPrevious(current, previous, priorRange) : {};
+  // Today against the whole of yesterday is a race the morning always loses.
+  const dayInProgress = range.from === TODAY && range.to === TODAY;
+  const comparison = (current, previous) => (
+    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress: dayInProgress }) : {}
+  );
   const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   // The share of cash is an operational number, not trivia: it drives what has
   // to be collected and banked. A share without its previous value is a fact
@@ -1234,6 +1271,9 @@ function AdminView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
+      {/* An empty queue used to keep its card and a sentence saying it was
+          empty. It now leaves, like the reminder on Обзор does. */}
+      {pendingSales.length || message ? (
       <div className="card wide">
         <h2>Оплаты на подтверждение</h2>
         {pendingSales.length > 1 ? (
@@ -1271,6 +1311,7 @@ function AdminView({ data, reload, setError }) {
         />
         {message ? <p className="success">{message}</p> : null}
       </div>
+      ) : null}
 
       <div className="card wide">
         <SectionHeading label="Период отчёта" range={range} />
@@ -1305,7 +1346,7 @@ function AdminView({ data, reload, setError }) {
 
       <div className="card wide">
         <h2>По мастерам</h2>
-        {priorRange ? <p className="master-comparison-range">Сравнение к периоду — {displayRange(priorRange)}</p> : null}
+        {priorRange ? <p className="master-comparison-range">Сравнение {comparisonLabel(priorRange, TODAY)}</p> : null}
         <div className="master-table-wrap">
           <table className="master-table">
             <thead>
@@ -1361,11 +1402,11 @@ function AdminView({ data, reload, setError }) {
                   </td>
                   <td>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
-                    {priorRange ? <MasterMetricComparison current={masterRevenue} previous={masterPreviousRevenue} /> : null}
+                    {priorRange ? <MasterMetricComparison current={masterRevenue} previous={masterPreviousRevenue} inProgress={dayInProgress} /> : null}
                   </td>
                   <td>
                     <strong className="master-metric-value">{money(pay)} сум</strong>
-                    {priorRange ? <MasterMetricComparison current={pay} previous={previousPay} /> : null}
+                    {priorRange ? <MasterMetricComparison current={pay} previous={previousPay} inProgress={dayInProgress} /> : null}
                   </td>
                   {/* Revenue says how much he earned; new against returning
                       says whether he is building a base or living off one.
@@ -1375,11 +1416,11 @@ function AdminView({ data, reload, setError }) {
                       and in neither column. */}
                   <td>
                     <span className="master-metric-value">{clientMix.newClients}</span>
-                    {priorRange ? <MasterMetricComparison current={clientMix.newClients} previous={previousClientMix.newClients} format={String} /> : null}
+                    {priorRange ? <MasterMetricComparison current={clientMix.newClients} previous={previousClientMix.newClients} format={String} inProgress={dayInProgress} /> : null}
                   </td>
                   <td>
                     <span className="master-metric-value">{clientMix.returningClients}</span>
-                    {priorRange ? <MasterMetricComparison current={clientMix.returningClients} previous={previousClientMix.returningClients} format={String} /> : null}
+                    {priorRange ? <MasterMetricComparison current={clientMix.returningClients} previous={previousClientMix.returningClients} format={String} inProgress={dayInProgress} /> : null}
                   </td>
                 </tr>
               ))}
@@ -1389,8 +1430,21 @@ function AdminView({ data, reload, setError }) {
         <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
       </div>
 
+      {/* Every sale of the month, one per row, used to sit open under the
+          totals — five hundred rows to scroll past. It is there when a single
+          sale has to be found or deleted, and folded away otherwise. */}
       <div className="card wide detailed-report-card">
-        <SectionHeading label="Детальный отчёт по мастерам" range={range} />
+        <button
+          aria-expanded={salesListOpen}
+          className="overview-more detailed-report-toggle"
+          type="button"
+          onClick={() => setSalesListOpen((open) => !open)}
+        >
+          {salesListOpen ? 'Свернуть список продаж' : `Все продажи за период · ${sales.length}`}
+        </button>
+        {salesListOpen ? (
+        <>
+        <SectionHeading label="Все продажи" range={range} />
         <Rows
           // Over a long period this list is thousands of rows, and rendering
           // them all locks the phone for seconds before anything appears.
@@ -1425,13 +1479,15 @@ function AdminView({ data, reload, setError }) {
             Показать ещё · осталось {sales.length - detailLimit}
           </button>
         ) : null}
+        </>
+        ) : null}
       </div>
     </section>
   );
 }
 
 function AttendanceView({ data, reload, setError }) {
-  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('attendance', 'day');
   const [fineForm, setFineForm] = useState({
     master: data.activeMasters[0]?.name || '',
     d: TODAY,
@@ -1507,7 +1563,7 @@ function AttendanceView({ data, reload, setError }) {
   async function toggleDayOff(master, date, enabled) {
     const masterRecord = data.masters.find((item) => item.name === master);
     if (!masterRecord?.id) return setError('Не найден master_id для выбранного мастера.');
-    if (enabled && !confirm(`Отметить ${master} как выходного за ${displayDate(date)}? Календарь дня будет закрыт для новых записей.`)) return;
+    if (enabled && !await confirmAction(`Отметить ${master} как выходного за ${displayDate(date)}?`)) return;
     const key = `${masterRecord.id}-${date}`;
     setSavingDayOffKey(key);
     setError('');
@@ -1639,7 +1695,7 @@ function AttendanceView({ data, reload, setError }) {
                   <span>{displayDate(rowDate(item))}</span>
                   <span>
                     {dayOff
-                      ? 'выходной · календарь закрыт'
+                      ? 'выходной'
                       : !arrived
                       ? 'нет отметки'
                       : lateBy > 0
@@ -1737,517 +1793,8 @@ function AttendanceView({ data, reload, setError }) {
   );
 }
 
-const APPOINTMENT_STATUS_LABELS = {
-  pending: 'Ожидает',
-  confirmed: 'Подтверждена',
-  completed: 'Завершена',
-  cancelled: 'Отменена',
-  no_show: 'Неявка',
-};
-
-function CalendarView({ data, reload, setError }) {
-  const canManage = ['owner', 'admin'].includes(data.appRole);
-  const ownMaster = data.masters.find((master) => master.name === data.me);
-  const canCreateOwnAppointment = Boolean(ownMaster?.id);
-  const [date, setDate] = useState(TODAY);
-  const [selectedMaster, setSelectedMaster] = useState(canManage ? 'all' : String(ownMaster?.id || ''));
-  const [message, setMessage] = useState('');
-  const [saving, setSaving] = useState(false);
-  const { run } = useAction(setError, setMessage);
-  const [outcomeDialog, setOutcomeDialog] = useState(null);
-  const [outcomeForm, setOutcomeForm] = useState({ reason_code: '', reason_note: '' });
-  const [form, setForm] = useState({
-    master_id: String(ownMaster?.id || data.activeMasters[0]?.id || ''),
-    service_id: data.bookingServices[0]?.id || '',
-    time: '10:00',
-    client_name: '',
-    client_phone: '',
-    notes: '',
-    status: 'confirmed',
-  });
-
-  const visibleMasters = canManage
-    ? data.activeMasters.filter((master) => selectedMaster === 'all' || String(master.id) === selectedMaster)
-    : data.activeMasters.filter((master) => String(master.id) === String(ownMaster?.id));
-  const visibleIds = new Set(visibleMasters.map((master) => String(master.id)));
-  const appointments = data.appointments
-    .filter((appointment) => (
-      visibleIds.has(String(appointment.master_id)) && tashkentDate(appointment.starts_at) === date
-    ))
-    .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
-
-  // A rolling month rather than the viewed day: a no-show rate computed from a
-  // single day is noise, and the owner reads this to decide about prepayment.
-  const outcomeRange = { from: shiftDate(TODAY, -29), to: TODAY };
-  const outcomes = appointmentOutcomeSummary(
-    data.appointments.filter((appointment) => {
-      const day = tashkentDate(appointment.starts_at);
-      return visibleIds.has(String(appointment.master_id)) && inRange(day, outcomeRange.from, outcomeRange.to);
-    }),
-  );
-
-  function isDayOff(masterId) {
-    return data.dayStatuses.some((day) => (
-      String(day.master_id) === String(masterId) && day.work_date === date && day.status === 'day_off'
-    ));
-  }
-
-  function moveDate(days) {
-    const next = new Date(`${date}T12:00:00`);
-    next.setDate(next.getDate() + days);
-    setDate(localDate(next));
-  }
-
-  async function addAppointment(event) {
-    event.preventDefault();
-    if (!form.master_id || !form.service_id || !form.time || !form.client_name.trim() || !form.client_phone.trim()) {
-      return setError('Выберите мастера, услугу, время и укажите имя и телефон клиента.');
-    }
-    setSaving(true);
-    setError('');
-    setMessage('');
-    try {
-      await callLegacyApi('addAppointment', {
-        ...form,
-        master_id: Number(form.master_id),
-        starts_at: `${date}T${form.time}:00+05:00`,
-      });
-      setMessage('Запись добавлена в календарь.');
-      setForm((current) => ({ ...current, client_name: '', client_phone: '', notes: '' }));
-      await reload();
-    } catch (appointmentError) {
-      const labels = {
-        slot_already_booked: 'Это время пересекается с другой активной записью.',
-        master_day_off: 'У мастера выходной — запись на этот день закрыта.',
-        client_blocked: 'Клиент заблокирован. Сначала разблокируйте его в CRM.',
-      };
-      setError(labels[appointmentError.message] || appointmentError.message || 'Не удалось создать запись.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function setAppointmentStatus(appointment, status) {
-    await run(
-      () => callLegacyApi('setAppointmentStatus', { id: appointment.id, status }).then(reload),
-      `Статус изменён: ${APPOINTMENT_STATUS_LABELS[status]}.`,
-    );
-  }
-
-  function openOutcomeDialog(appointment, outcome, cancelledBy = null) {
-    setError('');
-    setMessage('');
-    setOutcomeForm({ reason_code: '', reason_note: '' });
-    setOutcomeDialog({ appointment, outcome, cancelledBy });
-  }
-
-  async function submitOutcome(event) {
-    event.preventDefault();
-    const reasonCode = outcomeDialog.outcome === 'completed' ? null : outcomeForm.reason_code;
-    const reasonNote = outcomeForm.reason_note.trim();
-    if (!reasonCode) return setError('Выберите обязательную причину.');
-    if (reasonRequiresNote(reasonCode) && !reasonNote) return setError('Для варианта «Другая причина» добавьте комментарий.');
-    setSaving(true);
-    setError('');
-    try {
-      await callLegacyApi('setAppointmentOutcome', {
-        id: outcomeDialog.appointment.id,
-        outcome: outcomeDialog.outcome,
-        cancelled_by: outcomeDialog.cancelledBy,
-        reason_code: reasonCode,
-        reason_note: reasonNote || null,
-      });
-      setMessage(`Статус изменён: ${APPOINTMENT_STATUS_LABELS[outcomeDialog.outcome]}.`);
-      setOutcomeDialog(null);
-      await reload();
-    } catch (outcomeError) {
-      const labels = {
-        outcome_before_start: 'Завершить запись или отметить неявку можно только после времени начала.',
-        invalid_status_transition: 'Эта запись уже имеет финальный статус.',
-        outcome_already_recorded: 'Для записи уже сохранён другой итог.',
-      };
-      setError(labels[outcomeError.message] || outcomeError.message || 'Не удалось сохранить итог записи.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function completeAppointment(appointment) {
-    setSaving(true);
-    setError('');
-    setMessage('');
-    try {
-      await callLegacyApi('setAppointmentOutcome', {
-        id: appointment.id,
-        outcome: 'completed',
-        cancelled_by: null,
-        reason_code: null,
-        reason_note: null,
-      });
-      setMessage('Статус изменён: Завершена.');
-      await reload();
-    } catch (outcomeError) {
-      setError(outcomeError.message === 'outcome_before_start'
-        ? 'Завершить запись можно только после времени начала.'
-        : outcomeError.message || 'Не удалось завершить запись.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function toggleCalendarDayOff(master, enabled) {
-    if (enabled && !confirm(`Поставить выходной ${master.name} на ${displayDate(date)}?`)) return;
-    setError('');
-    setMessage('');
-    try {
-      await callLegacyApi('setMasterDayOff', { master_id: master.id, work_date: date, enabled });
-      setMessage(enabled ? `Календарь ${master.name} закрыт на весь день.` : `Выходной ${master.name} отменён.`);
-      await reload();
-    } catch (dayOffError) {
-      if (dayOffError.message === 'appointments_exist') {
-        const times = (dayOffError.details?.appointments || []).map((item) => appointmentTime(item.starts_at)).join(', ');
-        setError(`Сначала перенесите или отмените активные записи${times ? `: ${times}` : ''}.`);
-      } else setError(dayOffError.message || 'Не удалось изменить выходной.');
-    }
-  }
-
-  return (
-    <section className="view-grid calendar-view">
-      <div className="card wide calendar-toolbar">
-        <div className="calendar-date-nav">
-          <button className="btn ghost" type="button" onClick={() => moveDate(-1)}>←</button>
-          <label>Дата<input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
-          <button className="btn ghost" type="button" onClick={() => moveDate(1)}>→</button>
-        </div>
-        {canManage ? (
-          <label>Мастер
-            <select value={selectedMaster} onChange={(event) => setSelectedMaster(event.target.value)}>
-              <option value="all">Все мастера</option>
-              {data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}
-            </select>
-          </label>
-        ) : null}
-      </div>
-
-      {/* Empty chair time and what it cost. Every field here was already being
-          written; none of it was ever added up. */}
-      {canManage && outcomes.resolved ? (
-        <div className="card wide">
-          <SectionHeading label="Неявки и отмены за 30 дней" range={outcomeRange} />
-          <div className="tiles">
-            <Tile label="Записей завершено" value={outcomes.completed} />
-            <Tile
-              label="Неявки"
-              value={`${outcomes.noShow} · ${outcomes.noShowRate.toFixed(0)}%`}
-              danger={outcomes.noShowRate >= 10}
-            />
-            <Tile
-              label="Отмены"
-              value={`${outcomes.cancelled} · ${outcomes.cancelledRate.toFixed(0)}%`}
-              hint={outcomes.cancelled ? `клиентом ${outcomes.cancelledByClient} · салоном ${outcomes.cancelledBySalon}` : null}
-            />
-            <Tile label="Упущено" value={`${money(outcomes.lostAmount)} сум`} danger={outcomes.lostAmount > 0} tone="total" />
-          </div>
-          <p className="hint">
-            Считаются только состоявшиеся исходы: {outcomes.upcoming} предстоящих {pluralRu(outcomes.upcoming, 'запись', 'записи', 'записей')} в проценты не входят.
-          </p>
-        </div>
-      ) : null}
-
-      {visibleMasters.map((master) => {
-        const masterAppointments = appointments.filter((appointment) => String(appointment.master_id) === String(master.id));
-        const dayOff = isDayOff(master.id);
-        return (
-          <article className={`card calendar-master-card ${dayOff ? 'day-off' : ''}`} key={master.id}>
-            <div className="calendar-master-heading">
-              <div><h2>{master.name}</h2><span>{displayDate(date)}</span></div>
-              {dayOff ? <strong className="calendar-day-off-badge">Выходной</strong> : null}
-              {canManage ? (
-                <button className={`day-off-button ${dayOff ? 'active' : ''}`} type="button" onClick={() => toggleCalendarDayOff(master, !dayOff)}>
-                  {dayOff ? 'Отменить выходной' : 'Выходной'}
-                </button>
-              ) : null}
-            </div>
-            {dayOff ? <p className="hint">Дневной календарь закрыт для новых записей.</p> : null}
-            <div className="calendar-appointments">
-              {masterAppointments.length ? masterAppointments.map((appointment) => (
-                <div className={`calendar-appointment status-${appointment.status}`} key={appointment.id}>
-                  <time>{appointmentTime(appointment.starts_at)}–{appointmentTime(appointment.ends_at)}</time>
-                  <div>
-                    <strong>{appointment.client_name}</strong>
-                    <span>{appointment.service_name} · {money(appointment.price_uzs)} сум</span>
-                    {appointment.client_phone ? <span>{appointment.client_phone}</span> : null}
-                    {appointment.client_is_blocked ? <span className="client-block-warning">Клиент заблокирован</span> : null}
-                    {appointment.status_reason_code ? <span>Причина: {APPOINTMENT_REASON_LABELS[appointment.status_reason_code] || appointment.status_reason_code}</span> : null}
-                    {appointment.status_reason_note ? <span>Комментарий: {appointment.status_reason_note}</span> : null}
-                    {/* Written by the booking form since day one and never
-                        rendered, so every note the owner typed was lost. */}
-                    {appointment.notes ? <span className="appointment-note">Заметка: {appointment.notes}</span> : null}
-                  </div>
-                  <b>{APPOINTMENT_STATUS_LABELS[appointment.status] || appointment.status}</b>
-                  {(canManage || String(appointment.master_id) === String(ownMaster?.id)) && ['pending', 'confirmed'].includes(appointment.status) ? (
-                    <div className="calendar-appointment-actions">
-                      {appointment.status === 'pending' ? <button type="button" onClick={() => setAppointmentStatus(appointment, 'confirmed')}>Подтвердить</button> : null}
-                      <button disabled={saving || !appointmentOutcomeAllowed(appointment.status, 'completed', appointment.starts_at)} type="button" onClick={() => completeAppointment(appointment)}>Завершить</button>
-                      <button className="danger" disabled={saving || !appointmentOutcomeAllowed(appointment.status, 'no_show', appointment.starts_at)} type="button" onClick={() => openOutcomeDialog(appointment, 'no_show')}>Неявка</button>
-                      <button className="danger" disabled={saving} type="button" onClick={() => openOutcomeDialog(appointment, 'cancelled', 'client')}>Отменил клиент</button>
-                      <button className="danger" disabled={saving} type="button" onClick={() => openOutcomeDialog(appointment, 'cancelled', 'salon')}>Отменил салон</button>
-                    </div>
-                  ) : null}
-                </div>
-              )) : <p className="hint">Записей на этот день нет.</p>}
-            </div>
-          </article>
-        );
-      })}
-
-      {canManage || canCreateOwnAppointment ? (
-        <form className="card calendar-new-form" onSubmit={addAppointment}>
-          <h2>Новая запись</h2>
-          {canManage ? (
-            <label>Мастер<select value={form.master_id} onChange={(event) => setForm({ ...form, master_id: event.target.value })}>{data.activeMasters.map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</select></label>
-          ) : <label>Барбер<input value={ownMaster?.name || ''} readOnly /></label>}
-          <label>Услуга<select value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })}>{data.bookingServices.filter((service) => service.active !== false).map((service) => <option key={service.id} value={service.id}>{service.name_ru} · {money(service.price_uzs)} сум</option>)}</select></label>
-          <label>Время<input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value })} /></label>
-          <label>Имя клиента<input maxLength="120" value={form.client_name} onChange={(event) => setForm({ ...form, client_name: event.target.value })} /></label>
-          <label>Телефон<input inputMode="tel" required value={form.client_phone} onChange={(event) => setForm({ ...form, client_phone: event.target.value })} /></label>
-          <label>Комментарий<input maxLength="500" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
-          {canManage ? <label>Статус<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="confirmed">Подтверждена</option><option value="pending">Ожидает подтверждения</option></select></label> : null}
-          <button className="btn" disabled={saving || !data.bookingServices.length} type="submit">{saving ? 'Сохраняю…' : 'Добавить запись'}</button>
-        </form>
-      ) : null}
-      {message ? <p className="notice success">{message}</p> : null}
-      {outcomeDialog ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && !saving) setOutcomeDialog(null);
-        }}>
-          <form className="card outcome-dialog" role="dialog" aria-modal="true" aria-labelledby="outcome-dialog-title" onSubmit={submitOutcome}>
-            <h2 id="outcome-dialog-title">
-              {outcomeDialog.outcome === 'no_show'
-                ? 'Причина неявки'
-                : outcomeDialog.cancelledBy === 'client' ? 'Причина отмены клиентом' : 'Причина отмены салоном'}
-            </h2>
-            <p className="hint">{outcomeDialog.appointment.client_name} · {appointmentTime(outcomeDialog.appointment.starts_at)}</p>
-            <label>Причина
-              <select required value={outcomeForm.reason_code} onChange={(event) => setOutcomeForm({ ...outcomeForm, reason_code: event.target.value })}>
-                <option value="">Выберите причину</option>
-                {APPOINTMENT_OUTCOME_REASONS[outcomeDialog.outcome === 'no_show' ? 'no_show' : outcomeDialog.cancelledBy].map(([code, label]) => (
-                  <option key={code} value={code}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <label>Комментарий{reasonRequiresNote(outcomeForm.reason_code) ? ' (обязательно)' : ''}
-              <textarea maxLength="500" required={reasonRequiresNote(outcomeForm.reason_code)} rows="4" value={outcomeForm.reason_note} onChange={(event) => setOutcomeForm({ ...outcomeForm, reason_note: event.target.value })} />
-            </label>
-            <div className="outcome-dialog-actions">
-              <button className="btn ghost" disabled={saving} type="button" onClick={() => setOutcomeDialog(null)}>Отмена</button>
-              <button className="btn" disabled={saving} type="submit">{saving ? 'Сохраняю…' : 'Сохранить итог'}</button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-const CLIENT_STATUS_LABELS = {
-  lead: 'Лид',
-  active: 'Активный',
-  inactive: 'Неактивный',
-  blocked: 'Заблокирован',
-};
-
-const CLIENT_CONSENT_LABELS = {
-  unknown: 'Не запрошено',
-  granted: 'Разрешено',
-  denied: 'Запрещено',
-};
-
-function ClientsView({ data, reload, setError }) {
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState('all');
-  const [message, setMessage] = useState('');
-  const [blockTarget, setBlockTarget] = useState(null);
-  const [blockReason, setBlockReason] = useState('');
-  const [visibleLimit, setVisibleLimit] = useState(60);
-  const { run, busy } = useAction(setError, setMessage);
-  const clients = [...data.clients].sort((left, right) => (
-    String(right.last_contact_at || '').localeCompare(String(left.last_contact_at || ''))
-  ));
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredClients = clients.filter((client) => {
-    const matchesQuery = !normalizedQuery || [
-      client.full_name,
-      client.phone_e164,
-      client.telegram_username,
-    ].some((value) => String(value || '').toLowerCase().includes(normalizedQuery));
-    if (!matchesQuery) return false;
-    if (filter === 'active') return client.lifecycle_status === 'active';
-    if (filter === 'return') return client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45;
-    if (filter === 'marketing') return client.eligible_for_marketing === true;
-    if (filter === 'blocked') return Boolean(client.blocked_at);
-    return true;
-  });
-  const returningClients = clients.filter((client) => (
-    client.days_since_last_visit == null || Number(client.days_since_last_visit) >= 45
-  )).length;
-  const marketingClients = clients.filter((client) => client.eligible_for_marketing === true).length;
-  const blockedClients = clients.filter((client) => Boolean(client.blocked_at)).length;
-  const activeClients = clients.filter((client) => client.lifecycle_status === 'active').length;
-
-  // These counts used to sit in a row of tiles above a dropdown offering the
-  // very same cuts. A tile you want to tap but cannot is a dead end, so the
-  // count and the filter are now one control.
-  //
-  // Note the groups overlap: a client can be active and still not have been in
-  // for 45 days. The counts do not add up to the total, and are not meant to.
-  const clientFilters = [
-    { id: 'all', label: 'Все', count: clients.length },
-    { id: 'active', label: 'Активные', count: activeClients },
-    { id: 'return', label: 'Давно не были', count: returningClients, hint: '45 дней и более' },
-    { id: 'marketing', label: 'Можно уведомлять', count: marketingClients, hint: 'есть согласие' },
-    { id: 'blocked', label: 'Заблокированы', count: blockedClients },
-  ];
-
-  async function setClientBlocked(client, blocked) {
-    let reason = null;
-    if (blocked) {
-      // window.prompt is unreliable inside the Telegram webview, so the reason
-      // is collected by an in-page field instead of a native dialog.
-      reason = blockReason.trim();
-      if (!reason) {
-        setBlockTarget(client);
-        return;
-      }
-      if (reason.length > 500) return setError('Причина блокировки не должна превышать 500 символов.');
-    } else if (!await confirmAction(`Разблокировать клиента ${client.full_name}?`)) return;
-
-    const ok = await run(
-      () => callLegacyApi('setClientBlocked', { id: client.id, blocked, reason }).then(reload),
-      blocked ? 'Клиент заблокирован.' : 'Клиент разблокирован.',
-    );
-    if (ok) {
-      setBlockTarget(null);
-      setBlockReason('');
-    }
-  }
-
-  function exportClients() {
-    setError('');
-    try {
-      downloadClientWorkbook(clients);
-    } catch (exportError) {
-      setError(exportError.message || 'Не удалось подготовить Excel-файл.');
-    }
-  }
-
-  return (
-    <section className="view-grid clients-view">
-      <div className="card wide clients-toolbar">
-        <div>
-          <h2>Клиентская база</h2>
-          <p className="hint">Имена, телефоны и история посещений. Рассылки разрешены только клиентам с подтверждённым согласием.</p>
-        </div>
-        <button className="btn" disabled={!clients.length} onClick={exportClients} type="button">
-          Скачать всю базу .xlsx
-        </button>
-      </div>
-
-      <div className="card wide clients-filters">
-        <label>
-          Поиск
-          <input
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Имя, телефон или Telegram"
-            type="search"
-            value={query}
-          />
-        </label>
-        <div aria-label="Фильтр списка клиентов" className="client-chips" role="group">
-          {clientFilters.map((option) => (
-            <button
-              aria-pressed={filter === option.id}
-              className={`client-chip ${filter === option.id ? 'is-on' : ''}`}
-              key={option.id}
-              title={option.hint || undefined}
-              type="button"
-              onClick={() => setFilter(option.id)}
-            >
-              <span>{option.label}</span>
-              <strong>{option.count}</strong>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="card wide">
-        <div className="section-title">
-          <h2>Клиенты</h2>
-          <span>{filteredClients.length} из {clients.length}</span>
-        </div>
-        <Rows
-          empty="Клиенты по выбранному фильтру не найдены."
-          rows={filteredClients.slice(0, visibleLimit)}
-          render={(client) => (
-            <article className="client-row" key={client.id}>
-              <div className="client-main">
-                <strong>{client.full_name}</strong>
-                <a href={`tel:${client.phone_e164}`}>{client.phone_e164}</a>
-                {client.telegram_username ? <span>@{String(client.telegram_username).replace(/^@/, '')}</span> : null}
-              </div>
-              <div className="client-meta">
-                <span>{CLIENT_STATUS_LABELS[client.lifecycle_status] || client.lifecycle_status}</span>
-                <span>Визитов: {Number(client.visit_count) || 0}</span>
-                <span>
-                  Последний визит: {client.last_visit_at ? displayDateTime(client.last_visit_at) : 'ещё не был'}
-                  {/* Already computed in the view, and far more actionable than
-                      a bare date when deciding who to call back. */}
-                  {client.days_since_last_visit != null
-                    ? ` · ${Math.round(client.days_since_last_visit)} ${pluralRu(Math.round(client.days_since_last_visit), 'день', 'дня', 'дней')} назад`
-                    : ''}
-                </span>
-                <span>Неявок: {Number(client.no_show_count) || 0}</span>
-                <span>Последняя неявка: {client.last_no_show_at ? displayDateTime(client.last_no_show_at) : 'нет'}</span>
-                <span>Рассылка: {CLIENT_CONSENT_LABELS[client.marketing_consent] || 'Не запрошено'}</span>
-                {client.blocked_at ? <span className="client-blocked-detail">Блокировка: {client.blocked_reason}</span> : null}
-                {blockTarget?.id === client.id ? (
-                  <div className="client-block-form">
-                    <input
-                      autoFocus
-                      maxLength={500}
-                      placeholder="Причина блокировки (обязательно)"
-                      value={blockReason}
-                      onChange={(event) => setBlockReason(event.target.value)}
-                    />
-                    <button className="btn danger" type="button" disabled={busy || !blockReason.trim()} onClick={() => setClientBlocked(client, true)}>
-                      Заблокировать
-                    </button>
-                    <button className="btn ghost" type="button" onClick={() => { setBlockTarget(null); setBlockReason(''); }}>
-                      Отмена
-                    </button>
-                  </div>
-                ) : (
-                  <button className={client.blocked_at ? 'btn ghost client-block-button' : 'btn danger client-block-button'} type="button" disabled={busy} onClick={() => setClientBlocked(client, !client.blocked_at)}>
-                    {client.blocked_at ? 'Разблокировать' : 'Заблокировать'}
-                  </button>
-                )}
-              </div>
-            </article>
-          )}
-        />
-        {filteredClients.length > visibleLimit ? (
-          <button className="btn ghost" type="button" onClick={() => setVisibleLimit((limit) => limit + 60)}>
-            Показать ещё · осталось {filteredClients.length - visibleLimit}
-          </button>
-        ) : null}
-        {message ? <p className="success">{message}</p> : null}
-      </div>
-    </section>
-  );
-}
-
 function FinanceView({ data, reload, setError }) {
-  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection();
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
@@ -2338,7 +1885,7 @@ function FinanceView({ data, reload, setError }) {
               Обзор, which is the only screen allowed to add them up. Showing
               them here too was what made the same figures appear three times. */}
           <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(ishxonaExpenses, previousIshxonaExpenses)} danger />
-          <Tile label="Безденежный доход" value={money(offsetIncome)} hint="касса не меняется" />
+          {offsetIncome ? <Tile label="Безденежный доход" value={money(offsetIncome)} hint="касса не меняется" /> : null}
         </div>
       </div>
 
@@ -2830,16 +2377,15 @@ function Rows({ rows, empty, render }) {
 
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
-// Eight flat tabs on a 390px screen make the owner remember where each screen
-// lives. Four groups turn that recall into recognition, and the second row only
-// appears for groups that actually hold more than one screen.
-// Masters see two screens in total, so grouping them would add a level of
-// navigation to hide nothing.
+// Grouped so a phone shows three tabs instead of six; the second row appears
+// only for a group that actually holds more than one screen. The calendar and
+// the client CRM were removed in September 2026: 2 appointments in a month
+// against 571 sales, and a client list nobody had opened. Their tables and
+// server actions are untouched.
 const VIEW_GROUPS = [
   { id: 'overview', label: 'Обзор', views: ['overview'] },
   { id: 'money', label: 'Деньги', views: ['admin', 'finance'] },
-  { id: 'people', label: 'Люди', views: ['attendance', 'clients', 'master'] },
-  { id: 'calendar', label: 'Календарь', views: ['calendar'] },
+  { id: 'people', label: 'Люди', views: ['attendance', 'master'] },
 ];
 
 // Inside a group the shorter name is unambiguous — "Продажи" under "Деньги"
@@ -2849,40 +2395,7 @@ const VIEW_TAB_LABELS = {
   admin: 'Продажи',
   finance: 'Расходы',
   attendance: 'Посещаемость',
-  clients: 'Клиенты',
   master: 'Мастера',
-  calendar: 'Календарь',
-};
-
-const VIEW_META = {
-  overview: {
-    title: 'Обзор',
-    description: 'Ключевые показатели салона на одном экране.',
-  },
-  master: {
-    title: 'Рабочий день',
-    description: 'Смена, продажи и заработок за выбранный период.',
-  },
-  admin: {
-    title: 'Управление салоном',
-    description: 'Подтверждения, выручка и работа команды.',
-  },
-  attendance: {
-    title: 'Посещаемость',
-    description: 'Приходы мастеров, опоздания и штрафы.',
-  },
-  calendar: {
-    title: 'Календарь записей',
-    description: 'Личные и общие записи, статусы клиентов и выходные мастеров.',
-  },
-  clients: {
-    title: 'Клиенты и CRM',
-    description: 'Контакты, история посещений, согласия на уведомления и выгрузка в Excel.',
-  },
-  finance: {
-    title: 'Расходы салона',
-    description: 'Траты по разделам и вложения за выбранный период.',
-  },
 };
 
 function viewIdsForUser(data) {
@@ -2893,11 +2406,10 @@ function viewIdsForUser(data) {
       'admin',
       'attendance',
       'finance',
-      ...(['owner', 'admin'].includes(data.appRole) ? ['calendar', 'clients'] : []),
       'master',
     ];
   }
-  if (data.role === 'master') return ['master', 'calendar'];
+  if (data.role === 'master') return ['master'];
   return [];
 }
 
@@ -2955,7 +2467,6 @@ export default function App() {
   const [data, setData] = useState(emptyState);
   const [view, setView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const isLoadingRef = useRef(false);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
@@ -2985,8 +2496,9 @@ export default function App() {
     if (isLoadingRef.current) return;
     isLoadingRef.current = true;
     setError('');
-    if (preserveView) setIsRefreshing(true);
-    else setIsLoading(true);
+    // Background polls stay silent: a toast every 15 seconds said nothing the
+    // numbers updating on their own did not already say.
+    if (!preserveView) setIsLoading(true);
 
     try {
       await captureTelegramOAuthCode();
@@ -3018,7 +2530,6 @@ export default function App() {
     } finally {
       isLoadingRef.current = false;
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }
 
@@ -3069,8 +2580,8 @@ export default function App() {
   const availableViews = useMemo(() => {
     return viewIdsForUser(data);
   }, [data.appRole, data.role]);
-  // A group is only offered if the role can reach something inside it, so an
-  // admin without calendar rights never sees an empty tab.
+  // A group is only offered if the role can reach something inside it, so a
+  // role never sees an empty tab.
   const navGroups = useMemo(() => (
     VIEW_GROUPS
       .map((group) => ({ ...group, views: group.views.filter((id) => availableViews.includes(id)) }))
@@ -3104,8 +2615,6 @@ export default function App() {
     master: MasterView,
     admin: AdminView,
     attendance: AttendanceView,
-    calendar: CalendarView,
-    clients: ClientsView,
     finance: FinanceView,
   }[view] || MasterView;
 
@@ -3124,18 +2633,6 @@ export default function App() {
         </div>
         <ThemeControls theme={theme} setTheme={setTheme} dark={dark} setDark={setDark} />
       </header>
-
-      {availableViews.length && data.role === 'master' ? (
-        <nav className="seg nav">
-          {[['master', 'Мастер'], ['calendar', 'Календарь']]
-            .filter(([id]) => availableViews.includes(id))
-            .map(([id, label]) => (
-              <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => setView(id)}>
-                {label}
-              </button>
-            ))}
-        </nav>
-      ) : null}
 
       {availableViews.length && data.role !== 'master' ? (
         <>
@@ -3183,21 +2680,7 @@ export default function App() {
       ) : null}
 
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
-      {isRefreshing ? (
-        <div className="loading-strip" role="status" aria-live="polite">
-          <span className="spinner" aria-hidden="true" />Синхронизация данных...
-        </div>
-      ) : null}
-      {VIEW_META[view] ? (
-        <section className="view-intro" aria-labelledby="view-title">
-          <p className="view-eyebrow">Maestro Barberia</p>
-          <h2 id="view-title">{VIEW_META[view].title}</h2>
-          <p>{VIEW_META[view].description}</p>
-        </section>
-      ) : null}
       <CurrentView data={data} reload={load} setError={setError} setView={setView} />
-
-      <footer>Данные сохраняются в облаке (Supabase). <span>{APP_VERSION}</span></footer>
     </main>
   );
 }

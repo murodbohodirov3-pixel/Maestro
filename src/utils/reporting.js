@@ -320,43 +320,6 @@ export function shiftProductivity(masters, sales, attendance, fines = []) {
   }).sort((left, right) => right.revenuePerShift - left.revenuePerShift);
 }
 
-// Empty chair time and what it cost. Every field here is already written by the
-// calendar; none of it was ever aggregated.
-export function appointmentOutcomeSummary(appointments) {
-  const counts = { total: 0, completed: 0, noShow: 0, cancelled: 0, upcoming: 0 };
-  let lostAmount = 0;
-  let cancelledByClient = 0;
-  let cancelledBySalon = 0;
-
-  appointments.forEach((appointment) => {
-    counts.total += 1;
-    const price = Number(appointment.price_uzs) || 0;
-    if (appointment.status === 'completed') counts.completed += 1;
-    else if (appointment.status === 'no_show') {
-      counts.noShow += 1;
-      lostAmount += price;
-    } else if (appointment.status === 'cancelled') {
-      counts.cancelled += 1;
-      lostAmount += price;
-      if (appointment.cancelled_by === 'client') cancelledByClient += 1;
-      if (appointment.cancelled_by === 'salon') cancelledBySalon += 1;
-    } else counts.upcoming += 1;
-  });
-
-  // Pending visits have not failed yet, so they must stay out of the rate or a
-  // busy upcoming week would look like an improvement.
-  const resolved = counts.completed + counts.noShow + counts.cancelled;
-  return {
-    ...counts,
-    resolved,
-    cancelledByClient,
-    cancelledBySalon,
-    lostAmount,
-    noShowRate: resolved ? (counts.noShow / resolved) * 100 : 0,
-    cancelledRate: resolved ? (counts.cancelled / resolved) * 100 : 0,
-  };
-}
-
 export function paymentMix(sales) {
   const cash = sales.reduce((sum, sale) => sum + (Number(sale.cash) || 0), 0);
   const card = sales.reduce((sum, sale) => sum + (Number(sale.card) || 0), 0);

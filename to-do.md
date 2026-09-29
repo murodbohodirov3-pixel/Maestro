@@ -2,6 +2,14 @@
 
 ## Active
 
+### Owner redesign (approved 2026-09-29)
+
+- [x] Step 1 cleanup: removed the calendar and client CRM screens (owner and masters), the repeated page headings, the refresh toast and the footer; plain-language comparison labels; neutral "today" comparisons; Продажи opens on the month; the full sales list folds away.
+- [ ] Split payments: one sale paid partly by card and partly in cash, one client, one approval; pending total broken down by cash/card/QR.
+- [ ] Owner analytics: month forecast, "needs attention" signals, 12-month trend, master card, returning-client share.
+- [ ] Monthly revenue goal (needs a `settings` column and an `api` whitelist change).
+- [ ] Step 2: new light, blue visual design — the first mockups were not "wow" enough; needs another round of concepts before any code.
+
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
 - [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.
 - [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
@@ -13,6 +21,8 @@
 - [ ] Stage 3: launch a separate test-only customer Telegram administrator; do not reuse the owner analytics bot or mutate schedule data.
 
 ### Calendar and booking system
+
+Retired from the UI on 2026-09-29 at the owner's request (no public booking link, customer bots switched off). Tables, the `api` actions and the `customer-*` functions are untouched; the open items below are on hold.
 
 - [x] Design the protected calendar schema, service catalog, day-off status, appointment audit trail, and database-level overlap prevention.
 - [x] Add the owner/admin calendar UI, each master's private calendar, appointment status controls, and the «Выходной» button in attendance.

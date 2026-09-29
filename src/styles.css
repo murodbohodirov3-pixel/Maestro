@@ -156,7 +156,6 @@ h2 {
 
 .brand p,
 .hint,
-footer,
 small {
   color: var(--muted);
   font-size: var(--text-body);
@@ -256,36 +255,6 @@ small {
   to { opacity: 1; transform: scale(1); }
 }
 
-.view-intro {
-  display: grid;
-  gap: var(--space-1);
-  margin: var(--space-5) 0 var(--space-4);
-}
-
-.view-eyebrow {
-  color: var(--brass);
-  font-size: var(--text-xs);
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.view-intro h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: clamp(26px, 7vw, 30px);
-  font-weight: 850;
-  letter-spacing: -0.035em;
-  line-height: 1.06;
-  text-transform: none;
-}
-
-.view-intro > p:last-child {
-  color: var(--muted);
-  font-size: var(--text-body);
-  line-height: 1.45;
-}
-
 .view-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -308,55 +277,6 @@ small {
   background:
     radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--brass) 16%, transparent), transparent 32%),
     var(--bg);
-}
-
-/* Floating status toast — intentionally taken out of document flow.
-   It used to be an inline block above the view content; every ~15s
-   auto-refresh it mounted/unmounted and pushed everything below it
-   (including approve/reject buttons) up or down, causing misclicks.
-   Fixed positioning means it can appear/disappear without ever
-   shifting anything else on the page. */
-.loading-strip {
-  position: fixed;
-  left: auto;
-  right: var(--space-3);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-3));
-  z-index: 40;
-  align-items: center;
-  display: flex;
-  gap: var(--space-2);
-  width: auto;
-  max-width: min(280px, calc(100vw - 24px));
-  margin-bottom: 0;
-  padding: 10px var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--brass) 28%, var(--line));
-  border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--brass-soft) 54%, var(--surface));
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-weight: 700;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  pointer-events: none;
-  animation: maestro-toast-in 0.18s ease-out;
-}
-
-@keyframes maestro-toast-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.spinner {
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  border: 2px solid color-mix(in srgb, var(--brass) 25%, transparent);
-  border-top-color: var(--brass);
-  border-radius: 50%;
-  animation: maestro-spin 0.75s linear infinite;
-}
-
-@keyframes maestro-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Splash emblem — a brass coin flipping on its Y axis.
@@ -456,45 +376,6 @@ small {
 .nav-sub button {
   font-size: var(--text-sm);
   font-weight: 650;
-}
-
-/* Client counts double as the filter that produces them — the number and the
-   way to act on it are the same control. */
-.client-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.client-chip {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 7px var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.client-chip strong {
-  color: var(--ink);
-  font-size: var(--text-body);
-  font-weight: 800;
-}
-
-.client-chip:hover {
-  border-color: color-mix(in srgb, var(--brass) 45%, var(--line));
-}
-
-.client-chip.is-on {
-  border-color: var(--brass);
-  background: color-mix(in srgb, var(--brass-soft) 55%, var(--surface));
-  color: var(--ink);
 }
 
 /* Owner overview — one headline figure, its context, and everything else
@@ -669,7 +550,6 @@ small {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner,
   .loading-coin,
   .loading-coin-face::after,
   .loading-emblem::after {
@@ -894,8 +774,7 @@ small {
   background: var(--surface-2);
 }
 
-.attendance-row.day-off,
-.calendar-master-card.day-off {
+.attendance-row.day-off {
   border-color: color-mix(in srgb, var(--muted) 40%, var(--line));
   background: color-mix(in srgb, var(--muted) 8%, var(--surface));
 }
@@ -943,71 +822,6 @@ small {
   align-items: flex-start;
 }
 
-.calendar-view { align-items: start; }
-.calendar-toolbar,
-.calendar-date-nav,
-.calendar-master-heading,
-.calendar-appointment-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.calendar-toolbar,
-.calendar-master-heading { justify-content: space-between; }
-.calendar-toolbar > label { min-width: 190px; }
-.calendar-date-nav label { min-width: 160px; }
-.calendar-master-card { grid-column: span 1; }
-.calendar-master-heading { align-items: flex-start; margin-bottom: 12px; }
-.calendar-master-heading h2 { margin: 0; font-size: 20px; }
-.calendar-master-heading span,
-.calendar-appointment span { display: block; color: var(--muted); font-size: 12px; }
-.calendar-day-off-badge {
-  padding: 5px 9px;
-  border-radius: 999px;
-  background: var(--brass-soft);
-  color: var(--brass);
-  font-size: 11px;
-  text-transform: uppercase;
-}
-.calendar-appointments { display: grid; gap: 8px; }
-.calendar-appointment {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--brass);
-  border-radius: 11px;
-  background: var(--surface-2);
-}
-.calendar-appointment.status-cancelled,
-.calendar-appointment.status-no_show { opacity: 0.65; border-left-color: var(--fine); }
-.calendar-appointment.status-completed { border-left-color: var(--cash); }
-.calendar-appointment time,
-.calendar-appointment > b { font-size: 12px; font-variant-numeric: tabular-nums; }
-.calendar-appointment-actions { grid-column: 2 / -1; flex-wrap: wrap; }
-.calendar-appointment-actions button {
-  min-height: 34px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--ink);
-}
-.calendar-appointment-actions button.danger { color: var(--fine); }
-.calendar-appointment-actions button:disabled { cursor: not-allowed; opacity: 0.45; }
-.client-block-warning {
-  width: max-content;
-  margin-top: 4px;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--fine) 45%, var(--line));
-  border-radius: 999px;
-  color: var(--fine) !important;
-  font-weight: 750;
-}
-.calendar-new-form { align-self: start; }
-
 .modal-backdrop {
   position: fixed;
   z-index: 100;
@@ -1017,79 +831,6 @@ small {
   padding: 18px;
   background: rgba(0, 0, 0, 0.58);
 }
-.outcome-dialog {
-  width: min(100%, 500px);
-  max-height: calc(100vh - 36px);
-  overflow: auto;
-}
-.outcome-dialog h2 { margin-top: 0; }
-.outcome-dialog textarea { resize: vertical; }
-.outcome-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.clients-toolbar,
-.clients-filters,
-.client-row,
-.client-main,
-.client-meta {
-  display: flex;
-  gap: 12px;
-}
-.clients-toolbar,
-.client-row { justify-content: space-between; }
-.clients-toolbar { align-items: center; }
-.clients-toolbar h2,
-.clients-toolbar p { margin: 0; }
-.clients-toolbar p { margin-top: 5px; }
-.clients-filters { align-items: end; }
-.clients-filters label { flex: 1 1 220px; }
-.client-row {
-  align-items: center;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
-}
-.client-row:last-child { border-bottom: 0; }
-.client-main { flex-direction: column; gap: 3px; min-width: 180px; }
-.client-main a { color: var(--brass); font-weight: 750; text-decoration: none; }
-.client-main span,
-.client-meta span { color: var(--muted); font-size: 12px; }
-.client-meta { justify-content: flex-end; flex-wrap: wrap; text-align: right; }
-.client-meta span {
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-}
-.client-meta .client-blocked-detail {
-  border-color: color-mix(in srgb, var(--fine) 45%, var(--line));
-  color: var(--fine);
-}
-.client-block-button { min-height: 32px; padding: 5px 9px; }
-.client-block-button.danger {
-  border-color: color-mix(in srgb, var(--fine) 45%, var(--line));
-  color: var(--fine);
-}
-
-@media (max-width: 680px) {
-  .calendar-toolbar,
-  .calendar-master-heading { align-items: stretch; flex-direction: column; }
-  .calendar-date-nav { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
-  .calendar-appointment { grid-template-columns: 78px minmax(0, 1fr); }
-  .calendar-appointment > b,
-  .calendar-appointment-actions { grid-column: 2; }
-  .clients-toolbar,
-  .clients-filters,
-  .client-row { align-items: stretch; flex-direction: column; }
-  .clients-filters label { flex-basis: auto; }
-  .client-meta { justify-content: flex-start; text-align: left; }
-  .outcome-dialog-actions { flex-direction: column-reverse; }
-  .outcome-dialog-actions .btn { width: 100%; }
-}
-
 .detailed-sale-amounts {
   flex: 0 0 auto;
   text-align: right;
@@ -1287,6 +1028,49 @@ small {
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.overview-week-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+  border-top: 1px solid color-mix(in srgb, var(--brass) 18%, var(--line));
+  font-variant-numeric: tabular-nums;
+}
+
+.overview-week-row > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.overview-week-row > strong {
+  min-width: 92px;
+  font-size: 14px;
+  text-align: right;
+}
+
+.overview-week-row.is-head {
+  border-top: 0;
+  padding-block: 2px 6px;
+}
+
+.overview-week-row.is-head > span {
+  font-size: 11px;
+  text-align: right;
+}
+
+.overview-week-row.is-head > span:first-child {
+  text-align: left;
+}
+
+.detailed-report-toggle {
+  margin-top: 0;
+}
+
+.detailed-report-toggle + .section-heading {
+  margin-top: var(--space-4);
 }
 
 .overview-fine-ranking {
@@ -2430,15 +2214,6 @@ td:first-child {
   border-radius: 20px;
 }
 
-footer {
-  margin-top: 18px;
-  text-align: center;
-}
-
-footer span {
-  opacity: 0.55;
-}
-
 @media (max-width: 760px) {
   .app {
     padding-inline: 12px;
@@ -2653,10 +2428,6 @@ footer span {
 }
 
 @media (max-width: 430px) {
-  .view-intro {
-    margin-top: var(--space-4);
-  }
-
   .payout-total {
     gap: 10px;
     padding: 12px;
@@ -2896,24 +2667,6 @@ footer span {
 .master-shift-line {
   display: block;
   color: var(--muted);
-}
-
-.appointment-note {
-  font-style: italic;
-}
-
-.client-block-form {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.client-block-form input {
-  min-height: 44px;
-}
-
-.client-block-form .btn {
-  min-height: 44px;
 }
 
 .master-fines,

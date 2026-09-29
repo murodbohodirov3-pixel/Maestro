@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  appointmentOutcomeSummary,
   belongsToMaster,
   clientBreakdown,
   comparablePreviousRange,
@@ -278,31 +277,6 @@ test('fewer check-ins than selling days makes the per-shift figure unreliable', 
   );
   assert.equal(covered.reliable, true);
   assert.equal(covered.revenuePerShift, 300_000);
-});
-
-test('no-show rate ignores appointments that have not happened yet', () => {
-  const summary = appointmentOutcomeSummary([
-    { status: 'completed', price_uzs: 150_000 },
-    { status: 'completed', price_uzs: 150_000 },
-    { status: 'no_show', price_uzs: 200_000 },
-    { status: 'cancelled', price_uzs: 100_000, cancelled_by: 'client' },
-    { status: 'confirmed', price_uzs: 150_000 },
-    { status: 'pending', price_uzs: 150_000 },
-  ]);
-  assert.equal(summary.total, 6);
-  assert.equal(summary.resolved, 4);
-  assert.equal(summary.upcoming, 2);
-  assert.equal(summary.noShow, 1);
-  assert.equal(summary.noShowRate, 25);
-  assert.equal(summary.cancelledByClient, 1);
-  assert.equal(summary.lostAmount, 300_000);
-});
-
-test('an empty calendar reports zero rates rather than NaN', () => {
-  const summary = appointmentOutcomeSummary([]);
-  assert.equal(summary.noShowRate, 0);
-  assert.equal(summary.cancelledRate, 0);
-  assert.equal(summary.lostAmount, 0);
 });
 
 test('payment mix shares add up and survive an empty period', () => {

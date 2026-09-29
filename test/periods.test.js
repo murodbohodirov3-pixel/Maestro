@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sameWeekdayLastWeek } from '../src/utils/periods.js';
+import { comparisonLabel, sameWeekdayLastWeek } from '../src/utils/periods.js';
 
 const weekday = (day) => new Date(`${day}T12:00:00`).getDay();
 
@@ -36,6 +36,28 @@ test('every weekday maps to its own kind of day', () => {
 test('an unparseable date yields no comparison day', () => {
   assert.equal(sameWeekdayLastWeek(''), '');
   assert.equal(sameWeekdayLastWeek('не дата'), '');
+});
+
+test('names the comparison the way the owner would say it', () => {
+  const today = '2026-09-29';
+  assert.equal(comparisonLabel({ from: '2026-09-22', to: '2026-09-22' }, today), 'к прошлому вторнику');
+  assert.equal(comparisonLabel({ from: '2026-09-28', to: '2026-09-28' }, today), 'ко вчерашнему дню');
+  assert.equal(comparisonLabel({ from: '2026-09-10', to: '2026-09-10' }, today), 'к 10.09');
+  assert.equal(comparisonLabel({ from: '2026-08-01', to: '2026-08-31' }, today), 'к августу');
+  assert.equal(comparisonLabel({ from: '2026-08-01', to: '2026-08-29' }, today), 'к 1–29 августа');
+  assert.equal(comparisonLabel({ from: '2026-09-21', to: '2026-09-27' }, today), 'к прошлой неделе');
+  assert.equal(comparisonLabel({ from: '2026-09-21', to: '2026-09-22' }, today), 'к тем же дням прошлой недели');
+  assert.equal(comparisonLabel({ from: '2026-07-15', to: '2026-08-14' }, today), 'к 15.07–14.08');
+});
+
+test('feminine weekdays take the feminine form', () => {
+  assert.equal(comparisonLabel({ from: '2026-09-23', to: '2026-09-23' }, '2026-09-30'), 'к прошлой среде');
+  assert.equal(comparisonLabel({ from: '2026-09-26', to: '2026-09-26' }, '2026-10-03'), 'к прошлой субботе');
+});
+
+test('a missing range yields no label', () => {
+  assert.equal(comparisonLabel(null, '2026-09-29'), '');
+  assert.equal(comparisonLabel({ from: '', to: '' }, '2026-09-29'), '');
 });
 
 function localIso(date) {
