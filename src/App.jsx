@@ -3,7 +3,6 @@ import {
   callLegacyApi,
   captureTelegramOAuthCode,
   captureTelegramRedirectAuth,
-  getTelegramFirstName,
   needsTelegramLogin,
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
@@ -59,28 +58,6 @@ import {
 } from './utils/insights.js';
 
 const TODAY = localDate();
-const THEMES = {
-  brass: {
-    name: 'Латунь',
-    light: { brass: '#A9742E', 'brass-soft': '#F0E4D0', bg: '#F3F0EB', surface: '#FFFFFF', 'surface-2': '#FAF8F5', ink: '#181613', muted: '#7A736B', line: '#E7E2DA' },
-    dark: { brass: '#D9A75A', 'brass-soft': '#3A3326', bg: '#15140F', surface: '#211F1A', 'surface-2': '#1A1915', ink: '#F2EEE7', muted: '#9A9388', line: '#33302A' },
-  },
-  emerald: {
-    name: 'Изумруд',
-    light: { bg: '#F1F5F2', surface: '#FFFFFF', 'surface-2': '#F6FAF7', ink: '#14201A', muted: '#6B7A72', line: '#DDE8E1', brass: '#1E7A52', 'brass-soft': '#D9EFE3' },
-    dark: { bg: '#0E1714', surface: '#16211C', 'surface-2': '#121B17', ink: '#EAF3EE', muted: '#8AA398', line: '#29372F', brass: '#3FB37B', 'brass-soft': '#1C3329' },
-  },
-  midnight: {
-    name: 'Полночь',
-    light: { bg: '#F1F2F8', surface: '#FFFFFF', 'surface-2': '#F6F7FC', ink: '#15172A', muted: '#6E7290', line: '#E1E3F0', brass: '#3B43B5', 'brass-soft': '#E2E4FA' },
-    dark: { bg: '#0F1020', surface: '#1A1B2E', 'surface-2': '#151628', ink: '#ECEDF7', muted: '#9498BE', line: '#2C2E47', brass: '#7C84F0', 'brass-soft': '#262A52' },
-  },
-  barber: {
-    name: 'Барбер',
-    light: { bg: '#F4F2EE', surface: '#FFFFFF', 'surface-2': '#F9F7F3', ink: '#16202E', muted: '#6F7682', line: '#E4E2DC', brass: '#1F3A66', 'brass-soft': '#DBE3F0' },
-    dark: { bg: '#101620', surface: '#1A2230', 'surface-2': '#151B26', ink: '#ECF0F6', muted: '#8A93A3', line: '#2A3340', brass: '#5B86C9', 'brass-soft': '#213048' },
-  },
-};
 
 
 function money(value) {
@@ -570,199 +547,212 @@ function shareComparison(current, previous, comparisonRange) {
   };
 }
 
-// A target turns the forecast into an answer: not "about 83 million" but
-// "two million short". The bar fills with what is banked; the tick marks
-// where the pace would end the month.
-function MonthGoal({ goal, monthRevenue, forecast, canEdit, busy, onSave }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(goal ? String(goal) : '');
+// A figure that runs up to its value when it first appears, and glides to a
+// new value when the data refreshes. Honors reduced motion.
+function useCountUp(value, duration = 900) {
+  const target = Number(value) || 0;
+  const [shown, setShown] = useState(0);
+  const fromRef = useRef(0);
 
-  async function save(event) {
-    event.preventDefault();
-    const value = Number(draft);
-    if (!value || value <= 0) return;
-    if (await onSave(value)) setEditing(false);
-  }
-
-  async function clear() {
-    if (await onSave(null)) {
-      setDraft('');
-      setEditing(false);
+  useEffect(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      fromRef.current = target;
+      setShown(target);
+      return undefined;
     }
-  }
+    const from = fromRef.current;
+    const start = performance.now();
+    let frame;
+    const tick = (now) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - progress) ** 3;
+      const next = from + (target - from) * eased;
+      fromRef.current = next;
+      setShown(next);
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, duration]);
 
-  if (editing) {
-    return (
-      <form className="goal-form" onSubmit={save}>
-        <label>
-          Цель по выручке на месяц
-          <MoneyInput placeholder="например, 85 000 000" value={draft} onChange={setDraft} />
-        </label>
-        <div className="goal-form-actions">
-          <button className="btn" type="submit" disabled={busy || !Number(draft)}>{busy ? 'Сохраняем…' : 'Сохранить'}</button>
-          <button className="btn ghost" type="button" disabled={busy} onClick={() => setEditing(false)}>Отмена</button>
-          {goal ? <button className="btn ghost" type="button" disabled={busy} onClick={clear}>Убрать цель</button> : null}
-        </div>
-      </form>
-    );
-  }
+  return shown;
+}
 
-  if (!goal) {
-    return canEdit ? (
-      <button className="goal-set" type="button" onClick={() => { setDraft(''); setEditing(true); }}>
-        + Поставить цель на месяц
-      </button>
-    ) : null;
-  }
+function CountUp({ value, format = money }) {
+  return format(useCountUp(value));
+}
 
-  const done = (monthRevenue / goal) * 100;
-  const projected = forecast ? (forecast.revenue / goal) * 100 : null;
-  const gap = forecast ? goal - forecast.revenue : null;
+function DeltaChip({ current, previous, inProgress }) {
+  if (!previous && !current) return null;
+  const change = percentageDifference(current, previous);
+  if (inProgress && current <= previous) return null;
+  const tone = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
+  return <span className={`delta-chip ${tone}`}>{change > 0 ? '▲' : change < 0 ? '▼' : '•'} {Math.abs(change)}%</span>;
+}
+
+// The screen's one big card: the month's revenue, the months behind it, where
+// the pace will end the month, and — when the owner has set one — the goal.
+// The forecast only counts finished days; see monthForecast.
+function RevenueHero({ monthRevenue, compare, prior, priorRange, inProgress, series, forecast, goal, canEditGoal, onSetGoal }) {
+  const months = series.slice(-6);
+  const peak = Math.max(1, ...months.map((row) => row.revenue), forecast?.revenue || 0);
+  const barValue = (value) => (value / 1_000_000).toFixed(1).replace('.', ',');
+  const done = goal ? (monthRevenue / goal) * 100 : 0;
+  const projected = goal && forecast ? (forecast.revenue / goal) * 100 : null;
+  const gap = goal && forecast ? goal - forecast.revenue : null;
+  const daysLeft = forecast ? forecast.daysInMonth - forecast.completedDays : 0;
+
   return (
-    <div className="goal">
-      <div className="goal-heading">
-        <span>Цель <strong>{compactMoney(goal)}</strong></span>
-        <strong className={done >= 100 ? 'positive' : ''}>{Math.floor(done)}%</strong>
+    <div className="card wide hero-card revenue-hero">
+      <div className="revenue-hero-top">
+        <span>Выручка за {monthName(TODAY)}</span>
+        {priorRange ? <DeltaChip current={compare} previous={prior} inProgress={inProgress} /> : null}
       </div>
-      <div className="goal-track" aria-hidden="true">
-        <i className="goal-fill" style={{ width: `${Math.min(100, done)}%` }} />
-        {projected != null ? <i className="goal-marker" style={{ left: `${Math.min(100, projected)}%` }} /> : null}
+      <div className="revenue-hero-value">
+        <strong><CountUp value={monthRevenue} /></strong>
+        <span>сум</span>
       </div>
-      <p className="hint">
-        {done >= 100
-          ? `Цель выполнена${done > 100 ? `, сверху ${compactMoney(monthRevenue - goal)}` : ''}.`
-          : gap == null
-            ? `До цели ${compactMoney(goal - monthRevenue)}.`
-            : gap > 0
-              ? `По текущему темпу не хватит ≈ ${compactMoney(gap)} — нужно ≈ ${compactMoney((goal - monthRevenue) / Math.max(1, forecast.daysInMonth - forecast.completedDays))} в день.`
-              : `По текущему темпу цель будет перевыполнена на ≈ ${compactMoney(-gap)}.`}
-        {canEdit ? (
-          <>
-            {' '}
-            <button className="goal-edit" type="button" onClick={() => { setDraft(String(goal)); setEditing(true); }}>Изменить</button>
-          </>
-        ) : null}
-      </p>
+      {priorRange ? (
+        <span className="revenue-hero-note">
+          {comparisonLabel(priorRange, TODAY)} было {compactMoney(prior)}
+          {inProgress ? '' : ' · по законченным дням'}
+        </span>
+      ) : null}
+
+      <div className="revenue-hero-bars" aria-label="Выручка по месяцам">
+        {months.map((row) => {
+          const ghost = row.isCurrent && forecast ? forecast.revenue : 0;
+          return (
+            <div className={`revenue-hero-bar ${row.isCurrent ? 'is-current' : ''}`} key={row.key}>
+              <span className="revenue-hero-bar-value">{barValue(row.revenue)}</span>
+              <span className="revenue-hero-bar-column">
+                {ghost ? <i className="revenue-hero-bar-ghost" style={{ height: `${(ghost / peak) * 100}%` }} /> : null}
+                <i className="revenue-hero-bar-fill" style={{ height: `${(row.revenue / peak) * 100}%` }} />
+              </span>
+              <span className="revenue-hero-bar-month">{MONTH_SHORT[Number(row.key.slice(5, 7)) - 1]}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {forecast ? (
+        <div className="revenue-hero-inset">
+          <span>Прогноз на месяц</span>
+          <strong>
+            ≈ {compactMoney(forecast.revenue)}
+            {forecast.revenueChange != null ? (
+              <em className={forecast.revenueChange >= 0 ? 'up' : 'down'}>
+                {' · '}{forecast.revenueChange > 0 ? '+' : ''}{forecast.revenueChange}%
+              </em>
+            ) : null}
+          </strong>
+        </div>
+      ) : null}
+
+      {goal ? (
+        <div className="revenue-hero-goal">
+          <div className="revenue-hero-goal-head">
+            <span>Цель {compactMoney(goal)}</span>
+            <strong>{Math.floor(done)}%</strong>
+          </div>
+          <div className="revenue-hero-goal-track" aria-hidden="true">
+            <i className="revenue-hero-goal-fill" style={{ width: `${Math.min(100, done)}%` }} />
+            {projected != null ? <i className="revenue-hero-goal-marker" style={{ left: `${Math.min(100, projected)}%` }} /> : null}
+          </div>
+          <span className="revenue-hero-note">
+            {done >= 100
+              ? `Цель выполнена${done > 100 ? `, сверху ${compactMoney(monthRevenue - goal)}` : ''}.`
+              : gap == null
+                ? `До цели ${compactMoney(goal - monthRevenue)}.`
+                : gap > 0
+                  ? `По темпу не хватит ≈ ${compactMoney(gap)} — нужно ≈ ${compactMoney((goal - monthRevenue) / Math.max(1, daysLeft))} в день.`
+                  : `По темпу цель будет перевыполнена на ≈ ${compactMoney(-gap)}.`}
+          </span>
+        </div>
+      ) : canEditGoal ? (
+        <button className="revenue-hero-goal-link" type="button" onClick={onSetGoal}>+ Поставить цель на месяц</button>
+      ) : null}
     </div>
   );
 }
 
-// Where the month will land if the pace holds — the question a month-to-date
-// figure can only answer on its last day.
-function ForecastCard({ forecast, monthRevenue, goal, canEdit, busy, onSaveGoal }) {
-  if (!forecast && !goal && !canEdit) return null;
-  const change = forecast?.revenueChange;
-  const daysLeft = forecast ? forecast.daysInMonth - forecast.completedDays : 0;
-  return (
-    <div className="card wide forecast-card">
-      <div className="section-heading">
-        <h2>Прогноз на {monthName(TODAY)}</h2>
-        {forecast ? (
-          <span className="date-badge">по {forecast.completedDays} {pluralRu(forecast.completedDays, 'дню', 'дням', 'дням')}</span>
-        ) : null}
-      </div>
-      {forecast ? (
-        <>
-          <div className="forecast-main">
-            <strong>≈ {compactMoney(forecast.revenue)} <small>сум</small></strong>
-            {change != null ? (
-              <em className={change > 0 ? 'positive' : change < 0 ? 'negative' : ''}>
-                {change > 0 ? '+' : ''}{change}% {comparisonLabel(forecast.previous, TODAY)} · там было {compactMoney(forecast.previous.revenue)}
-              </em>
-            ) : null}
-          </div>
-          <p className="hint forecast-note">
-            Уже {money(monthRevenue)} сум, {daysLeft ? `осталось ${daysLeft} ${pluralRu(daysLeft, 'день', 'дня', 'дней')}` : 'последний день'}.
-            {' '}Клиентов будет ≈ {Math.round(forecast.clients)}.
-          </p>
-        </>
-      ) : (
-        <p className="hint">Прогноз появится завтра, когда пройдёт первый день месяца.</p>
-      )}
-      <MonthGoal
-        goal={goal}
-        monthRevenue={monthRevenue}
-        forecast={forecast}
-        canEdit={canEdit}
-        busy={busy}
-        onSave={onSaveGoal}
-      />
-    </div>
+function TrendIcon({ tone }) {
+  return tone === 'good' ? (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 17l6-6 4 4 6-6" /><path d="M20 14V9h-5" /></svg>
+  ) : (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7l6 6 4-4 6 6" /><path d="M20 10v5h-5" /></svg>
   );
 }
 
 function SignalsCard({ result }) {
-  const bad = result.signals.filter((signal) => signal.tone === 'bad');
-  const good = result.signals.filter((signal) => signal.tone === 'good');
   return (
     <div className="card wide signals-card">
-      <div className="section-heading">
-        <h2>Что происходит</h2>
-        {result.ready ? <span className="date-badge">{shortRange(result.range)} против {shortRange(result.previousRange)}</span> : null}
-      </div>
+      <h2>Что происходит</h2>
+      {result.ready ? (
+        <p className="hint signals-range">
+          Законченные дни {shortRange(result.range)} против {shortRange(result.previousRange)}
+        </p>
+      ) : null}
       {!result.ready ? (
         <p className="hint">Сигналы появятся через несколько дней месяца — пока сравнивать не с чем.</p>
       ) : !result.signals.length ? (
         <p className="hint">Резких изменений нет: месяц идёт так же, как прошлый.</p>
       ) : (
-        <>
-          {bad.length ? (
-            <ul className="signal-list">
-              {bad.map((signal) => (
-                <li className="signal bad" key={signal.title}>
-                  <span className="signal-icon" aria-hidden="true">▼</span>
-                  <span><strong>{signal.title}</strong><small>{signal.detail}</small></span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {good.length ? (
-            <ul className="signal-list">
-              {good.map((signal) => (
-                <li className="signal good" key={signal.title}>
-                  <span className="signal-icon" aria-hidden="true">▲</span>
-                  <span><strong>{signal.title}</strong><small>{signal.detail}</small></span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </>
+        <ul className="signal-list">
+          {result.signals.map((signal) => (
+            <li className={`signal ${signal.tone}`} key={signal.title}>
+              <span className="signal-icon"><TrendIcon tone={signal.tone} /></span>
+              <span><strong>{signal.title}</strong><small>{signal.detail}</small></span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
 }
 
-function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen }) {
-  const leader = rows[0]?.revenue > 0 ? rows[0].master.id : null;
+// A ranking, not a leaderboard game: place, revenue, change, and a thin bar
+// showing how far each master is from the leader.
+function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen, onShowAll }) {
+  const leaderRevenue = rows[0]?.revenue || 0;
   return (
     <div className="card wide masters-month-card">
       <div className="section-heading">
         <h2>Мастера месяца</h2>
-        <span className="date-badge">выручка {comparisonRange ? comparisonLabel(comparisonRange, TODAY) : ''}</span>
+        {onShowAll ? <button className="link-button" type="button" onClick={onShowAll}>Все {rows.length}</button> : null}
       </div>
       <ol className="master-rank">
-        {rows.map((row, index) => (
-          <li key={row.master.id ?? row.master.name}>
-            <button type="button" className={row.master.id === leader ? 'is-leader' : ''} onClick={() => onOpen(row.master)}>
-              <span className="master-rank-number">{index + 1}</span>
-              <span className="master-rank-name">
-                <strong>{row.master.name}{row.master.id === leader ? ' ★' : ''}</strong>
-                <small>
-                  новых {row.summary.newClients} · пост. {row.summary.returningClients}
-                  {row.summary.clients > row.summary.labelledClients ? ` · без типа ${row.summary.clients - row.summary.labelledClients}` : ''}
-                </small>
-              </span>
-              <span className="master-rank-value">
-                <strong>{compactMoney(row.revenue)}</strong>
-                {comparisonRange ? (
-                  <MasterMetricComparison current={row.compareRevenue} previous={row.previousRevenue} format={compactMoney} inProgress={inProgress} />
-                ) : null}
-              </span>
-            </button>
-          </li>
-        ))}
+        {rows.map((row, index) => {
+          const leader = index === 0 && row.revenue > 0;
+          return (
+            <li key={row.master.id ?? row.master.name}>
+              <button type="button" onClick={() => onOpen(row.master)}>
+                <span className={`master-rank-number ${leader ? 'is-leader' : ''}`}>{String(index + 1).padStart(2, '0')}</span>
+                <span className="master-rank-name">
+                  <strong>
+                    {row.master.name}
+                    {leader ? <b className="leader-tag">ЛИДЕР</b> : null}
+                  </strong>
+                  <small>
+                    новых {row.summary.newClients} · постоянных {row.summary.returningClients}
+                    {row.summary.clients > row.summary.labelledClients ? ` · без типа ${row.summary.clients - row.summary.labelledClients}` : ''}
+                  </small>
+                </span>
+                <span className="master-rank-value">
+                  <strong>{compactMoney(row.revenue)}</strong>
+                  {comparisonRange ? (
+                    <MasterMetricComparison current={row.compareRevenue} previous={row.previousRevenue} format={compactMoney} inProgress={inProgress} />
+                  ) : null}
+                </span>
+                <span className="master-rank-bar" aria-hidden="true">
+                  <i className={leader ? 'is-leader' : ''} style={{ width: `${leaderRevenue ? (row.revenue / leaderRevenue) * 100 : 0}%` }} />
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ol>
-      <p className="hint">Нажмите на мастера, чтобы открыть его карточку.</p>
     </div>
   );
 }
@@ -989,15 +979,8 @@ function MasterSheet({ data, master, onClose }) {
 function OverviewView({ data, reload, setError, setView }) {
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
-  const { run, busy } = useAction(setError);
   const canEditGoal = ['owner', 'admin'].includes(data.appRole);
   const goal = Number(data.settings.monthly_revenue_goal) || null;
-
-  function saveGoal(value) {
-    return run(
-      () => callLegacyApi('setSettings', { monthly_revenue_goal: value }).then(reload),
-    );
-  }
   const monthRange = currentMonthRange();
   // The figures are the month so far; their comparisons use finished days only,
   // against the same days of the last month (see comparisonRanges).
@@ -1069,97 +1052,84 @@ function OverviewView({ data, reload, setError, setView }) {
     })
     .sort((left, right) => right.revenue - left.revenue);
 
+  const pendingMix = paymentMix(pendingSales);
+  const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+
   return (
     <section className="view-grid">
-      {/* An approval queue is work waiting, not a statistic. It reads as a task
-          and it leaves entirely when there is nothing to approve — an empty
-          screen is the message that everything is settled. */}
+      {/* An approval queue is work waiting, not a statistic. It leaves
+          entirely when there is nothing to approve. */}
       {pendingSales.length ? (
-        <button className="card wide overview-pending" type="button" onClick={() => setView('admin')}>
-          <span className="overview-pending-text">
-            <strong>{pendingSales.length}</strong>
-            {' '}
-            {pluralRu(pendingSales.length, 'продажа ждёт', 'продажи ждут', 'продаж ждут')} подтверждения
+        <button className="pending-banner" type="button" onClick={() => setView('admin')}>
+          <span className="pending-banner-count">{pendingSales.length}</span>
+          <span className="pending-banner-text">
+            <strong>Ждут подтверждения · {money(pendingTotal)}</strong>
+            <small>
+              {PAYMENT_METHODS.filter(([key]) => pendingMix[key] > 0)
+                .map(([key, label]) => `${label} ${money(pendingMix[key])}`)
+                .join(' · ')}
+            </small>
           </span>
-          <span className="overview-pending-cta">Открыть</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
         </button>
       ) : null}
 
-      <div className="card wide overview-card">
-        {/* One figure carries the screen: the answer to the question the owner
-            opened the app for. Everything else is context for it. */}
-        <div className={`overview-hero ${netProfit < 0 ? 'is-negative' : ''}`}>
-          <span className="overview-hero-label">Денежная чистая прибыль · {futureMonthLabel(0)}</span>
-          <strong className="overview-hero-value">
-            {money(netProfit)}
-            <small> сум</small>
-          </strong>
-          {profitVersusPriorMonth.secondary ? (
-            <em className={`overview-hero-delta ${profitVersusPriorMonth.secondaryTone}`}>
-              {profitVersusPriorMonth.secondary}
-            </em>
-          ) : null}
-        </div>
-
-        <div className="tiles overview-tiles overview-tiles-supporting">
-          <Tile
-            label="Выручка сегодня"
-            value={`${money(todayRevenue)} сум`}
-            tone="total"
-            {...comparisonToPrevious(
-              todayRevenue,
-              totalSalesAmount(lastWeekSales),
-              { from: lastWeekSameDay, to: lastWeekSameDay },
-              money,
-              { inProgress: true },
-            )}
-          />
-          <Tile
-            label="Выручка за месяц"
-            value={`${money(monthRevenue)} сум`}
-            {...versusPriorMonth(compareMix.revenue, priorMix.revenue)}
-          />
-          <Tile
-            label="Средний чек"
-            value={averageCheck(monthRevenue, monthMix.clients)}
-            {...versusPriorMonth(compareMix.averageCheck, priorMix.averageCheck)}
-          />
-          <Tile
-            label="Клиентов за месяц"
-            value={monthMix.clients}
-            {...versusPriorMonth(compareMix.clients, priorMix.clients)}
-          />
-          <Tile
-            label="Новые клиенты"
-            value={monthMix.newClients}
-            {...versusPriorMonth(compareMix.newClients, priorMix.newClients)}
-          />
-          <Tile
-            label="Постоянные клиенты"
-            value={shareText(monthMix.returningShare)}
-            {...(priorMonthRange ? shareComparison(compareMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
-            hint={monthMix.labelledClients ? `${monthMix.returningClients} из ${monthMix.labelledClients} клиентов` : null}
-          />
-        </div>
-        {priorMonthRange ? (
-          <p className="hint overview-compare-note">
-            {monthInProgress
-              ? `Сравнение ${comparisonLabel(priorMonthRange, TODAY)}`
-              : `Сравнение по законченным дням: ${shortRange(compareRange)} против ${shortRange(priorMonthRange)}`}
-          </p>
-        ) : null}
-      </div>
-
-      <ForecastCard
-        forecast={forecast}
+      <RevenueHero
         monthRevenue={monthRevenue}
+        compare={compareMix.revenue}
+        prior={priorMix.revenue}
+        priorRange={priorMonthRange}
+        inProgress={monthInProgress}
+        series={series}
+        forecast={forecast}
         goal={goal}
-        canEdit={canEditGoal}
-        busy={busy}
-        onSaveGoal={saveGoal}
+        canEditGoal={canEditGoal}
+        onSetGoal={() => setView('settings')}
       />
+
+      <div className="tiles overview-kpis">
+        <Tile label="Чистая прибыль" value={compactMoney(netProfit)} danger={netProfit < 0} {...profitVersusPriorMonth} />
+        <Tile
+          label="Выручка сегодня"
+          value={money(todayRevenue)}
+          {...comparisonToPrevious(
+            todayRevenue,
+            totalSalesAmount(lastWeekSales),
+            { from: lastWeekSameDay, to: lastWeekSameDay },
+            money,
+            { inProgress: true },
+          )}
+        />
+        <Tile label="Клиенты" value={monthMix.clients} {...versusPriorMonth(compareMix.clients, priorMix.clients)} />
+        <Tile
+          label="Средний чек"
+          value={averageCheck(monthRevenue, monthMix.clients)}
+          {...versusPriorMonth(compareMix.averageCheck, priorMix.averageCheck)}
+        />
+        <Tile label="Новые" value={monthMix.newClients} {...versusPriorMonth(compareMix.newClients, priorMix.newClients)} />
+        <Tile
+          label="Постоянные"
+          value={shareText(monthMix.returningShare)}
+          {...(priorMonthRange ? shareComparison(compareMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
+          hint={monthMix.labelledClients ? `${monthMix.returningClients} из ${monthMix.labelledClients} клиентов` : null}
+        />
+      </div>
+      {priorMonthRange ? (
+        <p className="hint overview-compare-note">
+          {monthInProgress
+            ? `Сравнение ${comparisonLabel(priorMonthRange, TODAY)}`
+            : `Сравнение по законченным дням: ${shortRange(compareRange)} против ${shortRange(priorMonthRange)}`}
+        </p>
+      ) : null}
+
       <SignalsCard result={signals} />
-      <MastersOfMonth rows={masterRows} comparisonRange={priorMonthRange} inProgress={monthInProgress} onOpen={setOpenMaster} />
+      <MastersOfMonth
+        rows={masterRows}
+        comparisonRange={priorMonthRange}
+        inProgress={monthInProgress}
+        onOpen={setOpenMaster}
+        onShowAll={() => setView('attendance')}
+      />
       <MonthlyTrend series={series} forecast={forecast} />
       {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
@@ -1893,12 +1863,6 @@ function AttendanceView({ data, reload, setError }) {
     amount: '',
     reason: FINE_REASONS[0].value,
   });
-  const [settings, setSettings] = useState({
-    shift_start: data.settings.shift_start || '09:00',
-    salon_lat: data.settings.salon_lat || '',
-    salon_lng: data.settings.salon_lng || '',
-    salon_radius: data.settings.salon_radius || 100,
-  });
   const [message, setMessage] = useState('');
   const [savingFineKey, setSavingFineKey] = useState('');
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
@@ -1908,7 +1872,7 @@ function AttendanceView({ data, reload, setError }) {
   const filteredFines = data.fines
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
     .sort(newestFirst);
-  const shiftStart = settings.shift_start || '09:00';
+  const shiftStart = data.settings.shift_start || '09:00';
   const grid = attendanceGrid({
     masters: data.masters,
     attendance: data.attendance,
@@ -1926,32 +1890,6 @@ function AttendanceView({ data, reload, setError }) {
   const newestRows = [...grid].sort((left, right) => right.d.localeCompare(left.d));
   const needsAttention = newestRows.filter((row) => row.status === 'missing' || row.status === 'late');
   const attendanceRows = period === 'day' ? grid : showAllDays ? newestRows : needsAttention;
-
-  async function saveSettings(event) {
-    event.preventDefault();
-    await run(() => callLegacyApi('setSettings', {
-      shift_start: settings.shift_start,
-      salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
-      salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
-      salon_radius: Number(settings.salon_radius) || 100,
-    }).then(reload), 'Настройки сохранены.');
-  }
-
-  async function useMyLocation() {
-    if (!navigator.geolocation) return setError('Геолокация не поддерживается.');
-    try {
-      const position = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000 });
-      });
-      setSettings((current) => ({
-        ...current,
-        salon_lat: position.coords.latitude,
-        salon_lng: position.coords.longitude,
-      }));
-    } catch {
-      setError('Не удалось получить геолокацию.');
-    }
-  }
 
   async function saveAttendance(master, date, arrived) {
     if (!arrived && !await confirmAction(`Убрать отметку о приходе: ${master}, ${displayDate(date)}?`)) return;
@@ -2148,22 +2086,6 @@ function AttendanceView({ data, reload, setError }) {
           )}
         </div>
       </div>
-
-      <details className="card collapsible-card">
-        <summary>
-          <span>Настройки смены и салона</span>
-          <span className="summary-action">Открыть</span>
-        </summary>
-        <form className="collapsible-content" onSubmit={saveSettings}>
-          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
-          <p className="hint">Общий порог опоздания. У мастера, чья смена по графику начинается позже, опоздание считается от его смены.</p>
-          <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
-          <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
-          <label>Радиус, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
-          <button className="btn ghost" type="button" onClick={useMyLocation}>Задать по моему положению</button>
-          <button className="btn" type="submit">Сохранить настройки</button>
-        </form>
-      </details>
 
       <form className="card" onSubmit={addFine}>
         <h2>Штрафы</h2>
@@ -2472,7 +2394,6 @@ function FinanceView({ data, reload, setError }) {
         ) : null}
       </div>
 
-      {data.appRole === 'owner' ? <DeletionLog setError={setError} /> : null}
     </section>
   );
 }
@@ -2792,25 +2713,30 @@ function Rows({ rows, empty, render }) {
 
 const TELEGRAM_BOT_USERNAME = 'Maestro_uzbot';
 const TELEGRAM_BOT_LINK = `https://t.me/${TELEGRAM_BOT_USERNAME}`;
-// Grouped so a phone shows three tabs instead of six; the second row appears
-// only for a group that actually holds more than one screen. The calendar and
-// the client CRM were removed in September 2026: 2 appointments in a month
-// against 571 sales, and a client list nobody had opened. Their tables and
-// server actions are untouched.
-const VIEW_GROUPS = [
-  { id: 'overview', label: 'Обзор', views: ['overview'] },
-  { id: 'money', label: 'Деньги', views: ['admin', 'finance'] },
-  { id: 'people', label: 'Люди', views: ['attendance', 'master'] },
+
+// Four sections in a bottom bar, where a thumb reaches them. The calendar and
+// the client CRM were removed in September 2026 (2 appointments in a month
+// against 571 sales, a client list nobody opened); their tables and server
+// actions are untouched. Settings live behind the gear, not in the bar.
+const NAV_ITEMS = [
+  { id: 'overview', label: 'Главная', views: ['overview'], icon: 'home' },
+  { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
+  { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
+  { id: 'team', label: 'Команда', views: ['attendance', 'master'], icon: 'team' },
 ];
 
-// Inside a group the shorter name is unambiguous — "Продажи" under "Деньги"
-// says as much as "Управление салоном" did, in a third of the width.
-const VIEW_TAB_LABELS = {
-  overview: 'Обзор',
+const TEAM_TABS = [
+  ['attendance', 'Посещаемость'],
+  ['master', 'Рабочий день'],
+];
+
+const VIEW_TITLES = {
+  overview: 'MAESTRO',
   admin: 'Продажи',
   finance: 'Расходы',
-  attendance: 'Посещаемость',
-  master: 'Мастера',
+  attendance: 'Команда',
+  master: 'Команда',
+  settings: 'Настройки',
 };
 
 function viewIdsForUser(data) {
@@ -2819,13 +2745,168 @@ function viewIdsForUser(data) {
     return [
       ...(canSeeOverview ? ['overview'] : []),
       'admin',
-      'attendance',
       'finance',
+      'attendance',
       'master',
+      'settings',
     ];
   }
   if (data.role === 'master') return ['master'];
   return [];
+}
+
+// A light tap under the thumb when a tab or a decision lands. Telegram only;
+// elsewhere it does nothing.
+function haptic(kind = 'light') {
+  try {
+    const feedback = window.Telegram?.WebApp?.HapticFeedback;
+    if (!feedback) return;
+    if (kind === 'success' || kind === 'error') feedback.notificationOccurred(kind);
+    else feedback.impactOccurred(kind);
+  } catch {
+    // Older clients lack haptics; the tap simply stays silent.
+  }
+}
+
+function todayHeading() {
+  const date = new Date(`${TODAY}T12:00:00`);
+  const weekday = new Intl.DateTimeFormat('ru-RU', { weekday: 'long' }).format(date);
+  const month = new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(date);
+  const capitalized = month.charAt(0).toUpperCase() + month.slice(1);
+  return `${capitalized} · ${weekday}, ${date.getDate()}`;
+}
+
+function NavIcon({ name }) {
+  const common = {
+    width: 22,
+    height: 22,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 2,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': true,
+  };
+  if (name === 'home') return <svg {...common}><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></svg>;
+  if (name === 'receipt') return <svg {...common}><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 12h6" /></svg>;
+  if (name === 'wallet') return <svg {...common}><rect x="3" y="6" width="18" height="14" rx="3" /><path d="M3 10h18M16 15h2" /></svg>;
+  return <svg {...common}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2.2.6 3.5 2.6 3.5 6" /></svg>;
+}
+
+function GearIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+// Everything that is set once and rarely touched, moved out of the screens
+// that are read every day: the month's goal, the shift and the salon's
+// location, and the deletion log.
+function SettingsView({ data, reload, setError }) {
+  const canEdit = ['owner', 'admin'].includes(data.appRole);
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const goal = Number(data.settings.monthly_revenue_goal) || null;
+  const [goalDraft, setGoalDraft] = useState(goal ? String(goal) : '');
+  const [settings, setSettings] = useState({
+    shift_start: data.settings.shift_start || '09:00',
+    salon_lat: data.settings.salon_lat || '',
+    salon_lng: data.settings.salon_lng || '',
+    salon_radius: data.settings.salon_radius || 100,
+  });
+
+  async function saveGoal(event) {
+    event.preventDefault();
+    const value = Number(goalDraft);
+    if (!value || value <= 0) return setError('Введите сумму цели.');
+    await run(() => callLegacyApi('setSettings', { monthly_revenue_goal: value }).then(reload), 'Цель сохранена.');
+    haptic('success');
+  }
+
+  async function clearGoal() {
+    const ok = await run(() => callLegacyApi('setSettings', { monthly_revenue_goal: null }).then(reload), 'Цель убрана.');
+    if (ok) setGoalDraft('');
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    await run(() => callLegacyApi('setSettings', {
+      shift_start: settings.shift_start,
+      salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
+      salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
+      salon_radius: Number(settings.salon_radius) || 100,
+    }).then(reload), 'Настройки сохранены.');
+  }
+
+  async function useMyLocation() {
+    if (!navigator.geolocation) return setError('Геолокация не поддерживается.');
+    try {
+      const position = await new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 7000 });
+      });
+      setSettings((current) => ({
+        ...current,
+        salon_lat: position.coords.latitude,
+        salon_lng: position.coords.longitude,
+      }));
+    } catch {
+      setError('Не удалось получить геолокацию.');
+    }
+  }
+
+  return (
+    <section className="view-grid">
+      {message ? <div className="notice success wide">{message}</div> : null}
+
+      {canEdit ? (
+        <form className="card wide hero-card settings-goal" onSubmit={saveGoal}>
+          <span className="hero-eyebrow">ЦЕЛЬ НА МЕСЯЦ</span>
+          <p>
+            {goal
+              ? `Сейчас: ${money(goal)} сум. На главной видно, сколько уже выполнено и сколько нужно в день.`
+              : 'Поставьте план по выручке — на главной появится шкала и подсказка, сколько нужно в день.'}
+          </p>
+          <MoneyInput aria-label="Цель по выручке на месяц" placeholder="например, 85 000 000" value={goalDraft} onChange={setGoalDraft} />
+          <div className="settings-actions">
+            <button className="btn light" type="submit" disabled={busy}>{goal ? 'Изменить цель' : 'Поставить цель'}</button>
+            {goal ? <button className="btn ghost-light" type="button" disabled={busy} onClick={clearGoal}>Убрать</button> : null}
+          </div>
+        </form>
+      ) : null}
+
+      {canEdit ? (
+        <form className="card wide settings-card" onSubmit={saveSettings}>
+          <h2>Смена и салон</h2>
+          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
+          <p className="hint">От него считаются опоздания. У мастера, чья смена по графику начинается позже, — от его смены.</p>
+          <label>Радиус отметки, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
+          <div className="settings-pair">
+            <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
+            <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
+          </div>
+          <button className="btn ghost" type="button" onClick={useMyLocation}>Задать место салона по моему положению</button>
+          <button className="btn" type="submit" disabled={busy}>Сохранить</button>
+        </form>
+      ) : null}
+
+      {data.appRole === 'owner' ? <DeletionLog setError={setError} /> : null}
+
+      <div className="card wide settings-card">
+        <h2>Оформление</h2>
+        <div className="settings-row">
+          <span>
+            <strong>Тема «Банк»</strong>
+            <small>светлая: тёмно-синий и изумруд</small>
+          </span>
+          <i className="settings-swatch" aria-hidden="true" />
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function LoginGate({ error }) {
@@ -2847,65 +2928,26 @@ function LoginGate({ error }) {
   );
 }
 
-function ThemeControls({ theme, setTheme, dark, setDark }) {
-  return (
-    <div className="themebar">
-      <div className="swatches" aria-label="Цветовая тема">
-        {Object.entries(THEMES).map(([key, item]) => (
-          <button
-            aria-label={item.name}
-            className={`swatch ${theme === key ? 'on' : ''}`}
-            key={key}
-            onClick={() => setTheme(key)}
-            title={item.name}
-            type="button"
-          >
-            <span style={{ background: item.light.brass }} />
-          </button>
-        ))}
-      </div>
-
-      <button
-        aria-label={dark ? 'Включить светлую тему' : 'Включить тёмную тему'}
-        className="dark-toggle"
-        onClick={() => setDark((current) => !current)}
-        title="Светлая / тёмная тема"
-        type="button"
-      >
-        {dark ? '☀' : '☾'}
-      </button>
-    </div>
-  );
-}
-
 export default function App() {
   const [data, setData] = useState(emptyState);
   const [view, setView] = useState('overview');
+  const [previousView, setPreviousView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
   const isLoadingRef = useRef(false);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('maestroTheme') || 'brass');
-  const [dark, setDark] = useState(() => {
-    const saved = localStorage.getItem('maestroDark');
-    if (saved != null) return saved === 'true';
-    return window.Telegram?.WebApp?.colorScheme === 'dark';
-  });
 
+  // Telegram paints its own header and the area behind the app; matching them
+  // to the page removes the seam at the top of the screen.
   useEffect(() => {
-    const selected = THEMES[theme] || THEMES.brass;
-    const colors = selected[dark ? 'dark' : 'light'];
-    Object.entries(colors).forEach(([key, value]) => document.documentElement.style.setProperty(`--${key}`, value));
-    document.documentElement.style.setProperty(
-      '--shadow',
-      dark
-        ? '0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35)'
-        : '0 1px 2px rgba(0,0,0,.05),0 8px 24px rgba(0,0,0,.05)',
-    );
-    document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('maestroTheme', theme);
-    localStorage.setItem('maestroDark', String(dark));
-  }, [dark, theme]);
+    const telegram = window.Telegram?.WebApp;
+    try {
+      telegram?.setHeaderColor?.('#F4F6F9');
+      telegram?.setBackgroundColor?.('#F4F6F9');
+    } catch {
+      // Older clients ignore the colours; nothing else depends on them.
+    }
+  }, []);
 
   async function load({ preserveView = true, since = null } = {}) {
     if (isLoadingRef.current) return;
@@ -2992,18 +3034,22 @@ export default function App() {
     };
   }, [loginRequired]);
 
-  const availableViews = useMemo(() => {
-    return viewIdsForUser(data);
-  }, [data.appRole, data.role]);
-  // A group is only offered if the role can reach something inside it, so a
-  // role never sees an empty tab.
-  const navGroups = useMemo(() => (
-    VIEW_GROUPS
-      .map((group) => ({ ...group, views: group.views.filter((id) => availableViews.includes(id)) }))
-      .filter((group) => group.views.length)
+  const availableViews = useMemo(() => viewIdsForUser(data), [data.appRole, data.role]);
+  // An item is only offered if the role can reach something inside it.
+  const navItems = useMemo(() => (
+    NAV_ITEMS
+      .map((item) => ({ ...item, views: item.views.filter((id) => availableViews.includes(id)) }))
+      .filter((item) => item.views.length)
   ), [availableViews]);
-  const activeGroup = navGroups.find((group) => group.views.includes(view)) || navGroups[0];
   const pendingSalesCount = getPendingSales(data.sales).length;
+
+  function openView(next) {
+    if (next === view) return;
+    haptic('light');
+    if (next === 'settings') setPreviousView(view);
+    setView(next);
+    window.scrollTo({ top: 0 });
+  }
 
   if (loginRequired) return <LoginGate error={error} />;
   if (isLoading) {
@@ -3031,71 +3077,79 @@ export default function App() {
     admin: AdminView,
     attendance: AttendanceView,
     finance: FinanceView,
+    settings: SettingsView,
   }[view] || MasterView;
 
+  const isMaster = data.role === 'master';
+  const masterProfile = isMaster ? data.byName[data.me] : null;
+  const title = isMaster ? (data.me || 'Maestro') : VIEW_TITLES[view] || 'Maestro';
+  const subtitle = isMaster
+    ? `${Number(masterProfile?.pct) || 40}% мастеру · ${todayHeading().split(' · ')[1]}`
+    : view === 'settings'
+      ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
+      : todayHeading();
+  const inTeam = view === 'attendance' || view === 'master';
+
   return (
-    <main className="app">
-      <div className="pole" />
-      <header>
-        <div className="topbar">
-          <div className="brand">
-            <div className="mark">M</div>
-            <div>
-              <h1>Maestro Barberia</h1>
-              <p>{data.role === 'master' && data.me ? `${data.me} · ${data.byName[data.me]?.pct || 40}%` : getTelegramFirstName() ? `привет, ${getTelegramFirstName()}` : 'учёт салона'}</p>
-            </div>
+    <main className={`app ${isMaster ? 'is-master' : 'has-tabbar'}`}>
+      <header className="app-header">
+        {view === 'settings' ? (
+          <button className="back-button" type="button" onClick={() => openView(previousView)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+            Назад
+          </button>
+        ) : null}
+        <div className="app-header-row">
+          <div className="app-header-titles">
+            <h1 className={view === 'overview' ? 'is-wordmark' : ''}>{title}</h1>
+            <p>{subtitle}</p>
           </div>
+          {!isMaster && view !== 'settings' && availableViews.includes('settings') ? (
+            <button aria-label="Настройки" className="gear-button" type="button" onClick={() => openView('settings')}>
+              <GearIcon />
+            </button>
+          ) : null}
         </div>
-        <ThemeControls theme={theme} setTheme={setTheme} dark={dark} setDark={setDark} />
       </header>
 
-      {availableViews.length && data.role !== 'master' ? (
-        <>
-          <nav className="seg nav">
-            {navGroups.map((group) => {
-              const showsPending = group.views.includes('admin') && pendingSalesCount;
-              return (
-                <button
-                  className={`${activeGroup?.id === group.id ? 'on ' : ''}${showsPending ? 'has-nav-badge' : ''}`}
-                  key={group.id}
-                  type="button"
-                  onClick={() => setView(group.views.includes(view) ? view : group.views[0])}
-                >
-                  {group.label}
-                  {showsPending ? (
-                    <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
-                      {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
-
-          {activeGroup && activeGroup.views.length > 1 ? (
-            <nav className="seg nav nav-sub" aria-label={`Разделы: ${activeGroup.label}`}>
-              {activeGroup.views.map((id) => (
-                <button
-                  className={`${view === id ? 'on ' : ''}${id === 'admin' && pendingSalesCount ? 'has-nav-badge' : ''}`}
-                  key={id}
-                  type="button"
-                  onClick={() => setView(id)}
-                >
-                  {VIEW_TAB_LABELS[id]}
-                  {id === 'admin' && pendingSalesCount ? (
-                    <span className="nav-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
-                      {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </nav>
-          ) : null}
-        </>
+      {inTeam && !isMaster ? (
+        <nav className="seg team-tabs" aria-label="Команда">
+          {TEAM_TABS.filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
+            <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => openView(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
       ) : null}
 
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
-      <CurrentView data={data} reload={load} setError={setError} setView={setView} />
+      <CurrentView data={data} reload={load} setError={setError} setView={openView} />
+
+      {!isMaster && navItems.length ? (
+        <nav className="tabbar" aria-label="Разделы">
+          {navItems.map((item) => {
+            const active = item.views.includes(view);
+            const showsPending = item.id === 'sales' && pendingSalesCount;
+            return (
+              <button
+                aria-current={active ? 'page' : undefined}
+                className={active ? 'on' : ''}
+                key={item.id}
+                type="button"
+                onClick={() => openView(item.views.includes(view) ? view : item.views[0])}
+              >
+                <NavIcon name={item.icon} />
+                <span>{item.label}</span>
+                {showsPending ? (
+                  <b className="tabbar-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
+                    {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
+                  </b>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      ) : null}
     </main>
   );
 }
