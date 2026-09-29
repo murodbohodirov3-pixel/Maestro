@@ -4419,3 +4419,8 @@ label {
 .master-earnings .tiles {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+/* A master with no earlier period says so instead of "+100% · было 0". */
+.master-period-change.is-new {
+  color: var(--accent);
+}

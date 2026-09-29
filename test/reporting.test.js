@@ -9,6 +9,7 @@ import {
   comparisonRanges,
   dayCount,
   finishedRange,
+  firstDayOf,
   latenessSummary,
   masterPayoutForPeriod,
   mastersForPeriod,
@@ -21,6 +22,7 @@ import {
   recognizedFinesTotal,
   shiftProductivity,
   shiftStartFor,
+  startedAfter,
   weekdayBreakdown,
   weekdayIndex,
 } from '../src/utils/reporting.js';
@@ -426,4 +428,28 @@ test('a weekday outside the schedule is a day off, not a miss', () => {
   const scheduleRules = [1, 2, 3, 4, 5, 6].map((iso) => ({ master_id: 1, iso_weekday: iso, starts_at: '10:00', active: true }));
   const grid = attendanceGrid({ masters, attendance, scheduleRules, range: { from: '2026-09-27', to: '2026-09-27' }, today: '2026-09-29' });
   assert.equal(grid[0].status, 'day-off');
+});
+
+test('a master is dated from his first sale or check-in, whichever came first', () => {
+  const master = { id: 24, name: 'Салим' };
+  const sales = [
+    { master_id: 24, d: '2026-09-25' },
+    { master_id: 1, d: '2026-09-01' },
+  ];
+  const attendance = [{ master_id: 24, d: '2026-09-24' }];
+  assert.equal(firstDayOf(master, sales, attendance), '2026-09-24');
+  assert.equal(firstDayOf(master, sales), '2026-09-25');
+  assert.equal(firstDayOf({ id: 99, name: 'Никто' }, sales, attendance), null);
+});
+
+test('only a master who started after the comparison window counts as new', () => {
+  const august = { from: '2026-08-01', to: '2026-08-28' };
+  assert.equal(startedAfter('2026-09-24', august), true);
+  assert.equal(startedAfter(null, august), true);
+  // Worked the last day of the window: his zero before is a real zero.
+  assert.equal(startedAfter('2026-08-28', august), false);
+  assert.equal(startedAfter('2026-04-01', august), false);
+  // Early October is still compared with 1–N September, before he started.
+  assert.equal(startedAfter('2026-09-24', { from: '2026-09-01', to: '2026-09-04' }), true);
+  assert.equal(startedAfter('2026-09-24', null), false);
 });

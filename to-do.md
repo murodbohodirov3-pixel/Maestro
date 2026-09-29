@@ -13,6 +13,9 @@
 - [x] «Банк» design ported (2026-09-29): tokens, Onest/Unbounded, header with gear, bottom tab bar (Главная · Продажи · Расходы · Команда), Настройки (goal, shift/salon, deletion log), navy hero cards, ranking without crown, Команда with register, fines summary and master list, navy master earnings card.
 - [ ] Polish pass after the owner uses it on his phone (tell apart what he wants changed).
   - [x] Masters list removed from Команда: it repeated «Мастера месяца» on Главная, which opens the same master card.
+  - [x] A master who started after the comparison window shows «новый мастер» instead of "+100% · было 0" (Главная, Продажи, master card).
+- [x] Commission by date (2026-09-29): `master_commission_rates` + insert trigger `trg_sales_set_commission_pct` stamp each new sale with the rate for its own date; the `maestro-commission-sync` pg_cron job (00:00 Tashkent) keeps `masters.pct` equal to today's rate. From 2026-10-01 Жамолиддин 45→50%, Мироншох 40→45%. Dry-run verified; all 1 862 existing sales and their commission total (166 643 150) unchanged.
+- [ ] On 2026-10-01 check that the job flipped `masters.pct` (Жамолиддин 50, Мироншох 45) and that the first October sales carry the new rate.
 - [x] Step 2: new light, blue visual design. Keep the approved structure: bottom tab bar (Главная · Продажи · Расходы · Команда) and a gear screen for theme, shift settings and the deletion log; count-up numbers, Telegram haptics, leader crown, record-day and all-approved moments. Second round (А «Кобальт», Б «Небо», В «Барбершоп») is on the owner's design canvas, waiting for a pick. The first mockups — the first mockups were not "wow" enough; needs another round of concepts before any code.
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.

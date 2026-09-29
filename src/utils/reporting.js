@@ -29,6 +29,25 @@ export function belongsToMaster(row, master) {
   return row.master === master.name;
 }
 
+// The first day a master shows up in any of these rows (a sale, a check-in),
+// or null if he never does.
+export function firstDayOf(master, ...collections) {
+  let first = null;
+  collections.flat().forEach((row) => {
+    if (!belongsToMaster(row, master)) return;
+    const day = rowDate(row);
+    if (day && (!first || day < first)) first = day;
+  });
+  return first;
+}
+
+// A master who had not started by the end of the comparison window has no
+// "before": his zero there is absence, not a slump, and "+100% · было 0" would
+// read as growth.
+export function startedAfter(firstDay, range) {
+  return Boolean(range?.to) && (!firstDay || firstDay > range.to);
+}
+
 // A master who left still has to appear for the periods he worked, otherwise
 // his revenue counts while his payout silently disappears.
 export function mastersForPeriod(masters, sales, fines = []) {

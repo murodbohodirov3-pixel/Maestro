@@ -29,6 +29,7 @@ import {
   belongsToMaster,
   clientBreakdown,
   comparisonRanges,
+  firstDayOf,
   inRange,
   masterPayoutForPeriod,
   mastersForPeriod,
@@ -39,6 +40,7 @@ import {
   shiftDate,
   previousRange,
   shiftProductivity,
+  startedAfter,
 } from './utils/reporting.js';
 import {
   localDate,
@@ -505,7 +507,8 @@ function PaymentBreakdownBar({ cash, card, qr, previous }) {
   );
 }
 
-function MasterMetricComparison({ current, previous, format = money, inProgress = false }) {
+function MasterMetricComparison({ current, previous, format = money, inProgress = false, isNew = false }) {
+  if (isNew) return <small className="master-period-change is-new">новый мастер</small>;
   const percent = percentageDifference(current, previous);
   const tone = percent > 0 ? 'positive' : percent < 0 ? 'negative' : '';
   if (inProgress && (Number(current) || 0) <= (Number(previous) || 0)) {
@@ -754,7 +757,7 @@ function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen }) {
                 <span className="master-rank-value">
                   <strong>{compactMoney(row.revenue)}</strong>
                   {comparisonRange ? (
-                    <MasterMetricComparison current={row.compareRevenue} previous={row.previousRevenue} format={compactMoney} inProgress={inProgress} />
+                    <MasterMetricComparison current={row.compareRevenue} previous={row.previousRevenue} format={compactMoney} inProgress={inProgress} isNew={row.isNew} />
                   ) : null}
                 </span>
                 <span className="master-rank-bar" aria-hidden="true">
@@ -877,7 +880,11 @@ function MasterSheet({ data, master, onClose }) {
   }, [onClose]);
 
   const monthRange = currentMonthRange();
-  const { current: compareRange, previous: priorRange, inProgress } = comparisonRanges(monthRange, 'month', TODAY);
+  const { current: compareRange, previous: monthBefore, inProgress } = comparisonRanges(monthRange, 'month', TODAY);
+  // A master who started after that window has nothing to be compared with.
+  const firstDay = firstDayOf(master, data.sales, data.attendance);
+  const isNew = startedAfter(firstDay, monthBefore);
+  const priorRange = isNew ? null : monthBefore;
   const mine = data.sales.filter((sale) => isCountedSale(sale) && belongsToMaster(sale, master));
   const myFines = data.fines.filter((fine) => belongsToMaster(fine, master));
   const within = (rows, range, key = 'd') => (
@@ -932,6 +939,7 @@ function MasterSheet({ data, master, onClose }) {
           <div className="revenue-hero-top">
             <span>Выручка за {monthName(monthRange.from)}</span>
             {priorRange ? <DeltaChip current={compare.revenue} previous={before.revenue} inProgress={inProgress} /> : null}
+            {isNew ? <span className="delta-chip flat">новый мастер</span> : null}
           </div>
           <div className="revenue-hero-value">
             <strong><CountUp value={now.revenue} /></strong>
@@ -940,6 +948,7 @@ function MasterSheet({ data, master, onClose }) {
           {priorRange ? (
             <span className="revenue-hero-note">{comparisonLabel(priorRange, TODAY)} было {compactMoney(before.revenue)}</span>
           ) : null}
+          {isNew && firstDay ? <span className="revenue-hero-note">работает с {shortRange({ from: firstDay, to: firstDay })}</span> : null}
           <div className="revenue-hero-inset">
             <span>К выплате</span>
             <strong>{money(payFor(monthRange))}</strong>
@@ -1075,6 +1084,7 @@ function OverviewView({ data, reload, setError, setView }) {
         compareRevenue: totalSalesAmount(mine(compareSales)),
         previousRevenue: totalSalesAmount(mine(priorSales)),
         summary: summarizeSales(rows),
+        isNew: startedAfter(firstDayOf(master, data.sales, data.attendance), priorMonthRange),
       };
     })
     .sort((left, right) => right.revenue - left.revenue);
@@ -1590,6 +1600,7 @@ function AdminView({ data, reload, setError }) {
       previousRevenue: totalSalesAmount(mine(previousSales)),
       previousPay: payOf(previousSales, previousFines),
       clientMix: clientBreakdown(rows),
+      isNew: startedAfter(firstDayOf(master, data.sales, data.attendance), priorRange),
     };
   });
   const topMaster = [...masterSummaries].sort((left, right) => right.revenue - left.revenue)[0];
@@ -1778,7 +1789,7 @@ function AdminView({ data, reload, setError }) {
               </tr>
             </thead>
             <tbody>
-              {sortedMasterSummaries.map(({ master, revenue: masterRevenue, pay, compareRevenue, comparePay, previousRevenue: masterPreviousRevenue, previousPay, clientMix }) => (
+              {sortedMasterSummaries.map(({ master, revenue: masterRevenue, pay, compareRevenue, comparePay, previousRevenue: masterPreviousRevenue, previousPay, clientMix, isNew }) => (
                 <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
                   <td>
                     <div className="master-name-line">
@@ -1802,11 +1813,11 @@ function AdminView({ data, reload, setError }) {
                   </td>
                   <td>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
-                    {priorRange ? <MasterMetricComparison current={compareRevenue} previous={masterPreviousRevenue} inProgress={inProgress} /> : null}
+                    {priorRange ? <MasterMetricComparison current={compareRevenue} previous={masterPreviousRevenue} inProgress={inProgress} isNew={isNew} /> : null}
                   </td>
                   <td>
                     <strong className="master-metric-value">{money(pay)} сум</strong>
-                    {priorRange ? <MasterMetricComparison current={comparePay} previous={previousPay} inProgress={inProgress} /> : null}
+                    {priorRange && !isNew ? <MasterMetricComparison current={comparePay} previous={previousPay} inProgress={inProgress} /> : null}
                   </td>
                 </tr>
               ))}
