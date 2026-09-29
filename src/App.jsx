@@ -445,6 +445,13 @@ function emptyState() {
   return normalizeData({});
 }
 
+// A co-founder's account: every figure, no buttons. The server refuses his
+// writes whatever the app shows (supabase/functions/_shared/access.js); this
+// only keeps the app from offering them.
+function isReadOnly(data) {
+  return data.appRole === 'partner';
+}
+
 
 function MoneyInput({ value, onChange, ...props }) {
   return (
@@ -1096,7 +1103,7 @@ function OverviewView({ data, reload, setError, setView }) {
     <section className="view-grid">
       {/* An approval queue is work waiting, not a statistic. It leaves
           entirely when there is nothing to approve. */}
-      {pendingSales.length ? (
+      {pendingSales.length && !isReadOnly(data) ? (
         <button className="pending-banner" type="button" onClick={() => setView('admin')}>
           <span className="pending-banner-count">{pendingSales.length}</span>
           <span className="pending-banner-text">
@@ -1558,6 +1565,7 @@ function AdminView({ data, reload, setError }) {
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
+  const readOnly = isReadOnly(data);
   const range = getRange(period, customFrom, customTo, data.sales);
   // The figures cover the whole period; their comparisons use its finished
   // days against the same days before it (see comparisonRanges).
@@ -1676,7 +1684,7 @@ function AdminView({ data, reload, setError }) {
     <section className="view-grid">
       {/* An empty queue used to keep its card and a sentence saying it was
           empty. It now leaves, like the reminder on Обзор does. */}
-      {pendingSales.length || message ? (
+      {!readOnly && (pendingSales.length || message) ? (
       <div className="card wide approvals-card">
         <h2>На подтверждение</h2>
         {pendingSales.length > 1 ? (
@@ -1865,7 +1873,9 @@ function AdminView({ data, reload, setError }) {
                 <div className="detailed-sale-amounts">
                   <strong>{money(amount)} сум</strong>
                   <span>мастеру: {money(masterEarning)} сум</span>
-                  <button className="del detailed-sale-delete" disabled={!canDelete} title={canDelete ? 'Удалить продажу' : 'Срок удаления 2 дня истёк'} type="button" onClick={() => deleteDetailedSale(sale)}>×</button>
+                  {readOnly ? null : (
+                    <button className="del detailed-sale-delete" disabled={!canDelete} title={canDelete ? 'Удалить продажу' : 'Срок удаления 2 дня истёк'} type="button" onClick={() => deleteDetailedSale(sale)}>×</button>
+                  )}
                 </div>
               </div>
             );
@@ -1906,6 +1916,9 @@ function AttendanceView({ data, reload, setError }) {
   const [showAllDays, setShowAllDays] = useState(false);
   const [fineFormOpen, setFineFormOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
+  // A read-only account gets the shift and the register, without fines and
+  // without anything that changes a day.
+  const readOnly = isReadOnly(data);
   const range = getRange(period, customFrom, customTo, data.attendance);
   const filteredFines = data.fines
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
@@ -2047,7 +2060,7 @@ function AttendanceView({ data, reload, setError }) {
                 <div className="attendance-total" key={total.master.id ?? total.master.name}>
                   <div className="attendance-total-head">
                     <strong>{total.master.name}</strong>
-                    {fineSum ? <span className="danger">штрафы −{money(fineSum)}</span> : null}
+                    {fineSum && !readOnly ? <span className="danger">штрафы −{money(fineSum)}</span> : null}
                   </div>
                   <div className="attendance-total-counts">
                     <span className={`on-time ${total.onTime ? '' : 'is-zero'}`}>вовремя {total.onTime}</span>
@@ -2103,9 +2116,14 @@ function AttendanceView({ data, reload, setError }) {
                       ? `опоздал на ${row.lateBy} мин`
                       : row.status === 'day-off' && !row.dayOff
                         ? 'выходной по графику'
-                        : ATTENDANCE_STATUS_LABELS[row.status]}
+                        : row.status === 'missing' && readOnly
+                          ? 'не отметился'
+                          : ATTENDANCE_STATUS_LABELS[row.status]}
                   </span>
                 </div>
+                {readOnly ? (
+                  arrived ? <span className="attendance-time">{arrived}</span> : null
+                ) : (
                 <div className="attendance-actions">
                   <input
                     aria-label={`Время прихода ${masterName} ${displayDate(row.d)}`}
@@ -2136,6 +2154,7 @@ function AttendanceView({ data, reload, setError }) {
                     </button>
                   ) : null}
                 </div>
+                )}
               </div>
             );
           }) : (
@@ -2148,6 +2167,7 @@ function AttendanceView({ data, reload, setError }) {
         </div>
       </div>
 
+      {readOnly ? null : (
       <div className="card wide fines-card">
         <div className="section-heading">
           <span className="fines-heading">
@@ -2219,6 +2239,7 @@ function AttendanceView({ data, reload, setError }) {
         ) : null}
         {message ? <p className="success">{message}</p> : null}
       </div>
+      )}
     </section>
   );
 }
@@ -2234,6 +2255,9 @@ function FinanceView({ data, reload, setError }) {
   const [offsetsOpen, setOffsetsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
+  // A read-only account sees how much was spent, never on what; the server
+  // does not send the names either.
+  const readOnly = isReadOnly(data);
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
   const { current: compareRange, previous: priorRange, inProgress } = comparisonRanges(range, period, TODAY);
@@ -2332,7 +2356,7 @@ function FinanceView({ data, reload, setError }) {
         {priorRange ? (
           <span className="revenue-hero-note">{comparisonLabel(priorRange, TODAY)} было {compactMoney(previousIshxonaExpenses)}</span>
         ) : null}
-        {biggestExpense && ishxonaExpenses > 0 ? (
+        {!readOnly && biggestExpense && ishxonaExpenses > 0 ? (
           <div className="expense-biggest">
             <div className="expense-biggest-head">
               <span>Крупнейшая статья</span>
@@ -2394,6 +2418,7 @@ function FinanceView({ data, reload, setError }) {
         </div>
       </div>
 
+      {readOnly ? null : (
       <div className="card wide">
         <h2>Расходы</h2>
         <div className="seg">
@@ -2419,8 +2444,9 @@ function FinanceView({ data, reload, setError }) {
           </div>
         )} />
       </div>
+      )}
 
-      {addOpen ? (
+      {readOnly ? null : addOpen ? (
       <form className="card wide" onSubmit={addExpense}>
         <div className="section-heading">
           <h2>Добавить расход</h2>
@@ -2449,6 +2475,7 @@ function FinanceView({ data, reload, setError }) {
         <button className="btn wide add-expense-button" type="button" onClick={() => setAddOpen(true)}>+ Добавить расход</button>
       )}
 
+      {readOnly ? null : (
       <div className="card wide offset-history-card">
         <button
           aria-expanded={offsetsOpen}
@@ -2535,6 +2562,7 @@ function FinanceView({ data, reload, setError }) {
           </div>
         ) : null}
       </div>
+      )}
 
     </section>
   );
@@ -2883,6 +2911,8 @@ const VIEW_TITLES = {
 
 function viewIdsForUser(data) {
   if (data.role === 'admin') {
+    // No «Рабочий день» (entering sales for a master) and no settings.
+    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'attendance'];
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
@@ -3183,7 +3213,8 @@ export default function App() {
       .map((item) => ({ ...item, views: item.views.filter((id) => availableViews.includes(id)) }))
       .filter((item) => item.views.length)
   ), [availableViews]);
-  const pendingSalesCount = getPendingSales(data.sales).length;
+  // The badge is work for whoever approves; a read-only account has none.
+  const pendingSalesCount = isReadOnly(data) ? 0 : getPendingSales(data.sales).length;
 
   function openView(next) {
     if (next === view) return;
@@ -3231,6 +3262,7 @@ export default function App() {
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
   const inTeam = view === 'attendance' || view === 'master';
+  const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
     <main className={`app ${isMaster ? 'is-master' : 'has-tabbar'}`}>
@@ -3254,9 +3286,9 @@ export default function App() {
         </div>
       </header>
 
-      {inTeam && !isMaster ? (
+      {inTeam && !isMaster && teamTabs.length > 1 ? (
         <nav className="seg team-tabs" aria-label="Команда">
-          {TEAM_TABS.filter(([id]) => availableViews.includes(id)).map(([id, label]) => (
+          {teamTabs.map(([id, label]) => (
             <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => openView(id)}>
               {label}
             </button>

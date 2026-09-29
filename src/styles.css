@@ -4424,3 +4424,12 @@ label {
 .master-period-change.is-new {
   color: var(--accent);
 }
+
+/* A read-only account sees the arrival time as a figure, not a field. */
+.attendance-time {
+  align-self: center;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+}

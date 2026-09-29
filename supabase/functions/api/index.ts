@@ -3,6 +3,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
+import { expenseForPartner, partnerMayCall, PARTNER_ROLE } from '../_shared/access.js';
 
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -371,6 +372,10 @@ Deno.serve(async (req) => {
     // just because he needs to see the numbers.
     const canApproveSales = ['owner', 'admin'].includes(appUserResult.data.role);
     const canEditSettings = ['owner', 'admin'].includes(appUserResult.data.role);
+    // A partner reads and never writes. What he may ask for is listed in
+    // _shared/access.js, and every other action stops here.
+    const isPartner = appUserResult.data.role === PARTNER_ROLE;
+    if (isPartner && !partnerMayCall(action)) return json({ error: 'forbidden' }, 403);
     let myMaster: string | null = null;
     let myMasterId: number | null = null;
     let myMasterPct: number | null = null;
@@ -388,7 +393,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!isAdmin && !myMaster) return json({ error: 'not_in_list' }, 403);
+    if (!isAdmin && !isPartner && !myMaster) return json({ error: 'not_in_list' }, 403);
 
     if (action === 'listAuditEvents') {
       if (appUserResult.data.role !== 'owner') return json({ error: 'forbidden' }, 403);
@@ -429,16 +434,17 @@ Deno.serve(async (req) => {
       const byDay = since ? { column: 'd', since } : null;
       const byDate = since ? { column: 'date', since } : null;
 
-      if (isAdmin) {
+      if (isAdmin || isPartner) {
         const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients] = await Promise.all([
           fetchAllRows('sales', 'd', {}, byDay),
           fetchAllRows('fines', 'id', {}, byDay),
           fetchAllRows('attendance', 'id', {}, byDay),
           fetchAllRows('expenses', 'date', {}, byDate),
-          fetchAllRows('debts', 'id'),
-          fetchAllRows('debt_payments', 'date', {}, byDate),
+          isAdmin ? fetchAllRows('debts', 'id') : Promise.resolve([]),
+          isAdmin ? fetchAllRows('debt_payments', 'date', {}, byDate) : Promise.resolve([]),
           canManageCalendar ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
-          canManageCalendar ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
+          // A partner reads the attendance register, and a day off is part of it.
+          canManageCalendar || isPartner ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
           canManageCalendar ? fetchAppointments() : Promise.resolve([]),
           // Everyone who sees attendance needs the schedule: a late arrival is
           // measured against the master's own shift, not only the salon cutoff.
@@ -453,7 +459,8 @@ Deno.serve(async (req) => {
           sales,
           fines,
           attendance,
-          expenses,
+          // What each expense was for never leaves the server for a partner.
+          expenses: isPartner ? expenses.map(expenseForPartner) : expenses,
           debts,
           debt_payments,
           booking_services,
