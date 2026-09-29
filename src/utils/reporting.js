@@ -318,6 +318,103 @@ export function latenessSummary(masters, attendance, fines, shiftStart = '09:00'
   }).sort((left, right) => right.totalLateMinutes - left.totalLateMinutes);
 }
 
+// A status for every master on every day up to today. The list used to be built
+// from check-ins alone, so a day with no check-in and no day off simply was not
+// there — the one day that needed a decision was the one nobody saw.
+//
+// A master is listed from his first check-in or sale, so a new hire's earlier
+// days are not reported as missed, and a master who left is listed only up to
+// his last one. A weekday his schedule does not cover counts as a day off.
+export function attendanceGrid({
+  masters,
+  attendance,
+  dayStatuses = [],
+  scheduleRules = [],
+  sales = [],
+  range,
+  today,
+  shiftStart = '09:00',
+}) {
+  if (!range?.from || !range?.to || !today) return [];
+  const last = range.to < today ? range.to : today;
+  if (last < range.from) return [];
+
+  const days = [];
+  for (let day = range.from; day <= last; day = shiftDate(day, 1)) days.push(day);
+
+  const rows = [];
+  masters.forEach((master) => {
+    const records = attendance.filter((row) => belongsToMaster(row, master));
+    const activityDates = [...records, ...sales.filter((sale) => belongsToMaster(sale, master))]
+      .map((row) => rowDate(row))
+      .filter(Boolean)
+      .sort();
+    const inactive = master.active === false;
+    if (inactive && !activityDates.some((day) => day >= range.from && day <= last)) return;
+    const first = activityDates[0] || today;
+    const lastActive = activityDates[activityDates.length - 1] || today;
+    const byDay = new Map(records.map((row) => [rowDate(row), row]));
+    const rules = scheduleRules.filter((rule) => String(rule.master_id) === String(master.id) && rule.active !== false);
+
+    days.forEach((day) => {
+      if (day < first || (inactive && day > lastActive)) return;
+      const record = byDay.get(day) || null;
+      const dayOff = dayStatuses.some((status) => (
+        String(status.master_id) === String(master.id) && status.work_date === day
+      ));
+      const weekday = weekdayIndex(day);
+      const scheduled = !rules.length || rules.some((rule) => Number(rule.iso_weekday) === weekday + 1);
+      const start = shiftStartFor(master, day, scheduleRules, shiftStart);
+      const arrived = record ? (record.arrived || record.arrived_at || '') : '';
+      const lateBy = arrived ? minutesLate(arrived, start) : 0;
+
+      let status;
+      if (dayOff) status = 'day-off';
+      else if (record) status = lateBy > 0 ? 'late' : 'on-time';
+      else if (!scheduled) status = 'day-off';
+      else if (day === today) status = 'pending';
+      else status = 'missing';
+
+      rows.push({ master, d: day, record, arrived, lateBy, shiftStart: start, status, dayOff });
+    });
+  });
+
+  return rows;
+}
+
+// One line per master for a period: how many days of each kind, and the
+// minutes lost to lateness.
+export function attendanceTotals(grid) {
+  const totals = new Map();
+  grid.forEach((row) => {
+    const key = String(row.master.id ?? row.master.name);
+    const entry = totals.get(key) || {
+      master: row.master,
+      onTime: 0,
+      late: 0,
+      lateMinutes: 0,
+      dayOff: 0,
+      missing: 0,
+      pending: 0,
+      days: [],
+    };
+    if (row.status === 'on-time') entry.onTime += 1;
+    if (row.status === 'late') {
+      entry.late += 1;
+      entry.lateMinutes += row.lateBy;
+    }
+    if (row.status === 'day-off') entry.dayOff += 1;
+    if (row.status === 'missing') entry.missing += 1;
+    if (row.status === 'pending') entry.pending += 1;
+    entry.days.push({ d: row.d, status: row.status, lateBy: row.lateBy });
+    totals.set(key, entry);
+  });
+  return [...totals.values()].map((entry) => ({
+    ...entry,
+    days: entry.days.sort((left, right) => left.d.localeCompare(right.d)),
+  }));
+}
+
 // Separates working more from earning more: two masters with equal revenue and
 // unequal shift counts are not equally productive.
 export function shiftProductivity(masters, sales, attendance, fines = []) {

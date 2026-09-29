@@ -765,7 +765,17 @@ small {
 }
 
 .attendance-row.missing {
+  border-color: color-mix(in srgb, var(--fine) 55%, var(--line));
+  background: color-mix(in srgb, var(--fine) 14%, var(--surface));
+}
+
+.attendance-row.pending {
   background: var(--surface-2);
+}
+
+.attendance-row.missing .attendance-status {
+  color: var(--fine);
+  font-weight: 700;
 }
 
 .attendance-row.day-off {
@@ -2263,7 +2273,7 @@ td:first-child {
     padding: 10px 0;
   }
 
-  .row > div:last-child {
+  .row > div:last-child:not(:first-child) {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
@@ -2461,46 +2471,6 @@ td:first-child {
   width: auto;
   min-height: 44px;
   padding: 0 16px;
-}
-
-.lateness-summary {
-  margin: 10px 0 4px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-2);
-}
-
-.lateness-summary > summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px;
-  min-height: 44px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.lateness-summary > summary span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.lateness-summary .table-scroll,
-.lateness-summary .hint {
-  padding: 0 12px 12px;
-}
-
-.lateness-summary td.is-late {
-  color: var(--danger, #C0392B);
-  font-weight: 600;
-}
-
-.master-shift-line {
-  display: block;
-  color: var(--muted);
 }
 
 .master-fines,
@@ -3052,4 +3022,164 @@ td:first-child {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* A sale the owner turned down, shown to the master who entered it. */
+.rejected-alert {
+  border: 2px solid var(--fine);
+  background: color-mix(in srgb, var(--fine) 8%, var(--surface));
+}
+
+.rejected-alert-head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.rejected-alert-head strong {
+  color: var(--fine);
+  font-size: 17px;
+}
+
+.rejected-alert-head span {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.rejected-alert-ok {
+  width: 100%;
+  margin-top: 10px;
+  background: var(--fine);
+}
+
+.row.sale-rejected {
+  margin: 0 -8px;
+  padding: 10px 8px;
+  border: 1px solid color-mix(in srgb, var(--fine) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fine) 9%, var(--surface));
+}
+
+.row.sale-rejected .sale-amount {
+  color: var(--fine);
+  text-decoration: line-through;
+}
+
+.row.sale-pending {
+  margin: 0 -8px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--brass-soft) 45%, var(--surface));
+}
+
+/* Attendance register: one line per master, one cell per day. */
+.attendance-totals {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.attendance-total {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.attendance-total-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.attendance-total-head span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.attendance-total-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attendance-total-counts span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.attendance-total-counts .on-time {
+  background: color-mix(in srgb, var(--cash) 14%, var(--surface));
+  color: var(--cash);
+}
+
+.attendance-total-counts .late {
+  background: color-mix(in srgb, #d97706 16%, var(--surface));
+  color: #9a4a04;
+}
+
+.attendance-total-counts .day-off {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.attendance-total-counts .missing {
+  background: color-mix(in srgb, var(--fine) 14%, var(--surface));
+  color: var(--fine);
+}
+
+.attendance-total-counts .is-zero {
+  opacity: 0.5;
+}
+
+.attendance-strip {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+}
+
+.attendance-strip i {
+  height: 14px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.attendance-strip i.on-time {
+  background: var(--cash);
+}
+
+.attendance-strip i.late {
+  background: #d97706;
+}
+
+.attendance-strip i.day-off {
+  background: color-mix(in srgb, var(--muted) 30%, var(--surface));
+}
+
+.attendance-strip i.missing {
+  background: var(--fine);
+}
+
+.attendance-strip i.pending {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.attendance-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.attendance-list-heading .btn {
+  min-height: 36px;
+  font-size: 13px;
 }

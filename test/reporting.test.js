@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  attendanceGrid,
+  attendanceTotals,
   belongsToMaster,
   clientBreakdown,
   comparablePreviousRange,
@@ -354,4 +356,74 @@ test('a past period is compared whole', () => {
   const result = comparisonRanges({ from: '2026-08-01', to: '2026-08-31' }, 'custom', '2026-09-29');
   assert.deepEqual(result.current, { from: '2026-08-01', to: '2026-08-31' });
   assert.deepEqual(result.previous, { from: '2026-07-01', to: '2026-07-31' });
+});
+
+test('every master has a status on every day, including a missed check-in', () => {
+  const masters = [
+    { id: 1, name: 'Жавохир', active: true },
+    { id: 3, name: 'Жавлон', active: true },
+  ];
+  const attendance = [
+    { master_id: 1, master: 'Жавохир', d: '2026-09-26', arrived: '09:55' },
+    { master_id: 1, master: 'Жавохир', d: '2026-09-27', arrived: '10:25' },
+    { master_id: 3, master: 'Жавлон', d: '2026-09-26', arrived: '13:50' },
+  ];
+  const dayStatuses = [{ master_id: 3, work_date: '2026-09-27', status: 'day_off' }];
+  const scheduleRules = [
+    ...[1, 2, 3, 4, 5, 6, 7].map((iso) => ({ master_id: 1, iso_weekday: iso, starts_at: '10:00', active: true })),
+    ...[1, 2, 3, 4, 5, 6, 7].map((iso) => ({ master_id: 3, iso_weekday: iso, starts_at: '14:00', active: true })),
+  ];
+  const grid = attendanceGrid({
+    masters,
+    attendance,
+    dayStatuses,
+    scheduleRules,
+    range: { from: '2026-09-26', to: '2026-09-30' },
+    today: '2026-09-29',
+    shiftStart: '09:00',
+  });
+  const status = (id, d) => grid.find((row) => row.master.id === id && row.d === d)?.status;
+  assert.equal(status(1, '2026-09-26'), 'on-time');
+  assert.equal(status(1, '2026-09-27'), 'late');
+  assert.equal(status(1, '2026-09-28'), 'missing');
+  assert.equal(status(1, '2026-09-29'), 'pending');
+  assert.equal(status(1, '2026-09-30'), undefined, 'days after today are not listed');
+  assert.equal(status(3, '2026-09-26'), 'on-time', 'judged against his own 14:00 shift');
+  assert.equal(status(3, '2026-09-27'), 'day-off');
+  assert.equal(status(3, '2026-09-28'), 'missing');
+  assert.equal(grid.find((row) => row.master.id === 1 && row.d === '2026-09-27').lateBy, 25);
+
+  const [javohir, javlon] = attendanceTotals(grid);
+  assert.deepEqual(
+    [javohir.onTime, javohir.late, javohir.lateMinutes, javohir.dayOff, javohir.missing, javohir.pending],
+    [1, 1, 25, 0, 1, 1],
+  );
+  assert.deepEqual([javlon.onTime, javlon.dayOff, javlon.missing], [1, 1, 1]);
+  assert.deepEqual(javohir.days.map((day) => day.d), ['2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29']);
+});
+
+test('a master is listed only while he worked', () => {
+  const masters = [
+    { id: 5, name: 'Новый', active: true },
+    { id: 7, name: 'Ушёл', active: false },
+    { id: 8, name: 'Давно ушёл', active: false },
+  ];
+  const attendance = [
+    { master_id: 5, d: '2026-09-27', arrived: '09:00' },
+    { master_id: 7, d: '2026-09-25', arrived: '09:00' },
+    { master_id: 8, d: '2026-08-01', arrived: '09:00' },
+  ];
+  const grid = attendanceGrid({ masters, attendance, range: { from: '2026-09-24', to: '2026-09-28' }, today: '2026-09-29' });
+  const daysOf = (id) => grid.filter((row) => row.master.id === id).map((row) => row.d);
+  assert.deepEqual(daysOf(5), ['2026-09-27', '2026-09-28'], 'nothing before the first check-in');
+  assert.deepEqual(daysOf(7), ['2026-09-25'], 'nothing after the last one for a master who left');
+  assert.deepEqual(daysOf(8), [], 'a master gone before the period does not appear');
+});
+
+test('a weekday outside the schedule is a day off, not a miss', () => {
+  const masters = [{ id: 1, name: 'А', active: true }];
+  const attendance = [{ master_id: 1, d: '2026-09-21', arrived: '10:00' }];
+  const scheduleRules = [1, 2, 3, 4, 5, 6].map((iso) => ({ master_id: 1, iso_weekday: iso, starts_at: '10:00', active: true }));
+  const grid = attendanceGrid({ masters, attendance, scheduleRules, range: { from: '2026-09-27', to: '2026-09-27' }, today: '2026-09-29' });
+  assert.equal(grid[0].status, 'day-off');
 });

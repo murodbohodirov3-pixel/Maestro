@@ -25,17 +25,19 @@ import {
   totalSalesAmount,
 } from './utils/calculations.js';
 import {
+  attendanceGrid,
+  attendanceTotals,
   belongsToMaster,
   clientBreakdown,
   comparisonRanges,
   inRange,
-  latenessSummary,
   masterPayoutForPeriod,
   mastersForPeriod,
   minutesLate,
   shiftStartFor,
   paymentMix,
   percentageDifference,
+  shiftDate,
   previousRange,
   shiftProductivity,
 } from './utils/reporting.js';
@@ -1164,6 +1166,23 @@ function OverviewView({ data, reload, setError, setView }) {
   );
 }
 
+const SEEN_REJECTED_KEY = 'maestroSeenRejected';
+
+function readSeenRejected() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SEEN_REJECTED_KEY) || '[]');
+    return Array.isArray(stored) ? stored.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saleStatusClass(sale) {
+  if (isRejectedByOwner(sale)) return 'sale-rejected';
+  if (isPendingOwnerApproval(sale)) return 'sale-pending';
+  return '';
+}
+
 function MasterView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
   const [payType, setPayType] = useState(null);
@@ -1183,6 +1202,31 @@ function MasterView({ data, reload, setError }) {
   const range = getRange(period, customFrom, customTo, data.sales);
   const masterSales = data.sales.filter((sale) => sale.master === masterName);
   const todaySales = masterSales.filter((sale) => rowDate(sale) === TODAY);
+  // The owner decides on a sale the next morning, and the list below only
+  // shows today, so a rejected sale never reached the master who entered it.
+  // It now waits at the top until he confirms he has seen it.
+  const [seenRejected, setSeenRejected] = useState(readSeenRejected);
+  const recentRejected = data.role === 'master'
+    ? masterSales
+      .filter((sale) => (
+        isRejectedByOwner(sale)
+        && rowDate(sale) >= shiftDate(TODAY, -7)
+        && !seenRejected.includes(String(sale.id))
+      ))
+      .sort(newestFirst)
+    : [];
+
+  function acknowledgeRejected() {
+    const ids = [...new Set([...seenRejected, ...recentRejected.map((sale) => String(sale.id))])].slice(-200);
+    try {
+      localStorage.setItem(SEEN_REJECTED_KEY, JSON.stringify(ids));
+    } catch {
+      // Without storage the notice returns on the next launch, which is the
+      // safer way for it to fail.
+    }
+    setSeenRejected(ids);
+  }
+
   const visibleSales = masterSales.filter(
     (sale) => isCountedSale(sale) && inRange(rowDate(sale), range.from, range.to),
   );
@@ -1324,6 +1368,31 @@ function MasterView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
+      {recentRejected.length ? (
+        <div className="card wide rejected-alert" role="alert">
+          <div className="rejected-alert-head">
+            <strong>
+              Отклонено владельцем: {recentRejected.length} {pluralRu(recentRejected.length, 'продажа', 'продажи', 'продаж')}
+            </strong>
+            <span>Они не вошли ни в выручку, ни в ваш заработок.</span>
+          </div>
+          <Rows
+            rows={recentRejected}
+            empty=""
+            render={(sale) => (
+              <div className="row sale-rejected" key={sale.id}>
+                <div>
+                  <strong className="sale-amount">{money(saleTotal(sale))} сум</strong>
+                  <span>{displayDate(rowDate(sale))} · {paymentLabel(sale)} · клиентов {clients(sale)}</span>
+                  <span>Внесено: {displayDateTime(sale.created_at)}</span>
+                </div>
+              </div>
+            )}
+          />
+          <p className="hint">Если сумма была неверной — внесите продажу заново. Если отклонили по ошибке — напишите владельцу.</p>
+          <button className="btn rejected-alert-ok" type="button" onClick={acknowledgeRejected}>Понятно</button>
+        </div>
+      ) : null}
       {canPickMaster ? (
         <div className="card">
           <h2>Кто работает</h2>
@@ -1419,13 +1488,13 @@ function MasterView({ data, reload, setError }) {
           rows={[...todaySales].sort(newestFirst)}
           empty="Пока нет записей за сегодня."
           render={(sale) => (
-            <div className="row" key={sale.id}>
+            <div className={`row ${saleStatusClass(sale)}`} key={sale.id}>
               <div>
-                <strong>{money(saleTotal(sale))} сум</strong>
+                <strong className="sale-amount">{money(saleTotal(sale))} сум</strong>
                 <span>{paymentLabel(sale)} · клиентов {clients(sale)} · {clientType(sale)}</span>
                 <span>Внесено: {displayDateTime(sale.created_at)}</span>
-                {isPendingOwnerApproval(sale) ? <span className="approval pending">Ожидает owner</span> : null}
-                {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено owner</span> : null}
+                {isPendingOwnerApproval(sale) ? <span className="approval pending">Ждёт подтверждения</span> : null}
+                {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено владельцем — не засчитано</span> : null}
               </div>
               {data.role === 'admin' || isPendingOwnerApproval(sale) ? (
                 <button className="del" type="button" onClick={() => deleteSale(sale.id)}>×</button>
@@ -1548,10 +1617,6 @@ function AdminView({ data, reload, setError }) {
   // with nothing to compare against.
   const mix = paymentMix(sales);
   const previousMix = paymentMix(previousSales);
-  const periodAttendance = data.attendance.filter((row) => inRange(rowDate(row), range.from, range.to));
-  const productivityByMaster = Object.fromEntries(
-    shiftProductivity(data.masters, sales, periodAttendance, fines).map((row) => [String(row.id), row]),
-  );
 
   async function setSaleApproval(id, status) {
     await run(
@@ -1738,19 +1803,6 @@ function AdminView({ data, reload, setError }) {
                     {clientMix.clients ? (
                       <small>новых {clientMix.newClients} · постоянных {clientMix.returningClients}</small>
                     ) : null}
-                    {/* Revenue alone cannot tell working more from earning
-                        more. The shift count is what separates them — but only
-                        when the check-ins actually cover the days he sold on. */}
-                    <small className="master-shift-line">
-                      {(() => {
-                        const stats = productivityByMaster[String(master.id)];
-                        if (!stats?.shifts) return 'нет отметок о приходе';
-                        const shiftLabel = `${stats.shifts} ${pluralRu(stats.shifts, 'смена', 'смены', 'смен')}`;
-                        return stats.reliable
-                          ? `${shiftLabel} · ${money(stats.revenuePerShift)} за смену`
-                          : `${shiftLabel} · продажи за ${stats.saleDays} ${pluralRu(stats.saleDays, 'день', 'дня', 'дней')} — отметок не хватает`;
-                      })()}
-                    </small>
                   </td>
                   <td>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
@@ -1825,6 +1877,14 @@ function AdminView({ data, reload, setError }) {
   );
 }
 
+const ATTENDANCE_STATUS_LABELS = {
+  'on-time': 'пришёл вовремя',
+  late: 'опоздал',
+  'day-off': 'выходной',
+  missing: 'не отметился — поставьте время или выходной',
+  pending: 'ещё нет отметки',
+};
+
 function AttendanceView({ data, reload, setError }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('attendance', 'day');
   const [fineForm, setFineForm] = useState({
@@ -1842,25 +1902,30 @@ function AttendanceView({ data, reload, setError }) {
   const [message, setMessage] = useState('');
   const [savingFineKey, setSavingFineKey] = useState('');
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
+  const [showAllDays, setShowAllDays] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.attendance);
-  const filteredAttendance = data.attendance
-    .filter((item) => inRange(rowDate(item), range.from, range.to))
-    .sort(newestFirst);
-  const attendanceRows = period === 'day'
-    ? data.activeMasters.map((master) => (
-        data.attendance.find((item) => item.master === master.name && rowDate(item) === TODAY)
-        || { master: master.name, d: TODAY, arrived: '' }
-      ))
-    : filteredAttendance;
   const filteredFines = data.fines
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
     .sort(newestFirst);
   const shiftStart = settings.shift_start || '09:00';
-  // Per-day rows answer "who is here today"; this answers "who is habitually
-  // late and what has it cost", which no screen could show before.
-  const lateness = latenessSummary(data.masters, filteredAttendance, filteredFines, shiftStart, data.scheduleRules)
-    .filter((row) => row.shifts || row.fines);
+  const grid = attendanceGrid({
+    masters: data.masters,
+    attendance: data.attendance,
+    dayStatuses: data.dayStatuses,
+    scheduleRules: data.scheduleRules,
+    sales: data.sales,
+    range,
+    today: TODAY,
+    shiftStart,
+  });
+  // Per-day rows answer "who is here today"; the totals answer "who is
+  // habitually late or missing, and what has it cost".
+  const totals = attendanceTotals(grid);
+  const finesByMaster = (master) => totalFines(filteredFines.filter((fine) => belongsToMaster(fine, master)));
+  const newestRows = [...grid].sort((left, right) => right.d.localeCompare(left.d));
+  const needsAttention = newestRows.filter((row) => row.status === 'missing' || row.status === 'late');
+  const attendanceRows = period === 'day' ? grid : showAllDays ? newestRows : needsAttention;
 
   async function saveSettings(event) {
     event.preventDefault();
@@ -1975,98 +2040,98 @@ function AttendanceView({ data, reload, setError }) {
           customTo={customTo}
           setCustomTo={setCustomTo}
         />
-        {period !== 'day' && lateness.length ? (
-          <details className="lateness-summary">
-            <summary>
-              Сводка по опозданиям
-              <span>{lateness.filter((row) => row.lateDays).length} из {lateness.length} опаздывали</span>
-            </summary>
-            <div className="table-scroll">
-              <table className="master-table">
-                <thead>
-                  <tr>
-                    <th>Мастер</th>
-                    <th>Смен</th>
-                    <th>Опозданий</th>
-                    <th>Всего минут</th>
-                    <th>В среднем</th>
-                    <th>Штрафы</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lateness.map((row) => (
-                    <tr key={row.id ?? row.name}>
-                      <td>{row.name}</td>
-                      <td>{row.shifts}</td>
-                      <td className={row.lateDays ? 'is-late' : ''}>{row.lateDays}</td>
-                      <td>{row.totalLateMinutes}</td>
-                      <td>{row.averageLateMinutes ? `${row.averageLateMinutes} мин` : '—'}</td>
-                      <td>{row.fines ? `−${money(row.fines)}` : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="hint">Смена засчитывается по отметке о приходе. Опоздание — от начала смены мастера по графику, но не раньше {shiftStart}.</p>
-          </details>
+        {period !== 'day' && totals.length ? (
+          <div className="attendance-totals" aria-label="Табель за период">
+            {totals.map((total) => {
+              const fineSum = finesByMaster(total.master);
+              return (
+                <div className="attendance-total" key={total.master.id ?? total.master.name}>
+                  <div className="attendance-total-head">
+                    <strong>{total.master.name}</strong>
+                    {fineSum ? <span className="danger">штрафы −{money(fineSum)}</span> : null}
+                  </div>
+                  <div className="attendance-total-counts">
+                    <span className={`on-time ${total.onTime ? '' : 'is-zero'}`}>вовремя {total.onTime}</span>
+                    <span className={`late ${total.late ? '' : 'is-zero'}`}>
+                      опоздал {total.late}{total.lateMinutes ? ` · ${total.lateMinutes} мин` : ''}
+                    </span>
+                    <span className={`day-off ${total.dayOff ? '' : 'is-zero'}`}>выходной {total.dayOff}</span>
+                    <span className={`missing ${total.missing ? '' : 'is-zero'}`}>нет отметки {total.missing}</span>
+                  </div>
+                  {total.days.length <= 31 ? (
+                    <div className="attendance-strip" aria-hidden="true">
+                      {total.days.map((day) => (
+                        <i className={day.status} key={day.d} title={`${displayDate(day.d)}: ${ATTENDANCE_STATUS_LABELS[day.status]}`} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            <p className="hint">
+              Опоздание считается от начала смены мастера по графику, но не раньше {shiftStart}.
+              «Нет отметки» — прошедший день без прихода и без выходного.
+            </p>
+          </div>
+        ) : null}
+        {period !== 'day' ? (
+          <div className="attendance-list-heading">
+            <strong>{showAllDays ? `Все дни · ${newestRows.length}` : `Требуют внимания · ${needsAttention.length}`}</strong>
+            <button className="btn ghost" type="button" onClick={() => setShowAllDays((all) => !all)}>
+              {showAllDays ? 'Только проблемные' : 'Показать все дни'}
+            </button>
+          </div>
         ) : null}
         <div className="attendance-list">
-          {attendanceRows.length ? attendanceRows.map((item) => {
-            const masterRecord = data.masters.find((master) => master.name === item.master);
-            const dayOff = data.dayStatuses.some((day) => (
-              String(day.master_id) === String(masterRecord?.id) && day.work_date === rowDate(item)
-            ));
-            const arrived = displayTime(item.arrived || item.arrived_at);
-            const rowShiftStart = shiftStartFor(masterRecord, rowDate(item), data.scheduleRules, shiftStart);
-            const lateBy = arrived ? minutesLate(arrived, rowShiftStart) : 0;
-            const status = dayOff ? 'day-off' : !arrived ? 'missing' : lateBy > 0 ? 'late' : 'on-time';
-            const fineKey = `${item.master}-${rowDate(item)}`;
+          {attendanceRows.length ? attendanceRows.map((row) => {
+            const masterName = row.master.name;
+            const arrived = displayTime(row.arrived);
+            const dayOffKey = `${row.master.id}-${row.d}`;
+            const fineKey = `${masterName}-${row.d}`;
             const quickFineExists = data.fines.some((fine) => (
-              fine.master === item.master
-              && rowDate(fine) === rowDate(item)
+              belongsToMaster(fine, row.master)
+              && rowDate(fine) === row.d
               && Number(fine.amount) === 50000
             ));
 
             return (
-              <div className={`attendance-row ${status}`} key={`${item.master}-${rowDate(item)}`}>
+              <div className={`attendance-row ${row.status}`} key={`${masterName}-${row.d}`}>
                 <div className="attendance-person">
-                  <strong>{item.master}</strong>
-                  <span>{displayDate(rowDate(item))}</span>
-                  <span>
-                    {dayOff
-                      ? 'выходной'
-                      : !arrived
-                      ? 'нет отметки'
-                      : lateBy > 0
-                        ? `опоздал на ${lateBy} мин`
-                        : 'пришёл вовремя'}
+                  <strong>{masterName}</strong>
+                  <span>{displayDate(row.d)}</span>
+                  <span className="attendance-status">
+                    {row.status === 'late'
+                      ? `опоздал на ${row.lateBy} мин`
+                      : row.status === 'day-off' && !row.dayOff
+                        ? 'выходной по графику'
+                        : ATTENDANCE_STATUS_LABELS[row.status]}
                   </span>
                 </div>
                 <div className="attendance-actions">
                   <input
-                    aria-label={`Время прихода ${item.master} ${displayDate(rowDate(item))}`}
+                    aria-label={`Время прихода ${masterName} ${displayDate(row.d)}`}
                     type="time"
                     defaultValue={arrived}
-                    disabled={dayOff}
-                    onBlur={(event) => saveAttendance(item.master, rowDate(item), event.target.value)}
+                    disabled={row.dayOff}
+                    onBlur={(event) => saveAttendance(masterName, row.d, event.target.value)}
                   />
                   <button
-                    className={`day-off-button ${dayOff ? 'active' : ''}`}
-                    disabled={savingDayOffKey === `${masterRecord?.id}-${rowDate(item)}`}
+                    className={`day-off-button ${row.dayOff ? 'active' : ''}`}
+                    disabled={savingDayOffKey === dayOffKey}
                     type="button"
-                    onClick={() => toggleDayOff(item.master, rowDate(item), !dayOff)}
+                    onClick={() => toggleDayOff(masterName, row.d, !row.dayOff)}
                   >
-                    {savingDayOffKey === `${masterRecord?.id}-${rowDate(item)}`
+                    {savingDayOffKey === dayOffKey
                       ? 'Сохраняю…'
-                      : dayOff ? 'Отменить выходной' : 'Выходной'}
+                      : row.dayOff ? 'Отменить выходной' : 'Выходной'}
                   </button>
-                  {status === 'late' ? (
+                  {row.status === 'late' ? (
                     <button
                       className="fine-button"
                       disabled={quickFineExists || savingFineKey === fineKey}
                       title="Автоматически выставить штраф 50 000 сум"
                       type="button"
-                      onClick={() => addLateFine(item)}
+                      onClick={() => addLateFine({ master: masterName, d: row.d })}
                     >
                       {quickFineExists ? 'Штраф выставлен' : savingFineKey === fineKey ? 'Сохраняю…' : 'Штраф'}
                     </button>
@@ -2074,7 +2139,13 @@ function AttendanceView({ data, reload, setError }) {
                 </div>
               </div>
             );
-          }) : <p className="hint">За выбранный период отметок нет.</p>}
+          }) : (
+            <p className="hint">
+              {period === 'day' || showAllDays
+                ? 'За выбранный период мастеров нет.'
+                : 'Пропусков и опозданий за период нет — все дни отмечены.'}
+            </p>
+          )}
         </div>
       </div>
 
@@ -2131,6 +2202,8 @@ function AttendanceView({ data, reload, setError }) {
     </section>
   );
 }
+
+const EXPENSE_SECTION_LABELS = { ishxona: 'Салон', murod: 'Мурод', jamshid: 'Жамшид' };
 
 function FinanceView({ data, reload, setError }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
@@ -2254,7 +2327,7 @@ function FinanceView({ data, reload, setError }) {
             const item = sectionExpense('ishxona');
             return (
               <Tile
-                label="Расходы Ишхоны"
+                label="Расходы салона"
                 value={usdMoney(item.usd)}
                 secondary={`${money(item.uzs)} сум`}
                 hint={`расходы ${usdMoney(item.usd)}`}
@@ -2268,7 +2341,7 @@ function FinanceView({ data, reload, setError }) {
         <h2>Расходы</h2>
         <div className="seg">
           {[
-            ['ishxona', 'Ишхона'],
+            ['ishxona', 'Салон'],
             ['murod', 'Мурод'],
             ['jamshid', 'Жамшид'],
           ].map(([value, label]) => <button className={tab === value ? 'on' : ''} key={value} type="button" onClick={() => setTab(value)}>{label}</button>)}
@@ -2282,7 +2355,7 @@ function FinanceView({ data, reload, setError }) {
             <div>
               <strong>{expense.name}</strong>
               <span>
-                {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${expense.minus_from}` : expense.section}
+                {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${EXPENSE_SECTION_LABELS[expense.minus_from] || expense.minus_from}` : EXPENSE_SECTION_LABELS[expense.section] || expense.section}
               </span>
             </div>
             <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense)}>×</button></div>
@@ -2294,7 +2367,7 @@ function FinanceView({ data, reload, setError }) {
         <h2>Добавить расход</h2>
         <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
         <select value={form.section} onChange={(event) => setForm({ ...form, section: event.target.value })}>
-          <option value="ishxona">Ишхона</option>
+          <option value="ishxona">Салон</option>
           <option value="murod">Мурод</option>
           <option value="jamshid">Жамшид</option>
         </select>
@@ -2326,7 +2399,7 @@ function FinanceView({ data, reload, setError }) {
           <div className="offset-history">
             <form className="offset-form-card" onSubmit={addRentOffset}>
               <h2>Взаимозачёт аренды</h2>
-              <p className="hint">Уменьшает вложения партнёра и показывает безденежный доход. Касса и расходы Ишхоны не меняются.</p>
+              <p className="hint">Уменьшает вложения партнёра и показывает безденежный доход. Касса и расходы салона не меняются.</p>
               <label>
                 Дата
                 <input type="date" value={offsetForm.date} onChange={(event) => setOffsetForm({ ...offsetForm, date: event.target.value })} />
