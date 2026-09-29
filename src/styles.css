@@ -2838,3 +2838,423 @@ td:first-child {
 .deletion-log > .btn {
   margin: 0 12px 12px;
 }
+
+/* Month forecast — the pace of the finished days carried to the month's end. */
+.forecast-main {
+  display: grid;
+  gap: 4px;
+}
+
+.forecast-main strong {
+  color: var(--ink);
+  font-size: clamp(24px, 7vw, 30px);
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.4px;
+  line-height: 1.1;
+}
+
+.forecast-main strong small {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.forecast-main em {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.forecast-main em.positive,
+.trend-detail small.positive {
+  color: #2f9e58;
+}
+
+.forecast-main em.negative,
+.trend-detail small.negative {
+  color: #c94b4b;
+}
+
+.forecast-track {
+  height: 10px;
+  margin: 12px 0 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.forecast-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brass);
+  transition: width 0.5s ease;
+}
+
+/* Signals — what changed enough to act on. */
+.signal-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.signal {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.signal.bad {
+  border-color: color-mix(in srgb, var(--fine) 30%, var(--line));
+  background: color-mix(in srgb, var(--fine) 7%, var(--surface));
+}
+
+.signal.good {
+  border-color: color-mix(in srgb, var(--cash) 30%, var(--line));
+  background: color-mix(in srgb, var(--cash) 7%, var(--surface));
+}
+
+.signal-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+}
+
+.signal.bad .signal-icon {
+  background: var(--fine);
+}
+
+.signal.good .signal-icon {
+  background: var(--cash);
+}
+
+.signal strong,
+.signal small {
+  display: block;
+}
+
+.signal strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.signal small {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* Masters of the month — a ranking that opens into each master's card. */
+.master-rank {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.master-rank button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+}
+
+.master-rank button:hover {
+  border-color: color-mix(in srgb, var(--brass) 45%, var(--line));
+}
+
+.master-rank button.is-leader {
+  border-color: color-mix(in srgb, var(--brass) 60%, var(--line));
+  background: color-mix(in srgb, var(--brass-soft) 45%, var(--surface));
+}
+
+.master-rank-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brass) 14%, var(--surface));
+  color: var(--brass);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.master-rank button.is-leader .master-rank-number {
+  background: var(--brass);
+  color: #fff;
+}
+
+.master-rank-name {
+  min-width: 0;
+}
+
+.master-rank-name strong,
+.master-rank-name small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.master-rank-name strong {
+  font-size: 14px;
+}
+
+.master-rank-name small {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.master-rank-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.master-rank-value strong {
+  display: block;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.master-rank-value .master-period-change {
+  margin-top: 2px;
+  font-size: 11px;
+}
+
+/* Month-by-month trend. */
+.trend-metrics {
+  margin-bottom: 14px;
+}
+
+.trend-bars {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 4px;
+  align-items: end;
+  height: 176px;
+}
+
+.trend-bar {
+  display: grid;
+  grid-template-rows: 16px minmax(0, 1fr) 18px;
+  gap: 4px;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+
+.trend-value {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.trend-column {
+  position: relative;
+  display: block;
+  border-radius: 6px 6px 3px 3px;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+
+.trend-column i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-height: 2px;
+  border-radius: 6px 6px 3px 3px;
+  transition: height 0.35s ease;
+}
+
+.trend-fill {
+  background: color-mix(in srgb, var(--brass) 55%, var(--surface));
+}
+
+.trend-ghost {
+  border: 1.5px dashed color-mix(in srgb, var(--brass) 60%, var(--line));
+  background: color-mix(in srgb, var(--brass) 10%, var(--surface));
+}
+
+.trend-bar.is-current .trend-fill,
+.trend-bar.is-selected .trend-fill {
+  background: var(--brass);
+}
+
+.trend-bar.is-negative .trend-fill {
+  background: var(--fine);
+}
+
+.trend-bar.is-selected .trend-value,
+.trend-bar.is-selected .trend-month {
+  color: var(--ink);
+}
+
+.trend-month {
+  font-size: 11px;
+  text-align: center;
+}
+
+.trend-detail {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.trend-detail span,
+.trend-detail small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trend-detail small {
+  font-weight: 700;
+}
+
+.trend-detail strong {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-card > .hint {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* Master card — a sheet over the current screen. */
+.sheet-backdrop {
+  align-items: end;
+  padding: 0;
+}
+
+.master-sheet {
+  width: min(100%, 540px);
+  max-height: 88vh;
+  margin: 0 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+  animation: sheet-rise 0.24s ease-out;
+}
+
+@keyframes sheet-rise {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.master-sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.master-sheet-head strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.master-sheet-head small {
+  font-size: 13px;
+}
+
+.sheet-close {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.master-sheet-subtitle {
+  margin-top: var(--space-5);
+}
+
+.master-history {
+  min-width: 0;
+}
+
+.master-name-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted color-mix(in srgb, var(--brass) 60%, transparent);
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .master-sheet,
+  .trend-column i,
+  .forecast-track i {
+    animation: none;
+    transition: none;
+  }
+}
+
+.overview-compare-note {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* Six figures stacked one per row made the overview a long scroll on a
+   phone. Two per row keeps them within a screen; long sums wrap their unit. */
+@media (max-width: 430px) {
+  .overview-tiles-supporting,
+  .sheet-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-tiles-supporting .tile strong,
+  .sheet-tiles .tile strong {
+    font-size: 17px;
+  }
+
+  .overview-tiles-supporting .tile,
+  .sheet-tiles .tile {
+    min-height: 0;
+    padding: 10px;
+  }
+}

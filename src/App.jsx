@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   callLegacyApi,
   captureTelegramOAuthCode,
@@ -50,6 +50,14 @@ import {
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
 import { comparisonLabel, sameWeekdayLastWeek } from './utils/periods.js';
+import {
+  attentionSignals,
+  compactMoney,
+  monthForecast,
+  monthlySeries,
+  returningShare,
+  summarizeSales,
+} from './utils/insights.js';
 
 const TODAY = localDate();
 const THEMES = {
@@ -685,9 +693,320 @@ function OverviewFineDetails({ rows }) {
   );
 }
 
+const MONTH_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+function monthName(day, options = { month: 'long' }) {
+  const [year, month] = String(day).split('-').map(Number);
+  return new Intl.DateTimeFormat('ru-RU', options).format(new Date(year, month - 1, 1));
+}
+
+function shareText(value) {
+  return value == null ? '—' : `${Math.round(value)}%`;
+}
+
+// A share moves in points, not percent: 59% → 70% is eleven points, and "+19%"
+// would describe the same change as something it is not.
+function shareComparison(current, previous, comparisonRange) {
+  if (current == null || previous == null) return {};
+  const points = Math.round(current - previous);
+  return {
+    secondary: `${points > 0 ? '+' : points < 0 ? '−' : ''}${Math.abs(points)} п.п. · было ${shareText(previous)}`,
+    secondaryTone: points > 0 ? 'positive' : points < 0 ? 'negative' : '',
+    hint: comparisonLabel(comparisonRange, TODAY),
+  };
+}
+
+// Where the month will land if the pace holds — the question a month-to-date
+// figure can only answer on its last day.
+function ForecastCard({ forecast, monthRevenue }) {
+  if (!forecast) return null;
+  const change = forecast.revenueChange;
+  const progress = forecast.revenue ? Math.min(100, (monthRevenue / forecast.revenue) * 100) : 0;
+  return (
+    <div className="card wide forecast-card">
+      <div className="section-heading">
+        <h2>Прогноз на {monthName(forecast.from)}</h2>
+        <span className="date-badge">по {forecast.completedDays} {pluralRu(forecast.completedDays, 'дню', 'дням', 'дням')}</span>
+      </div>
+      <div className="forecast-main">
+        <strong>≈ {compactMoney(forecast.revenue)} <small>сум</small></strong>
+        {change != null ? (
+          <em className={change > 0 ? 'positive' : change < 0 ? 'negative' : ''}>
+            {change > 0 ? '+' : ''}{change}% {comparisonLabel(forecast.previous, TODAY)} · там было {compactMoney(forecast.previous.revenue)}
+          </em>
+        ) : null}
+      </div>
+      <div className="forecast-track" aria-hidden="true"><i style={{ width: `${progress}%` }} /></div>
+      <p className="hint">
+        Уже {money(monthRevenue)} сум, осталось {forecast.daysInMonth - forecast.completedDays} {pluralRu(forecast.daysInMonth - forecast.completedDays, 'день', 'дня', 'дней')}.
+        {' '}Клиентов будет ≈ {Math.round(forecast.clients)}.
+      </p>
+    </div>
+  );
+}
+
+function SignalsCard({ result }) {
+  const bad = result.signals.filter((signal) => signal.tone === 'bad');
+  const good = result.signals.filter((signal) => signal.tone === 'good');
+  return (
+    <div className="card wide signals-card">
+      <div className="section-heading">
+        <h2>Что происходит</h2>
+        {result.ready ? <span className="date-badge">{shortRange(result.range)} против {shortRange(result.previousRange)}</span> : null}
+      </div>
+      {!result.ready ? (
+        <p className="hint">Сигналы появятся через несколько дней месяца — пока сравнивать не с чем.</p>
+      ) : !result.signals.length ? (
+        <p className="hint">Резких изменений нет: месяц идёт так же, как прошлый.</p>
+      ) : (
+        <>
+          {bad.length ? (
+            <ul className="signal-list">
+              {bad.map((signal) => (
+                <li className="signal bad" key={signal.title}>
+                  <span className="signal-icon" aria-hidden="true">▼</span>
+                  <span><strong>{signal.title}</strong><small>{signal.detail}</small></span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {good.length ? (
+            <ul className="signal-list">
+              {good.map((signal) => (
+                <li className="signal good" key={signal.title}>
+                  <span className="signal-icon" aria-hidden="true">▲</span>
+                  <span><strong>{signal.title}</strong><small>{signal.detail}</small></span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MastersOfMonth({ rows, comparisonRange, onOpen }) {
+  const leader = rows[0]?.revenue > 0 ? rows[0].master.id : null;
+  return (
+    <div className="card wide masters-month-card">
+      <div className="section-heading">
+        <h2>Мастера месяца</h2>
+        <span className="date-badge">выручка {comparisonRange ? comparisonLabel(comparisonRange, TODAY) : ''}</span>
+      </div>
+      <ol className="master-rank">
+        {rows.map((row, index) => (
+          <li key={row.master.id ?? row.master.name}>
+            <button type="button" className={row.master.id === leader ? 'is-leader' : ''} onClick={() => onOpen(row.master)}>
+              <span className="master-rank-number">{index + 1}</span>
+              <span className="master-rank-name">
+                <strong>{row.master.name}{row.master.id === leader ? ' ★' : ''}</strong>
+                <small>
+                  новых {row.summary.newClients} · пост. {row.summary.returningClients}
+                  {row.summary.clients > row.summary.labelledClients ? ` · без типа ${row.summary.clients - row.summary.labelledClients}` : ''}
+                </small>
+              </span>
+              <span className="master-rank-value">
+                <strong>{compactMoney(row.revenue)}</strong>
+                {comparisonRange ? <MasterMetricComparison current={row.revenue} previous={row.previousRevenue} format={compactMoney} /> : null}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <p className="hint">Нажмите на мастера, чтобы открыть его карточку.</p>
+    </div>
+  );
+}
+
+const TREND_METRICS = [
+  { key: 'revenue', label: 'Выручка', unit: 'млн сум', bar: (value) => (value / 1_000_000).toFixed(1).replace('.', ','), full: (value) => `${money(value)} сум` },
+  { key: 'profit', label: 'Прибыль', unit: 'млн сум', bar: (value) => (value / 1_000_000).toFixed(1).replace('.', ','), full: (value) => `${money(value)} сум` },
+  { key: 'clients', label: 'Клиенты', unit: 'клиентов', bar: (value) => String(Math.round(value)), full: (value) => `${Math.round(value)} клиентов` },
+  { key: 'newClients', label: 'Новые', unit: 'новых клиентов', bar: (value) => String(Math.round(value)), full: (value) => `${Math.round(value)} новых` },
+];
+
+// The whole trajectory, not one month against one month: whether September is
+// a recovery or a continuing slide depends on the months before August.
+function MonthlyTrend({ series, forecast }) {
+  const [metricKey, setMetricKey] = useState('revenue');
+  const [selectedIndex, setSelectedIndex] = useState(series.length - 1);
+  const metric = TREND_METRICS.find((item) => item.key === metricKey);
+  // The new/returning flag only exists from July 2026; earlier months have no
+  // answer, which is not the same as zero.
+  const valueOf = (row) => (metricKey === 'newClients' && !row.labelledClients ? null : row[metricKey]);
+  const projectionOf = (row) => {
+    if (!row.isCurrent || !forecast) return null;
+    if (metricKey === 'revenue') return forecast.revenue;
+    if (metricKey === 'clients') return forecast.clients;
+    return null;
+  };
+  const values = series.map(valueOf);
+  const peak = Math.max(1, ...values.map((value) => Math.abs(value || 0)), ...series.map((row) => projectionOf(row) || 0));
+  const selected = series[selectedIndex] || series[series.length - 1];
+  const selectedValue = selected ? valueOf(selected) : null;
+  const previousRow = series[series.indexOf(selected) - 1];
+  const previousValue = previousRow ? valueOf(previousRow) : null;
+  const projection = selected ? projectionOf(selected) : null;
+
+  if (!series.length) return null;
+
+  return (
+    <div className="card wide trend-card">
+      <div className="section-heading">
+        <h2>По месяцам</h2>
+        <span className="date-badge">{metric.unit}</span>
+      </div>
+      <div className="seg trend-metrics">
+        {TREND_METRICS.map((item) => (
+          <button className={item.key === metricKey ? 'on' : ''} key={item.key} type="button" onClick={() => setMetricKey(item.key)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="trend-bars" role="list">
+        {series.map((row, index) => {
+          const value = values[index];
+          const ghost = projectionOf(row);
+          return (
+            <button
+              aria-label={`${monthName(row.from, { month: 'long', year: 'numeric' })}: ${value == null ? 'нет данных' : metric.full(value)}`}
+              className={`trend-bar ${index === selectedIndex ? 'is-selected' : ''} ${row.isCurrent ? 'is-current' : ''} ${value < 0 ? 'is-negative' : ''}`}
+              key={row.key}
+              role="listitem"
+              type="button"
+              onClick={() => setSelectedIndex(index)}
+            >
+              <span className="trend-value">{value == null ? '—' : metric.bar(value)}</span>
+              <span className="trend-column">
+                {ghost ? <i className="trend-ghost" style={{ height: `${(ghost / peak) * 100}%` }} /> : null}
+                <i className="trend-fill" style={{ height: `${(Math.abs(value || 0) / peak) * 100}%` }} />
+              </span>
+              <span className="trend-month">{MONTH_SHORT[Number(row.key.slice(5, 7)) - 1]}</span>
+            </button>
+          );
+        })}
+      </div>
+      {selected ? (
+        <div className="trend-detail" aria-live="polite">
+          <span>{monthName(selected.from, { month: 'long', year: 'numeric' })}{selected.isCurrent ? ' · месяц идёт' : ''}</span>
+          <strong>{selectedValue == null ? 'нет данных' : metric.full(selectedValue)}</strong>
+          {selected.isCurrent ? (
+            projection ? (
+              <small>прогноз ≈ {metricKey === 'revenue' ? `${compactMoney(projection)} сум` : metric.full(projection)}</small>
+            ) : <small>итог будет в конце месяца</small>
+          ) : selectedValue != null && previousValue != null ? (
+            <small className={selectedValue > previousValue ? 'positive' : selectedValue < previousValue ? 'negative' : ''}>
+              {(() => {
+                const change = percentageDifference(selectedValue, previousValue);
+                return `${change > 0 ? '+' : ''}${change}% ${comparisonLabel(previousRow, TODAY)}`;
+              })()}
+            </small>
+          ) : null}
+        </div>
+      ) : null}
+      {forecast && (metricKey === 'revenue' || metricKey === 'clients') ? (
+        <p className="hint">Светлая часть последнего столбца — прогноз до конца месяца.</p>
+      ) : null}
+    </div>
+  );
+}
+
+// Everything about one master on one screen: this month against the same days
+// of the last, and the months before it.
+function MasterSheet({ data, master, onClose }) {
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const monthRange = currentMonthRange();
+  const priorRange = comparablePreviousRange(monthRange, 'month', TODAY);
+  const mine = data.sales.filter((sale) => isCountedSale(sale) && belongsToMaster(sale, master));
+  const inPeriod = (rows, range, key = 'd') => rows.filter((row) => inRange(rowDate(row, key), range.from, range.to));
+  const nowSales = inPeriod(mine, monthRange);
+  const beforeSales = priorRange ? inPeriod(mine, priorRange) : [];
+  const myFines = data.fines.filter((fine) => belongsToMaster(fine, master));
+  const now = summarizeSales(nowSales);
+  const before = summarizeSales(beforeSales);
+  const payNow = masterNetPay(grossMasterPayForSales(nowSales, master), totalFines(inPeriod(myFines, monthRange)));
+  const payBefore = priorRange ? masterNetPay(grossMasterPayForSales(beforeSales, master), totalFines(inPeriod(myFines, priorRange))) : 0;
+  const productivity = shiftProductivity(
+    [master],
+    nowSales,
+    inPeriod(data.attendance.filter((row) => belongsToMaster(row, master)), monthRange),
+  )[0];
+  const history = monthlySeries({ sales: mine, today: TODAY, months: 6 }).reverse();
+  // Every tile compares against the same days, so that is said once in the
+  // header rather than under each figure.
+  const versus = (current, previous) => (priorRange ? { ...comparisonToPrevious(current, previous, priorRange), hint: null } : {});
+
+  return (
+    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+      <div
+        aria-label={`Мастер ${master.name}`}
+        aria-modal="true"
+        className="card master-sheet"
+        role="dialog"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="master-sheet-head">
+          <div>
+            <strong>{master.name}</strong>
+            <small>
+              {monthName(monthRange.from)} · {Number(master.pct) || 40}% мастеру
+              {priorRange ? ` · сравнение ${comparisonLabel(priorRange, TODAY)}` : ''}
+            </small>
+          </div>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="tiles sheet-tiles">
+          <Tile label="Выручка" value={money(now.revenue)} tone="total" {...versus(now.revenue, before.revenue)} />
+          <Tile label="К выплате" value={money(payNow)} {...versus(payNow, payBefore)} />
+          <Tile label="Клиентов" value={now.clients} {...versus(now.clients, before.clients)} />
+          <Tile label="Новые" value={now.newClients} {...versus(now.newClients, before.newClients)} />
+          <Tile label="Постоянные" value={now.returningClients} {...versus(now.returningClients, before.returningClients)} />
+          <Tile label="Доля постоянных" value={shareText(now.returningShare)} {...shareComparison(now.returningShare, before.returningShare, priorRange)} hint={null} />
+          <Tile label="Средний чек" value={averageCheck(now.revenue, now.clients)} {...versus(now.averageCheck, before.averageCheck)} />
+          {productivity?.reliable ? (
+            <Tile label="Выручка за смену" value={money(productivity.revenuePerShift)} hint={`${productivity.shifts} ${pluralRu(productivity.shifts, 'смена', 'смены', 'смен')}`} />
+          ) : null}
+        </div>
+        <h2 className="master-sheet-subtitle">По месяцам</h2>
+        <div className="table-scroll">
+          <table className="master-history">
+            <thead>
+              <tr><th>Месяц</th><th>Выручка</th><th>Клиенты</th><th>Новые</th><th>Пост.</th></tr>
+            </thead>
+            <tbody>
+              {history.map((row) => (
+                <tr key={row.key}>
+                  <td>{monthName(row.from, { month: 'short', year: '2-digit' })}{row.isCurrent ? ' ·' : ''}</td>
+                  <td>{money(row.revenue)}</td>
+                  <td>{row.clients}</td>
+                  <td>{row.labelledClients ? row.newClients : '—'}</td>
+                  <td>{row.labelledClients ? row.returningClients : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OverviewView({ data, setView }) {
   const [expandedDetail, setExpandedDetail] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [openMaster, setOpenMaster] = useState(null);
+  const closeMaster = useCallback(() => setOpenMaster(null), []);
   const monthRange = currentMonthRange();
   // Trimmed to the days that have already happened. Comparing three days of a
   // new month against a whole previous month reported a collapse every time the
@@ -744,10 +1063,35 @@ function OverviewView({ data, setView }) {
   const fineRanking = overviewFineRanking(data, monthFines);
   const bestWeek = visibleWeeklyMetrics.reduce((best, week) => (week.revenue > (best?.revenue || 0) ? week : best), null);
 
+  // The month tiles all compare against the same days, named once under them.
   const versusPriorMonth = (current, previous) => (
-    priorMonthRange ? comparisonToPrevious(current, previous, priorMonthRange) : {}
+    priorMonthRange ? { ...comparisonToPrevious(current, previous, priorMonthRange), hint: null } : {}
   );
   const profitVersusPriorMonth = versusPriorMonth(netProfit, priorNetProfit);
+
+  const monthMix = summarizeSales(monthSales);
+  const priorMix = summarizeSales(priorSales);
+  const forecast = monthForecast(countedSales, TODAY);
+  const signals = attentionSignals({ sales: countedSales, masters: data.masters, today: TODAY });
+  const series = monthlySeries({
+    sales: countedSales,
+    fines: data.fines,
+    expenses: data.expenses,
+    masters: data.masters,
+    today: TODAY,
+    months: 12,
+  });
+  const masterRows = mastersForPeriod(data.masters, [...monthSales, ...priorSales])
+    .map((master) => {
+      const rows = monthSales.filter((sale) => belongsToMaster(sale, master));
+      return {
+        master,
+        revenue: totalSalesAmount(rows),
+        previousRevenue: totalSalesAmount(priorSales.filter((sale) => belongsToMaster(sale, master))),
+        summary: summarizeSales(rows),
+      };
+    })
+    .sort((left, right) => right.revenue - left.revenue);
 
   return (
     <section className="view-grid">
@@ -809,7 +1153,21 @@ function OverviewView({ data, setView }) {
             value={monthClients}
             {...versusPriorMonth(monthClients, priorClients)}
           />
+          <Tile
+            label="Новые клиенты"
+            value={monthMix.newClients}
+            {...versusPriorMonth(monthMix.newClients, priorMix.newClients)}
+          />
+          <Tile
+            label="Доля постоянных"
+            value={shareText(monthMix.returningShare)}
+            {...(priorMonthRange ? shareComparison(monthMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
+            hint={null}
+          />
         </div>
+        {priorMonthRange ? (
+          <p className="hint overview-compare-note">Прибыль и цифры месяца — сравнение {comparisonLabel(priorMonthRange, TODAY)}</p>
+        ) : null}
 
         {/* The month's breakdowns are unchanged, just one tap down: they answer
             questions the owner asks occasionally, not on every open. */}
@@ -904,6 +1262,12 @@ function OverviewView({ data, setView }) {
           </div>
         ) : null}
       </div>
+
+      <ForecastCard forecast={forecast} monthRevenue={monthRevenue} />
+      <SignalsCard result={signals} />
+      <MastersOfMonth rows={masterRows} comparisonRange={priorMonthRange} onOpen={setOpenMaster} />
+      <MonthlyTrend series={series} forecast={forecast} />
+      {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
   );
 }
@@ -1224,6 +1588,8 @@ function AdminView({ data, reload, setError }) {
   const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
   const [detailLimit, setDetailLimit] = useState(50);
   const [salesListOpen, setSalesListOpen] = useState(false);
+  const [openMaster, setOpenMaster] = useState(null);
+  const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
   const range = getRange(period, customFrom, customTo, data.sales);
   // Trimmed to the elapsed part of the period, so the first days of a month are
@@ -1468,7 +1834,9 @@ function AdminView({ data, reload, setError }) {
                 <tr className={master.name === topMasterName ? 'master-top-row' : ''} key={master.name}>
                   <td>
                     <div className="master-name-line">
-                      <strong>{master.name}</strong>
+                      <button className="master-name-button" type="button" onClick={() => setOpenMaster(master)}>
+                        <strong>{master.name}</strong>
+                      </button>
                       {master.name === topMasterName ? <span className="master-top-mark" aria-label="Лидер по выручке" title="Лидер по выручке">★</span> : null}
                     </div>
                     <small>
@@ -1579,6 +1947,7 @@ function AdminView({ data, reload, setError }) {
         </>
         ) : null}
       </div>
+      {openMaster ? <MasterSheet data={data} master={openMaster} onClose={closeMaster} /> : null}
     </section>
   );
 }

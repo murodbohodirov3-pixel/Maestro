@@ -6,7 +6,7 @@
 
 - [x] Step 1 cleanup: removed the calendar and client CRM screens (owner and masters), the repeated page headings, the refresh toast and the footer; plain-language comparison labels; neutral "today" comparisons; Продажи opens on the month; the full sales list folds away.
 - [x] Split payments: one sale paid partly by card and partly in cash, one client, one approval; pending total broken down by cash/card/QR. Frontend only; the api already accepted it.
-- [ ] Owner analytics: month forecast, "needs attention" signals, 12-month trend, master card, returning-client share.
+- [x] Owner analytics: month forecast, "Что происходит" signals, 12-month trend, master card, returning-client share (`src/utils/insights.js`, `test/insights.test.js`).
 - [ ] Monthly revenue goal (needs a `settings` column and an `api` whitelist change).
 - [ ] Step 2: new light, blue visual design — the first mockups were not "wow" enough; needs another round of concepts before any code.
 
