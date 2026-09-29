@@ -583,11 +583,13 @@ function CountUp({ value, format = money }) {
   return format(useCountUp(value));
 }
 
-function DeltaChip({ current, previous, inProgress }) {
+// `invert` is for money going out: more spending is the bad direction.
+function DeltaChip({ current, previous, inProgress, invert = false }) {
   if (!previous && !current) return null;
   const change = percentageDifference(current, previous);
   if (inProgress && current <= previous) return null;
-  const tone = change > 0 ? 'up' : change < 0 ? 'down' : 'flat';
+  const better = invert ? change < 0 : change > 0;
+  const tone = change === 0 ? 'flat' : better ? 'up' : 'down';
   return <span className={`delta-chip ${tone}`}>{change > 0 ? '▲' : change < 0 ? '▼' : '•'} {Math.abs(change)}%</span>;
 }
 
@@ -1578,7 +1580,7 @@ function AdminView({ data, reload, setError }) {
   const previousSummary = summarizeSales(previousSales);
   // Today against the whole of yesterday is a race the morning always loses.
   const comparison = (current, previous) => (
-    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress }) : {}
+    priorRange ? { ...comparisonToPrevious(current, previous, priorRange, money, { inProgress }), hint: null } : {}
   );
   const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
   const pendingMix = paymentMix(pendingSales);
@@ -1640,8 +1642,8 @@ function AdminView({ data, reload, setError }) {
       {/* An empty queue used to keep its card and a sentence saying it was
           empty. It now leaves, like the reminder on Обзор does. */}
       {pendingSales.length || message ? (
-      <div className="card wide">
-        <h2>Оплаты на подтверждение</h2>
+      <div className="card wide approvals-card">
+        <h2>На подтверждение</h2>
         {pendingSales.length > 1 ? (
           <div className="approve-all">
             <span>
@@ -1694,22 +1696,22 @@ function AdminView({ data, reload, setError }) {
       </div>
       ) : null}
 
-      <div className="card wide">
-        <SectionHeading label="Период отчёта" range={range} />
+      <div className="wide period-block">
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
-        <div className="tiles">
-          {/* "Выручка" everywhere, never "Итого": one word per concept, or the
-              owner cannot tell whether two screens mean the same number.
-              The salon remainder lives on Финансы, at its place in the chain
-              revenue → payouts → remainder → expenses → profit. Repeating it
-              here only invited the question of whether the two agree.
-              "Постоянные" was "Клиентов" minus "Новые" — a tile for a
-              subtraction the eye does anyway. */}
-          <Tile label="Выручка" value={money(revenue)} {...comparison(compareSummary.revenue, previousSummary.revenue)} tone="total" />
-          <Tile label="Клиентов" value={totalClients} {...comparison(compareSummary.clients, previousSummary.clients)} />
-          <Tile label="Новые" value={newClients} {...comparison(compareSummary.newClients, previousSummary.newClients)} />
-          <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
-        </div>
+        <p className="period-range">{displayRange(range)}</p>
+      </div>
+
+      {/* "Выручка" everywhere, never "Итого": one word per concept, or the
+          owner cannot tell whether two screens mean the same number. */}
+      <div className="tiles wide screen-kpis">
+        <Tile label="Выручка" value={money(revenue)} {...comparison(compareSummary.revenue, previousSummary.revenue)} />
+        <Tile label="Клиентов" value={totalClients} {...comparison(compareSummary.clients, previousSummary.clients)} />
+        <Tile label="Новые" value={newClients} {...comparison(compareSummary.newClients, previousSummary.newClients)} />
+        <Tile label="Средний чек" value={averageCheck(revenue, totalClients)} />
+      </div>
+
+      <div className="card wide">
+        <h2>Способы оплаты</h2>
         <PaymentBreakdownBar cash={mix.cash} card={mix.card} qr={mix.qr} previous={previousMix} />
       </div>
 
@@ -2134,6 +2136,7 @@ function FinanceView({ data, reload, setError }) {
   const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
   const [message, setMessage] = useState('');
   const [offsetsOpen, setOffsetsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
   const financeRows = [...data.sales, ...data.expenses];
   const range = getRange(period, customFrom, customTo, financeRows);
@@ -2146,9 +2149,11 @@ function FinanceView({ data, reload, setError }) {
   const ishxonaExpenses = totalExpenses(operatingExpenses(expenses));
   const previousIshxonaExpenses = totalExpenses(operatingExpenses(previousExpenses));
   const offsetIncome = rentOffsetIncome(expenses);
-  const comparison = (current, previous) => (
-    priorRange ? comparisonToPrevious(current, previous, priorRange, money, { inProgress }) : {}
-  );
+  const compareIshxonaExpenses = totalExpenses(operatingExpenses(expensesIn(compareRange)));
+  // The one line that explains most of a month's spending.
+  const biggestExpense = [...operatingExpenses(expenses)]
+    .sort((left, right) => (Number(right.amount_uzs) || 0) - (Number(left.amount_uzs) || 0))[0] || null;
+  const biggestShare = biggestExpense && ishxonaExpenses ? ((Number(biggestExpense.amount_uzs) || 0) / ishxonaExpenses) * 100 : 0;
   const visibleExpenses = expenses
     .filter((expense) => expense.section === tab && expense.category !== 'rent_offset')
     .sort(newestFirst);
@@ -2212,48 +2217,82 @@ function FinanceView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
-      <div className="card wide">
-        <SectionHeading label="Расходы за период" range={range} />
+      <div className="wide period-block">
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
-        <div className="tiles">
-          {/* This screen is one side of the ledger: money that left. Revenue,
-              master payouts and the remainder are all products of sales and
-              belong on Продажи; profit is the sum of both sides and belongs on
-              Обзор, which is the only screen allowed to add them up. Showing
-              them here too was what made the same figures appear three times. */}
-          <Tile label="Расходы" value={money(ishxonaExpenses)} {...comparison(totalExpenses(operatingExpenses(expensesIn(compareRange))), previousIshxonaExpenses)} danger />
-          {offsetIncome ? <Tile label="Безденежный доход" value={money(offsetIncome)} hint="касса не меняется" /> : null}
+        <p className="period-range">{displayRange(range)}</p>
+      </div>
+
+      {/* This screen is one side of the ledger: money that left. Revenue,
+          payouts and profit belong on Продажи and Главная. */}
+      <div className="card wide hero-card revenue-hero expense-hero">
+        <div className="revenue-hero-top">
+          <span>Расходы салона {period === 'month' ? `за ${monthName(TODAY)}` : period === 'day' ? 'за сегодня' : 'за период'}</span>
+          {priorRange ? <DeltaChip current={compareIshxonaExpenses} previous={previousIshxonaExpenses} inProgress={inProgress} invert /> : null}
         </div>
+        <div className="revenue-hero-value">
+          <strong><CountUp value={ishxonaExpenses} /></strong>
+          <span>сум</span>
+        </div>
+        {priorRange ? (
+          <span className="revenue-hero-note">{comparisonLabel(priorRange, TODAY)} было {compactMoney(previousIshxonaExpenses)}</span>
+        ) : null}
+        {biggestExpense && ishxonaExpenses > 0 ? (
+          <div className="expense-biggest">
+            <div className="expense-biggest-head">
+              <span>Крупнейшая статья</span>
+              <strong>{biggestExpense.name || 'без названия'} · {compactMoney(biggestExpense.amount_uzs)}</strong>
+            </div>
+            <div className="expense-biggest-track" aria-hidden="true">
+              <i style={{ width: `${Math.min(100, biggestShare)}%` }} />
+            </div>
+            <span>{Math.round(biggestShare)}% всех расходов {period === 'month' ? 'месяца' : 'периода'}</span>
+          </div>
+        ) : null}
+        {offsetIncome ? (
+          <div className="revenue-hero-inset">
+            <span>Безденежный доход · касса не меняется</span>
+            <strong>{money(offsetIncome)}</strong>
+          </div>
+        ) : null}
       </div>
 
       {message ? <div className="notice success wide">{message}</div> : null}
 
       <div className="card wide">
         <h2>Вложения</h2>
-        <div className="tiles">
+        <div className="investor-list">
           {['murod', 'jamshid'].map((owner) => {
             const item = investmentSummary(data.expenses, owner);
             const netUzs = item.invested - item.returned;
             const netUsd = item.investedUsd - item.returnedUsd;
+            const returnedShare = item.investedUsd ? (item.returnedUsd / item.investedUsd) * 100 : 0;
             return (
-              <Tile
-                key={owner}
-                label={owner === 'murod' ? 'Мурод' : 'Жамшид'}
-                value={usdMoney(netUsd)}
-                secondary={`${money(netUzs)} сум`}
-                hint={`вложено ${usdMoney(item.investedUsd)} · возврат ${usdMoney(item.returnedUsd)}`}
-              />
+              <div className="investor" key={owner}>
+                <div className="investor-head">
+                  <strong>{owner === 'murod' ? 'Мурод' : 'Жамшид'}</strong>
+                  <span>{usdMoney(netUsd)}</span>
+                </div>
+                <div className="investor-track" aria-hidden="true">
+                  <i style={{ width: `${Math.min(100, returnedShare)}%` }} />
+                </div>
+                <div className="investor-meta">
+                  <span>вложено {usdMoney(item.investedUsd)} · возврат {usdMoney(item.returnedUsd)}</span>
+                  <b>возвращено {Math.round(returnedShare)}%</b>
+                </div>
+                <small>{money(netUzs)} сум</small>
+              </div>
             );
           })}
           {(() => {
             const item = sectionExpense('ishxona');
             return (
-              <Tile
-                label="Расходы салона"
-                value={usdMoney(item.usd)}
-                secondary={`${money(item.uzs)} сум`}
-                hint={`расходы ${usdMoney(item.usd)}`}
-              />
+              <div className="investor investor-total">
+                <div className="investor-head">
+                  <strong>Расходы салона за всё время</strong>
+                  <span>{usdMoney(item.usd)}</span>
+                </div>
+                <small>{money(item.uzs)} сум</small>
+              </div>
             );
           })()}
         </div>
@@ -2285,8 +2324,12 @@ function FinanceView({ data, reload, setError }) {
         )} />
       </div>
 
-      <form className="card" onSubmit={addExpense}>
-        <h2>Добавить расход</h2>
+      {addOpen ? (
+      <form className="card wide" onSubmit={addExpense}>
+        <div className="section-heading">
+          <h2>Добавить расход</h2>
+          <button className="link-button" type="button" onClick={() => setAddOpen(false)}>Закрыть</button>
+        </div>
         <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
         <select value={form.section} onChange={(event) => setForm({ ...form, section: event.target.value })}>
           <option value="ishxona">Салон</option>
@@ -2306,6 +2349,9 @@ function FinanceView({ data, reload, setError }) {
         ) : null}
         <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Добавить расход'}</button>
       </form>
+      ) : (
+        <button className="btn wide add-expense-button" type="button" onClick={() => setAddOpen(true)}>+ Добавить расход</button>
+      )}
 
       <div className="card wide offset-history-card">
         <button
@@ -2592,9 +2638,9 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
             >
               <rect
                 className="chart-bar-previous"
-                fill="var(--brass)"
+                fill="#D5DEEE"
                 height={previousHeight}
-                opacity={previousValues[index] ? 0.35 : 0}
+                opacity={previousValues[index] ? 1 : 0}
                 rx="3"
                 width={barWidth}
                 x={x}
@@ -2602,7 +2648,7 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
               />
               <rect
                 className="chart-bar-current"
-                fill="var(--brass)"
+                fill="var(--accent)"
                 height={height}
                 opacity={values[index] ? 0.95 : 0.18}
                 rx="3"
