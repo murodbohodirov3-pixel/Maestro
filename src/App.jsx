@@ -235,6 +235,7 @@ const ACTION_ERROR_TEXT = {
   invalid_expense: 'Проверьте дату и сумму расхода.',
   invalid_rent_offset: 'Проверьте сумму в долларах и курс.',
   no_settings_to_update: 'Нечего сохранять — ничего не изменилось.',
+  invalid_goal: 'Проверьте сумму цели.',
   slot_already_booked: 'Это время уже занято.',
   master_day_off: 'У мастера в этот день выходной.',
   client_blocked: 'Этот клиент заблокирован.',
@@ -716,31 +717,123 @@ function shareComparison(current, previous, comparisonRange) {
   };
 }
 
+// A target turns the forecast into an answer: not "about 83 million" but
+// "two million short". The bar fills with what is banked; the tick marks
+// where the pace would end the month.
+function MonthGoal({ goal, monthRevenue, forecast, canEdit, busy, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(goal ? String(goal) : '');
+
+  async function save(event) {
+    event.preventDefault();
+    const value = Number(draft);
+    if (!value || value <= 0) return;
+    if (await onSave(value)) setEditing(false);
+  }
+
+  async function clear() {
+    if (await onSave(null)) {
+      setDraft('');
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <form className="goal-form" onSubmit={save}>
+        <label>
+          Цель по выручке на месяц
+          <MoneyInput placeholder="например, 85 000 000" value={draft} onChange={setDraft} />
+        </label>
+        <div className="goal-form-actions">
+          <button className="btn" type="submit" disabled={busy || !Number(draft)}>{busy ? 'Сохраняем…' : 'Сохранить'}</button>
+          <button className="btn ghost" type="button" disabled={busy} onClick={() => setEditing(false)}>Отмена</button>
+          {goal ? <button className="btn ghost" type="button" disabled={busy} onClick={clear}>Убрать цель</button> : null}
+        </div>
+      </form>
+    );
+  }
+
+  if (!goal) {
+    return canEdit ? (
+      <button className="goal-set" type="button" onClick={() => { setDraft(''); setEditing(true); }}>
+        + Поставить цель на месяц
+      </button>
+    ) : null;
+  }
+
+  const done = (monthRevenue / goal) * 100;
+  const projected = forecast ? (forecast.revenue / goal) * 100 : null;
+  const gap = forecast ? goal - forecast.revenue : null;
+  return (
+    <div className="goal">
+      <div className="goal-heading">
+        <span>Цель <strong>{compactMoney(goal)}</strong></span>
+        <strong className={done >= 100 ? 'positive' : ''}>{Math.floor(done)}%</strong>
+      </div>
+      <div className="goal-track" aria-hidden="true">
+        <i className="goal-fill" style={{ width: `${Math.min(100, done)}%` }} />
+        {projected != null ? <i className="goal-marker" style={{ left: `${Math.min(100, projected)}%` }} /> : null}
+      </div>
+      <p className="hint">
+        {done >= 100
+          ? `Цель выполнена${done > 100 ? `, сверху ${compactMoney(monthRevenue - goal)}` : ''}.`
+          : gap == null
+            ? `До цели ${compactMoney(goal - monthRevenue)}.`
+            : gap > 0
+              ? `По текущему темпу не хватит ≈ ${compactMoney(gap)} — нужно ≈ ${compactMoney((goal - monthRevenue) / Math.max(1, forecast.daysInMonth - forecast.completedDays))} в день.`
+              : `По текущему темпу цель будет перевыполнена на ≈ ${compactMoney(-gap)}.`}
+        {canEdit ? (
+          <>
+            {' '}
+            <button className="goal-edit" type="button" onClick={() => { setDraft(String(goal)); setEditing(true); }}>Изменить</button>
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
 // Where the month will land if the pace holds — the question a month-to-date
 // figure can only answer on its last day.
-function ForecastCard({ forecast, monthRevenue }) {
-  if (!forecast) return null;
-  const change = forecast.revenueChange;
-  const progress = forecast.revenue ? Math.min(100, (monthRevenue / forecast.revenue) * 100) : 0;
+function ForecastCard({ forecast, monthRevenue, goal, canEdit, busy, onSaveGoal }) {
+  if (!forecast && !goal && !canEdit) return null;
+  const change = forecast?.revenueChange;
+  const daysLeft = forecast ? forecast.daysInMonth - forecast.completedDays : 0;
   return (
     <div className="card wide forecast-card">
       <div className="section-heading">
-        <h2>Прогноз на {monthName(forecast.from)}</h2>
-        <span className="date-badge">по {forecast.completedDays} {pluralRu(forecast.completedDays, 'дню', 'дням', 'дням')}</span>
-      </div>
-      <div className="forecast-main">
-        <strong>≈ {compactMoney(forecast.revenue)} <small>сум</small></strong>
-        {change != null ? (
-          <em className={change > 0 ? 'positive' : change < 0 ? 'negative' : ''}>
-            {change > 0 ? '+' : ''}{change}% {comparisonLabel(forecast.previous, TODAY)} · там было {compactMoney(forecast.previous.revenue)}
-          </em>
+        <h2>Прогноз на {monthName(TODAY)}</h2>
+        {forecast ? (
+          <span className="date-badge">по {forecast.completedDays} {pluralRu(forecast.completedDays, 'дню', 'дням', 'дням')}</span>
         ) : null}
       </div>
-      <div className="forecast-track" aria-hidden="true"><i style={{ width: `${progress}%` }} /></div>
-      <p className="hint">
-        Уже {money(monthRevenue)} сум, осталось {forecast.daysInMonth - forecast.completedDays} {pluralRu(forecast.daysInMonth - forecast.completedDays, 'день', 'дня', 'дней')}.
-        {' '}Клиентов будет ≈ {Math.round(forecast.clients)}.
-      </p>
+      {forecast ? (
+        <>
+          <div className="forecast-main">
+            <strong>≈ {compactMoney(forecast.revenue)} <small>сум</small></strong>
+            {change != null ? (
+              <em className={change > 0 ? 'positive' : change < 0 ? 'negative' : ''}>
+                {change > 0 ? '+' : ''}{change}% {comparisonLabel(forecast.previous, TODAY)} · там было {compactMoney(forecast.previous.revenue)}
+              </em>
+            ) : null}
+          </div>
+          <p className="hint forecast-note">
+            Уже {money(monthRevenue)} сум, {daysLeft ? `осталось ${daysLeft} ${pluralRu(daysLeft, 'день', 'дня', 'дней')}` : 'последний день'}.
+            {' '}Клиентов будет ≈ {Math.round(forecast.clients)}.
+          </p>
+        </>
+      ) : (
+        <p className="hint">Прогноз появится завтра, когда пройдёт первый день месяца.</p>
+      )}
+      <MonthGoal
+        goal={goal}
+        monthRevenue={monthRevenue}
+        forecast={forecast}
+        canEdit={canEdit}
+        busy={busy}
+        onSave={onSaveGoal}
+      />
     </div>
   );
 }
@@ -1002,11 +1095,20 @@ function MasterSheet({ data, master, onClose }) {
   );
 }
 
-function OverviewView({ data, setView }) {
+function OverviewView({ data, reload, setError, setView }) {
   const [expandedDetail, setExpandedDetail] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
+  const { run, busy } = useAction(setError);
+  const canEditGoal = ['owner', 'admin'].includes(data.appRole);
+  const goal = Number(data.settings.monthly_revenue_goal) || null;
+
+  function saveGoal(value) {
+    return run(
+      () => callLegacyApi('setSettings', { monthly_revenue_goal: value }).then(reload),
+    );
+  }
   const monthRange = currentMonthRange();
   // Trimmed to the days that have already happened. Comparing three days of a
   // new month against a whole previous month reported a collapse every time the
@@ -1263,7 +1365,14 @@ function OverviewView({ data, setView }) {
         ) : null}
       </div>
 
-      <ForecastCard forecast={forecast} monthRevenue={monthRevenue} />
+      <ForecastCard
+        forecast={forecast}
+        monthRevenue={monthRevenue}
+        goal={goal}
+        canEdit={canEditGoal}
+        busy={busy}
+        onSaveGoal={saveGoal}
+      />
       <SignalsCard result={signals} />
       <MastersOfMonth rows={masterRows} comparisonRange={priorMonthRange} onOpen={setOpenMaster} />
       <MonthlyTrend series={series} forecast={forecast} />

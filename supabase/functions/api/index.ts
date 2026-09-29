@@ -810,6 +810,15 @@ Deno.serve(async (req) => {
       for (const key of allowed) {
         if (payload[key] !== undefined) patch[key] = payload[key];
       }
+      // The month's revenue target. Null clears it; anything else must be a
+      // whole, non-negative sum, the same bound the column's check enforces.
+      if (payload.monthly_revenue_goal !== undefined) {
+        const goal = payload.monthly_revenue_goal === null ? null : Math.round(Number(payload.monthly_revenue_goal));
+        if (goal !== null && (!Number.isFinite(goal) || goal < 0 || goal > 100_000_000_000)) {
+          return json({ error: 'invalid_goal' }, 400);
+        }
+        patch.monthly_revenue_goal = goal;
+      }
       if (!Object.keys(patch).length) return json({ error: 'no_settings_to_update' }, 400);
       const { error } = await sb.from('settings').update(patch).eq('id', 1);
       if (error) return json({ error: error.message }, 500);

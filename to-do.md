@@ -7,7 +7,7 @@
 - [x] Step 1 cleanup: removed the calendar and client CRM screens (owner and masters), the repeated page headings, the refresh toast and the footer; plain-language comparison labels; neutral "today" comparisons; Продажи opens on the month; the full sales list folds away.
 - [x] Split payments: one sale paid partly by card and partly in cash, one client, one approval; pending total broken down by cash/card/QR. Frontend only; the api already accepted it.
 - [x] Owner analytics: month forecast, "Что происходит" signals, 12-month trend, master card, returning-client share (`src/utils/insights.js`, `test/insights.test.js`).
-- [ ] Monthly revenue goal (needs a `settings` column and an `api` whitelist change).
+- [ ] Monthly revenue goal: `settings.monthly_revenue_goal` applied and recorded 2026-09-29; `api` setSettings change committed but NOT deployed (auto-mode blocked the production deploy — needs the owner's go-ahead). Push the frontend only after `npx supabase functions deploy api --use-api --project-ref ivowbhraaistxvoymxpf` and a `functions download` comparison.
 - [ ] Step 2: new light, blue visual design — the first mockups were not "wow" enough; needs another round of concepts before any code.
 
 - [ ] Authenticated manual check: add one master payment and compare owner/finance screens.
