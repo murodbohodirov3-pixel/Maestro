@@ -55,6 +55,7 @@ import {
   compactMoney,
   monthForecast,
   monthlySeries,
+  monthsSince,
   returningShare,
   summarizeSales,
 } from './utils/insights.js';
@@ -912,7 +913,14 @@ function MasterSheet({ data, master, onClose }) {
     nowSales,
     within(data.attendance.filter((row) => belongsToMaster(row, master)), monthRange),
   )[0];
-  const history = monthlySeries({ sales: mine, fines: myFines, today: TODAY, months: 6 }).reverse();
+  // Every month since the master started, not a fixed window: a six-month
+  // table hid the early months once their records were loaded.
+  const history = monthlySeries({
+    sales: mine,
+    fines: myFines,
+    today: TODAY,
+    months: monthsSince(firstDay || TODAY, TODAY),
+  }).reverse();
   // Every tile compares the same finished days, so that is said once in the
   // header rather than under each figure.
   const versus = (current, previous) => (

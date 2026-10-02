@@ -7,6 +7,7 @@ import {
   monthEnd,
   monthForecast,
   monthlySeries,
+  monthsSince,
   returningShare,
 } from '../src/utils/insights.js';
 
@@ -61,6 +62,23 @@ test('monthly series starts at the first sale and ends with the current month', 
   assert.equal(series[1].revenue, 0);
   assert.equal(series[2].isCurrent, true);
   assert.equal(series[2].newClients, 2);
+});
+
+test('months since counts both ends and never drops below one', () => {
+  assert.equal(monthsSince('2026-02-12', '2026-10-02'), 9);
+  assert.equal(monthsSince('2026-10-01', '2026-10-02'), 1);
+  assert.equal(monthsSince('2025-12-31', '2026-01-01'), 2);
+  assert.equal(monthsSince('2026-11-01', '2026-10-02'), 1);
+  assert.equal(monthsSince(null, '2026-10-02'), 1);
+});
+
+test('a master history sized by months since the start reaches back to the first month', () => {
+  const sales = [sale('2026-02-12', 100_000), sale('2026-03-20', 200_000), sale('2026-10-01', 50_000)];
+  const series = monthlySeries({ sales, today: '2026-10-02', months: monthsSince('2026-02-12', '2026-10-02') });
+  assert.equal(series.length, 9);
+  assert.equal(series[0].key, '2026-02');
+  assert.equal(series[1].revenue, 200_000);
+  assert.equal(series[8].isCurrent, true);
 });
 
 test('monthly profit is revenue less master pay and operating expenses', () => {

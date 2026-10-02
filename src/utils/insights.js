@@ -29,6 +29,15 @@ export function addMonths(day, count) {
   return localDate(new Date(year, month - 1 + count, 1));
 }
 
+// Calendar months from the month of `from` to the month of `to`, both counted;
+// never less than one, so a missing or future start still yields this month.
+export function monthsSince(from, to) {
+  const [fromYear, fromMonth] = String(from).split('-').map(Number);
+  const [toYear, toMonth] = String(to).split('-').map(Number);
+  const count = (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
+  return Number.isFinite(count) ? Math.max(1, count) : 1;
+}
+
 export function salesIn(sales, from, to) {
   return sales.filter((sale) => inRange(rowDate(sale), from, to));
 }
