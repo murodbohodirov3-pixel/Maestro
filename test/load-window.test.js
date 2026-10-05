@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   mergeWindowedData,
   pollWindowStart,
+  refreshWindowFor,
   rowDate,
 } from '../src/utils/loadWindow.js';
 
@@ -10,6 +11,14 @@ test('pollWindowStart reaches back to the first day of the previous month', () =
   assert.equal(pollWindowStart(new Date(2026, 6, 23)), '2026-06-01');
   assert.equal(pollWindowStart(new Date(2026, 0, 5)), '2025-12-01');
   assert.equal(pollWindowStart(new Date(2026, 2, 31)), '2026-02-01');
+});
+
+test('refreshWindowFor uses the poll window unless a sale is older', () => {
+  const now = new Date(2026, 9, 5);
+  assert.equal(refreshWindowFor([{ d: '2026-10-04' }, { d: '2026-09-30' }], now), '2026-09-01');
+  assert.equal(refreshWindowFor([{ d: '2026-10-04' }, { d: '2026-08-20' }], now), '2026-08-20');
+  assert.equal(refreshWindowFor([{}], now), '2026-09-01');
+  assert.equal(refreshWindowFor([], now), '2026-09-01');
 });
 
 test('rowDate falls back through the per-table date columns', () => {

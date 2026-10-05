@@ -46,6 +46,7 @@ import {
   localDate,
   mergeWindowedData,
   pollWindowStart,
+  refreshWindowFor,
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
@@ -1573,6 +1574,8 @@ function AdminView({ data, reload, setError }) {
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
   const { run, busy } = useAction(setError, setMessage);
+  // Which approval button is working, so it can say so while the rest wait.
+  const [deciding, setDeciding] = useState(null);
   const readOnly = isReadOnly(data);
   const range = getRange(period, customFrom, customTo, data.sales);
   // The figures cover the whole period; their comparisons use its finished
@@ -1641,11 +1644,24 @@ function AdminView({ data, reload, setError }) {
   const mix = paymentMix(sales);
   const previousMix = paymentMix(previousSales);
 
-  async function setSaleApproval(id, status) {
-    await run(
-      () => callLegacyApi('setSaleApproval', { id, status }).then(reload),
-      status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.',
-    );
+  // Each tap used to wait for the whole history to download again, every sale
+  // since February, to change one row. A decision now refreshes only the recent
+  // window it can affect.
+  async function setSaleApproval(sale, status) {
+    setDeciding({ id: sale.id, status });
+    try {
+      await run(
+        () => callLegacyApi('setSaleApproval', { id: sale.id, status })
+          .then(() => reload({ since: refreshWindowFor([sale]) })),
+        status === 'approved' ? 'Оплата подтверждена.' : 'Оплата отклонена.',
+      );
+    } finally {
+      setDeciding(null);
+    }
+  }
+
+  function isDeciding(id, status) {
+    return deciding?.id === id && deciding?.status === status;
   }
 
   // Monday morning used to be one tap and one full reload per sale. The queue
@@ -1655,20 +1671,25 @@ function AdminView({ data, reload, setError }) {
     if (!queue.length) return;
     if (!await confirmAction(`Подтвердить все оплаты (${queue.length}) на ${money(pendingTotal)} сум?`)) return;
 
-    await run(async () => {
-      const failures = [];
-      for (const sale of queue) {
-        try {
-          await callLegacyApi('setSaleApproval', { id: sale.id, status: 'approved' });
-        } catch (error) {
-          failures.push(actionErrorText(error));
+    setDeciding({ id: 'all', status: 'approved' });
+    try {
+      await run(async () => {
+        const failures = [];
+        for (const sale of queue) {
+          try {
+            await callLegacyApi('setSaleApproval', { id: sale.id, status: 'approved' });
+          } catch (error) {
+            failures.push(actionErrorText(error));
+          }
         }
-      }
-      await reload();
-      // Thrown after the reload so the rows that did go through are already on
-      // screen when the message explains the ones that did not.
-      if (failures.length) throw new Error(`Не удалось подтвердить ${failures.length} из ${queue.length}: ${failures[0]}`);
-    }, `Подтверждено оплат: ${queue.length}.`);
+        await reload({ since: refreshWindowFor(queue) });
+        // Thrown after the reload so the rows that did go through are already on
+        // screen when the message explains the ones that did not.
+        if (failures.length) throw new Error(`Не удалось подтвердить ${failures.length} из ${queue.length}: ${failures[0]}`);
+      }, `Подтверждено оплат: ${queue.length}.`);
+    } finally {
+      setDeciding(null);
+    }
   }
 
   async function deleteDetailedSale(sale) {
@@ -1700,8 +1721,8 @@ function AdminView({ data, reload, setError }) {
             <span>
               {pendingSales.length} {pluralRu(pendingSales.length, 'оплата', 'оплаты', 'оплат')} на {money(pendingTotal)} сум
             </span>
-            <button className="btn" type="button" onClick={approveAllPending} disabled={busy}>
-              {busy ? 'Подтверждаем…' : 'Подтвердить все'}
+            <button className={`btn${isDeciding('all', 'approved') ? ' is-working' : ''}`} type="button" onClick={approveAllPending} disabled={busy}>
+              {isDeciding('all', 'approved') ? 'Подтверждаем…' : 'Подтвердить все'}
             </button>
           </div>
         ) : null}
@@ -1733,11 +1754,11 @@ function AdminView({ data, reload, setError }) {
                 <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
               <div className="approval-actions">
-                <button className="btn approval-button" type="button" disabled={busy} onClick={() => setSaleApproval(sale.id, 'approved')}>
-                  Подтвердить
+                <button className={`btn approval-button${isDeciding(sale.id, 'approved') ? ' is-working' : ''}`} type="button" disabled={busy} onClick={() => setSaleApproval(sale, 'approved')}>
+                  {isDeciding(sale.id, 'approved') ? 'Подтверждаем…' : 'Подтвердить'}
                 </button>
-                <button className="btn ghost approval-button" type="button" disabled={busy} onClick={() => setSaleApproval(sale.id, 'rejected')}>
-                  Отклонить
+                <button className={`btn ghost approval-button${isDeciding(sale.id, 'rejected') ? ' is-working' : ''}`} type="button" disabled={busy} onClick={() => setSaleApproval(sale, 'rejected')}>
+                  {isDeciding(sale.id, 'rejected') ? 'Отклоняем…' : 'Отклонить'}
                 </button>
               </div>
             </div>
@@ -3113,7 +3134,7 @@ export default function App() {
   const [view, setView] = useState('overview');
   const [previousView, setPreviousView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
-  const isLoadingRef = useRef(false);
+  const loadInFlightRef = useRef(null);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
 
@@ -3129,9 +3150,20 @@ export default function App() {
     }
   }, []);
 
-  async function load({ preserveView = true, since = null } = {}) {
-    if (isLoadingRef.current) return;
-    isLoadingRef.current = true;
+  // A refresh asked for while another was running used to be dropped. After a
+  // tap that kept the row just confirmed on screen: the 15s poll in flight had
+  // read the table before the write, and the tap looked ignored. The refresh now
+  // waits its turn and runs once the other has finished.
+  function load(options) {
+    if (loadInFlightRef.current) return loadInFlightRef.current.then(() => load(options));
+    const pending = loadOnce(options).finally(() => {
+      if (loadInFlightRef.current === pending) loadInFlightRef.current = null;
+    });
+    loadInFlightRef.current = pending;
+    return pending;
+  }
+
+  async function loadOnce({ preserveView = true, since = null } = {}) {
     setError('');
     // Background polls stay silent: a toast every 15 seconds said nothing the
     // numbers updating on their own did not already say.
@@ -3165,7 +3197,6 @@ export default function App() {
       setError(loadError.message || 'Не удалось загрузить данные.');
       if (String(loadError.message).includes('unauthorized')) setLoginRequired(true);
     } finally {
-      isLoadingRef.current = false;
       setIsLoading(false);
     }
   }
@@ -3181,7 +3212,7 @@ export default function App() {
     let intervalId;
 
     const refresh = ({ full = false } = {}) => {
-      if (!document.hidden && !isLoadingRef.current) {
+      if (!document.hidden && !loadInFlightRef.current) {
         load({ preserveView: true, since: full ? null : pollWindowStart() });
       }
     };

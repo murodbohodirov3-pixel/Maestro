@@ -4022,6 +4022,14 @@ label {
   width: 100%;
 }
 
+/* A waiting button used to look exactly like a ready one, so a tap on it
+   during another approval seemed lost. The working one keeps its colour and
+   says what it is doing. */
+.approvals-card .btn:disabled:not(.is-working) {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 /* ── Расходы ── */
 .expense-biggest {
   display: grid;

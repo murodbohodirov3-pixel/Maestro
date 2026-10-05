@@ -34,6 +34,16 @@ export function pollWindowStart(now = new Date()) {
   return localDate(new Date(now.getFullYear(), now.getMonth() - 1, 1));
 }
 
+// A decision on a sale changes that sale and nothing else, so the refresh after
+// it needs the poll window, not all history. A sale older than the window pulls
+// the window back to its own day, or it would stay pending on screen.
+export function refreshWindowFor(sales, now = new Date()) {
+  return sales.reduce((start, sale) => {
+    const date = rowDate(sale);
+    return date && date < start ? date : start;
+  }, pollWindowStart(now));
+}
+
 // A windowed response is authoritative for its window and silent about the rest,
 // so replace the window and keep older rows. Replacing rather than appending is
 // what makes edits and deletions inside the window appear: a row deleted on the
