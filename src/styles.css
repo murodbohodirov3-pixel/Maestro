@@ -269,7 +269,7 @@ small {
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   left: max(12px, calc((100vw - 540px) / 2 + 12px));
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--tabs, 4), minmax(0, 1fr));
   gap: 4px;
   padding: 8px;
   border-radius: 24px;
@@ -4556,4 +4556,194 @@ label {
 
 .schedule-card .notice {
   margin: 0;
+}
+
+/* Склад. The hero carries the margin; three facts under it say where it came
+   from. The forms open one at a time under the action buttons. */
+.stock-hero-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.stock-hero-facts span {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--hero-inset);
+  color: var(--hero-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stock-hero-facts strong {
+  color: #FFFFFF;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.stock-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stock-actions .btn {
+  min-height: 46px;
+  padding: 0 8px;
+}
+
+.stock-form {
+  display: grid;
+  gap: 12px;
+}
+
+.stock-form h2 {
+  margin-bottom: 0;
+}
+
+.stock-form .seg {
+  margin: 0;
+}
+
+.stock-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.stock-preview {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  background: var(--positive-soft);
+  color: var(--positive-ink);
+  font-size: 13px;
+}
+
+.stock-preview strong {
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+.stock-preview.is-negative {
+  background: var(--negative-soft);
+  color: var(--negative-ink);
+}
+
+.stock-row .stock-qty {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.stock-row .stock-qty strong {
+  font-family: var(--font-display);
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.stock-row .stock-qty span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stock-row.is-low .stock-qty strong {
+  color: var(--pending);
+}
+
+.stock-row.is-empty strong {
+  color: var(--muted);
+}
+
+.stock-move.is-rejected > div:first-child strong {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* Product search: type a few letters, tap the match. */
+.picker {
+  display: grid;
+  gap: 8px;
+}
+
+.picker input[type="search"] {
+  font-size: 16px;
+}
+
+.picker-list {
+  display: grid;
+  gap: 6px;
+}
+
+.picker-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.picker-list button small {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.picker-list .picker-new {
+  border-style: dashed;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.picker-list .hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+.picker-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--brass-soft);
+}
+
+.picker-selected span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.picker-selected strong {
+  overflow-wrap: anywhere;
+}
+
+.picker-selected small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.picker-selected .link-button {
+  flex: none;
 }

@@ -92,6 +92,22 @@ test('monthly profit is revenue less master pay and operating expenses', () => {
   assert.equal(row.profit, 1_000_000 - 400_000 - 100_000);
 });
 
+test('goods add the money they brought to the month, their purchase being an expense already', () => {
+  const masters = [{ id: 1, name: 'A', pct: 40 }];
+  const sales = [sale('2026-09-05', 1_000_000, { master_id: 1, master: 'A' })];
+  // A delivery of 200 000 paid by the salon, two bottles sold for 150 000 each.
+  const expenses = [{ date: '2026-09-02', section: 'ishxona', category: 'stock', amount_uzs: 200_000 }];
+  const productSales = [
+    { sale_date: '2026-09-10', qty: 1, amount: 150_000, unit_cost: 100_000, status: 'approved' },
+    { sale_date: '2026-09-11', qty: 1, amount: 150_000, unit_cost: 100_000, status: 'approved' },
+    { sale_date: '2026-09-12', qty: 1, amount: 150_000, unit_cost: 100_000, status: 'pending' },
+  ];
+  const [row] = monthlySeries({ sales, expenses, productSales, masters, today: '2026-09-29', months: 1 });
+  // 1 000 000 − 400 000 − 200 000 + 300 000: over the month the goods left
+  // their 100 000 of margin, and a pending sale counts for nothing yet.
+  assert.equal(row.profit, 700_000);
+});
+
 test('each month carries the fines issued in it', () => {
   const sales = [sale('2026-08-05', 100_000), sale('2026-09-05', 100_000)];
   const fines = [{ d: '2026-09-10', amount: 50_000 }, { d: '2026-09-12', amount: 30_000 }, { d: '2026-08-02', amount: 20_000 }];

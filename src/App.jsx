@@ -55,6 +55,17 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
+import {
+  goodsPaymentMix,
+  normalizeProductSearch,
+  pendingProductSales,
+  productIncome,
+  productMatches,
+  productSaleMargin,
+  productSalesSummary,
+  productsByRecentUse,
+  stockLevels,
+} from './utils/stock.js';
 import { comparisonLabel, sameWeekdayLastWeek } from './utils/periods.js';
 import {
   attentionSignals,
@@ -106,6 +117,42 @@ function isPendingOwnerApproval(sale) {
 
 function getPendingSales(sales) {
   return sales.filter(isPendingOwnerApproval);
+}
+
+// Everything that waits for the owner, in one queue: a master's haircut and a
+// product the administrator sold. Goods are decided by the owner alone, so
+// nobody else is shown them.
+function approvalQueue(data) {
+  const services = getPendingSales(data.sales);
+  const goods = data.appRole === 'owner' ? pendingProductSales(data.productSales) : [];
+  const serviceMix = paymentMix(services);
+  const goodsMix = goodsPaymentMix(goods);
+  const mix = {
+    cash: serviceMix.cash + goodsMix.cash,
+    card: serviceMix.card + goodsMix.card,
+    qr: serviceMix.qr + goodsMix.qr,
+  };
+  const items = [
+    ...services.map((sale) => ({ kind: 'service', key: `service-${sale.id}`, sale, stamp: `${rowDate(sale)}T${sale.created_at || ''}` })),
+    ...goods.map((sale) => ({ kind: 'goods', key: `goods-${sale.id}`, sale, stamp: `${sale.sale_date}T${sale.created_at || ''}` })),
+  ].sort((left, right) => right.stamp.localeCompare(left.stamp));
+  return {
+    services,
+    goods,
+    items,
+    count: items.length,
+    mix,
+    total: mix.cash + mix.card + mix.qr,
+  };
+}
+
+// A product sale has one payment method; the chips expect a sale's three sums.
+function goodsAsPayment(sale) {
+  return {
+    cash: sale.payment_method === 'cash' ? sale.amount : 0,
+    card: sale.payment_method === 'card' ? sale.amount : 0,
+    qr: sale.payment_method === 'qr' ? sale.amount : 0,
+  };
 }
 
 function isRejectedByOwner(sale) {
@@ -164,6 +211,7 @@ const PAYMENT_METHODS = [
   ['card', 'Карта'],
   ['qr', 'QR Paynet'],
 ];
+const PAYMENT_LABELS = Object.fromEntries(PAYMENT_METHODS);
 
 // A sale has always had three amount columns; the form simply only ever filled
 // one. A client who paid part by card and part in cash is one sale with two
@@ -225,6 +273,19 @@ const ACTION_ERROR_TEXT = {
   master_day_off: 'У мастера в этот день выходной.',
   client_blocked: 'Этот клиент заблокирован.',
   invalid_late_grace: 'Допуск — целое число минут от 0 до 120.',
+  invalid_receipt: 'Проверьте приход: товар, количество, цена и дата.',
+  receipt_amount_too_large: 'Сумма прихода слишком большая — похоже, лишний ноль.',
+  invalid_product_sale: 'Проверьте продажу: товар, количество и сумма.',
+  invalid_writeoff: 'Проверьте списание: товар, количество и причина.',
+  not_enough_stock: 'На складе нет столько товара — обновите экран или внесите приход.',
+  product_not_found: 'Такого товара нет — обновите экран.',
+  product_sale_not_found: 'Эта продажа уже удалена — обновите экран.',
+  stock_entry_not_found: 'Запись уже удалена — обновите экран.',
+  stock_entry_delete_window_expired: 'Запись старше двух дней удалить нельзя.',
+  receipt_already_sold: 'Часть этого прихода уже продана или списана — удалить его нельзя.',
+  product_still_in_stock: 'Товар ещё есть на складе — сначала продайте или спишите остаток.',
+  product_name_taken: 'Такой товар уже есть — выберите его из списка.',
+  expense_belongs_to_stock: 'Это закупка товара — удалите её в «Складе», вместе с приходом.',
   invalid_schedule: 'Проверьте график: у каждого рабочего дня конец позже начала.',
   schedule_needs_work_day: 'Отметьте хотя бы один рабочий день. Отпуск ставьте выходными в «Команде».',
   schedule_date_out_of_range: 'Дату можно выбрать не раньше чем два месяца назад и не позже чем через год.',
@@ -450,6 +511,10 @@ function normalizeData(data) {
     dayStatuses: data.master_day_statuses || [],
     scheduleRules: data.master_schedule_rules || [],
     expenses: data.expenses || [],
+    products: data.products || [],
+    productReceipts: data.product_receipts || [],
+    productSales: data.product_sales || [],
+    productWriteoffs: data.product_writeoffs || [],
     settings,
   };
 }
@@ -1060,13 +1125,16 @@ function OverviewView({ data, reload, setError, setView }) {
   const within = (rows, range, key = 'd') => (
     range ? rows.filter((row) => inRange(rowDate(row, key), range.from, range.to)) : []
   );
-  // Revenue less master pay less operating expenses — the same chain for the
-  // headline and for every window it is compared across.
+  // Revenue less master pay less operating expenses, plus what goods brought
+  // in — the same chain for the headline and for every window it is compared
+  // across. Goods add the money a sale left the salon, not its margin: their
+  // purchase is already among the expenses.
   const profitFor = (range) => {
     const sales = within(countedSales, range);
     return totalSalesAmount(sales)
       - masterPayoutForPeriod(data.masters, sales, within(data.fines, range))
-      - totalExpenses(operatingExpenses(within(data.expenses, range, 'date')));
+      - totalExpenses(operatingExpenses(within(data.expenses, range, 'date')))
+      + productIncome(data.productSales, range);
   };
 
   const todaySales = countedSales.filter((sale) => rowDate(sale) === TODAY);
@@ -1097,6 +1165,7 @@ function OverviewView({ data, reload, setError, setView }) {
     sales: countedSales,
     fines: data.fines,
     expenses: data.expenses,
+    productSales: data.productSales,
     masters: data.masters,
     today: TODAY,
     months: 12,
@@ -1116,21 +1185,20 @@ function OverviewView({ data, reload, setError, setView }) {
     })
     .sort((left, right) => right.revenue - left.revenue);
 
-  const pendingMix = paymentMix(pendingSales);
-  const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
+  const queue = approvalQueue(data);
 
   return (
     <section className="view-grid">
       {/* An approval queue is work waiting, not a statistic. It leaves
           entirely when there is nothing to approve. */}
-      {pendingSales.length && !isReadOnly(data) ? (
+      {queue.count && !isReadOnly(data) ? (
         <button className="pending-banner" type="button" onClick={() => setView('admin')}>
-          <span className="pending-banner-count">{pendingSales.length}</span>
+          <span className="pending-banner-count">{queue.count}</span>
           <span className="pending-banner-text">
-            <strong>Ждут подтверждения · {money(pendingTotal)}</strong>
+            <strong>Ждут подтверждения · {money(queue.total)}</strong>
             <small>
-              {PAYMENT_METHODS.filter(([key]) => pendingMix[key] > 0)
-                .map(([key, label]) => `${label} ${money(pendingMix[key])}`)
+              {PAYMENT_METHODS.filter(([key]) => queue.mix[key] > 0)
+                .map(([key, label]) => `${label} ${money(queue.mix[key])}`)
                 .join(' · ')}
             </small>
           </span>
@@ -1658,8 +1726,11 @@ function AdminView({ data, reload, setError }) {
   const comparison = (current, previous) => (
     priorRange ? { ...comparisonToPrevious(current, previous, priorRange, money, { inProgress }), hint: null } : {}
   );
-  const pendingTotal = pendingSales.reduce((sum, sale) => sum + saleTotal(sale), 0);
-  const pendingMix = paymentMix(pendingSales);
+  // Haircuts and goods wait in one queue, and its totals cover both.
+  const queue = approvalQueue(data);
+  const pendingTotal = queue.total;
+  const pendingMix = queue.mix;
+  const productName = (id) => data.products.find((product) => String(product.id) === String(id))?.name || 'Товар';
   // The share of cash is an operational number, not trivia: it drives what has
   // to be collected and banked. A share without its previous value is a fact
   // with nothing to compare against.
@@ -1686,29 +1757,45 @@ function AdminView({ data, reload, setError }) {
     return deciding?.id === id && deciding?.status === status;
   }
 
+  async function setGoodsApproval(sale, status) {
+    setDeciding({ id: `goods-${sale.id}`, status });
+    try {
+      await run(
+        () => callLegacyApi('setProductSaleApproval', { id: sale.id, status })
+          .then(() => reload({ since: refreshWindowFor([]) })),
+        status === 'approved' ? 'Подтверждено.' : 'Отклонено.',
+      );
+    } finally {
+      setDeciding(null);
+    }
+  }
+
   // Monday morning used to be one tap and one full reload per sale. The queue
   // is confirmed in one pass and the data is fetched once at the end.
   async function approveAllPending() {
-    const queue = [...pendingSales];
-    if (!queue.length) return;
-    if (!await confirmAction(`Подтвердить все оплаты (${queue.length}) на ${money(pendingTotal)} сум?`)) return;
+    const items = [...queue.items];
+    if (!items.length) return;
+    if (!await confirmAction(`Подтвердить все (${items.length}) на ${money(pendingTotal)} сум?`)) return;
 
     setDeciding({ id: 'all', status: 'approved' });
     try {
       await run(async () => {
         const failures = [];
-        for (const sale of queue) {
+        for (const item of items) {
           try {
-            await callLegacyApi('setSaleApproval', { id: sale.id, status: 'approved' });
+            await callLegacyApi(
+              item.kind === 'goods' ? 'setProductSaleApproval' : 'setSaleApproval',
+              { id: item.sale.id, status: 'approved' },
+            );
           } catch (error) {
             failures.push(actionErrorText(error));
           }
         }
-        await reload({ since: refreshWindowFor(queue) });
+        await reload({ since: refreshWindowFor(queue.services) });
         // Thrown after the reload so the rows that did go through are already on
         // screen when the message explains the ones that did not.
-        if (failures.length) throw new Error(`Не удалось подтвердить ${failures.length} из ${queue.length}: ${failures[0]}`);
-      }, `Подтверждено оплат: ${queue.length}.`);
+        if (failures.length) throw new Error(`Не удалось подтвердить ${failures.length} из ${items.length}: ${failures[0]}`);
+      }, `Подтверждено: ${items.length}.`);
     } finally {
       setDeciding(null);
     }
@@ -1735,13 +1822,13 @@ function AdminView({ data, reload, setError }) {
     <section className="view-grid">
       {/* An empty queue used to keep its card and a sentence saying it was
           empty. It now leaves, like the reminder on Обзор does. */}
-      {!readOnly && (pendingSales.length || message) ? (
+      {!readOnly && (queue.count || message) ? (
       <div className="card wide approvals-card">
         <h2>На подтверждение</h2>
-        {pendingSales.length > 1 ? (
+        {queue.count > 1 ? (
           <div className="approve-all">
             <span>
-              {pendingSales.length} {pluralRu(pendingSales.length, 'оплата', 'оплаты', 'оплат')} на {money(pendingTotal)} сум
+              {queue.count} {pluralRu(queue.count, 'оплата', 'оплаты', 'оплат')} на {money(pendingTotal)} сум
             </span>
             <button className={`btn${isDeciding('all', 'approved') ? ' is-working' : ''}`} type="button" onClick={approveAllPending} disabled={busy}>
               {isDeciding('all', 'approved') ? 'Подтверждаем…' : 'Подтвердить все'}
@@ -1751,7 +1838,7 @@ function AdminView({ data, reload, setError }) {
         {/* Card and QR money can be checked against the bank the moment it
             lands; cash only once the till is counted. The total is split the
             same way, so neither has to be picked out of the list by eye. */}
-        {pendingSales.length > 1 ? (
+        {queue.count > 1 ? (
           <div className="pending-mix" aria-label="Сумма на подтверждение по способам оплаты">
             {PAYMENT_METHODS.filter(([key]) => pendingMix[key] > 0).map(([key, label]) => (
               <span className={`pending-mix-item ${key}`} key={key}>
@@ -1763,10 +1850,27 @@ function AdminView({ data, reload, setError }) {
           </div>
         ) : null}
         <Rows
-          rows={[...pendingSales].sort(newestFirst)}
-          empty="Новых оплат от мастеров на подтверждение нет."
-          render={(sale) => (
-            <div className="row approval-row" key={sale.id}>
+          rows={queue.items}
+          empty="Новых оплат на подтверждение нет."
+          render={({ kind, key, sale }) => (kind === 'goods' ? (
+            <div className="row approval-row is-goods" key={key}>
+              <div>
+                <strong>{productName(sale.product_id)} × {sale.qty} · {money(sale.amount)} сум</strong>
+                <PaymentChips sale={goodsAsPayment(sale)} />
+                <span>Товар · маржа {signedMoney(productSaleMargin(sale))}</span>
+                <span>Внесено: {displayDateTime(sale.created_at)}</span>
+              </div>
+              <div className="approval-actions">
+                <button className={`btn approval-button${isDeciding(key, 'approved') ? ' is-working' : ''}`} type="button" disabled={busy} onClick={() => setGoodsApproval(sale, 'approved')}>
+                  {isDeciding(key, 'approved') ? 'Подтверждаем…' : 'Подтвердить'}
+                </button>
+                <button className={`btn ghost approval-button${isDeciding(key, 'rejected') ? ' is-working' : ''}`} type="button" disabled={busy} onClick={() => setGoodsApproval(sale, 'rejected')}>
+                  {isDeciding(key, 'rejected') ? 'Отклоняем…' : 'Отклонить'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="row approval-row" key={key}>
               <div>
                 <strong>{sale.master} · {money(saleTotal(sale))} сум</strong>
                 <PaymentChips sale={sale} />
@@ -1784,7 +1888,7 @@ function AdminView({ data, reload, setError }) {
                 </button>
               </div>
             </div>
-          )}
+          ))}
         />
         {message ? <p className="success">{message}</p> : null}
       </div>
@@ -2488,12 +2592,20 @@ function FinanceView({ data, reload, setError }) {
         <Rows rows={visibleExpenses} empty="Записей за период нет." render={(expense) => (
           <div className="row" key={expense.id}>
             <div>
-              <strong>{expense.name}</strong>
+              <strong>{expense.name}{expense.category === 'stock' && expense.qty ? ` × ${expense.qty}` : ''}</strong>
               <span>
                 {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${EXPENSE_SECTION_LABELS[expense.minus_from] || expense.minus_from}` : EXPENSE_SECTION_LABELS[expense.section] || expense.section}
+                {expense.category === 'stock' ? ' · закупка для склада' : ''}
               </span>
             </div>
-            <div><strong>{money(expense.amount_uzs)}</strong><button className="del" type="button" onClick={() => deleteExpense(expense)}>×</button></div>
+            {/* A purchase for Склад goes with its receipt, from Склад: deleting
+                the expense alone would leave paid-for goods unpaid. */}
+            <div>
+              <strong>{money(expense.amount_uzs)}</strong>
+              {expense.category === 'stock'
+                ? null
+                : <button className="del" type="button" onClick={() => deleteExpense(expense)}>×</button>}
+            </div>
           </div>
         )} />
       </div>
@@ -2623,6 +2735,459 @@ function FinanceView({ data, reload, setError }) {
 
 // The ledger, the RPCs and the listAuditEvents action were all built and the
 // app never called them, so "кто это удалил" had no answer anywhere.
+const PRODUCT_CATEGORIES = [['care', 'Уход'], ['drinks', 'Напитки'], ['other', 'Другое']];
+const PRODUCT_CATEGORY_LABELS = Object.fromEntries(PRODUCT_CATEGORIES);
+const RECEIPT_PAYERS = [['ishxona', 'Салон'], ['murod', 'Мурод'], ['jamshid', 'Жамшид'], ['opening', 'Уже был']];
+const RECEIPT_PAYER_LABELS = { ishxona: 'из денег салона', murod: 'деньги Мурода', jamshid: 'деньги Жамшида', opening: 'начальный остаток' };
+const WRITEOFF_REASONS = [['used', 'В работу'], ['gift', 'Угостили'], ['damaged', 'Испорчен'], ['recount', 'Пересчёт']];
+const WRITEOFF_REASON_LABELS = Object.fromEntries(WRITEOFF_REASONS);
+const NEW_PRODUCT = 'new';
+
+function storedUsdRate() {
+  try {
+    return localStorage.getItem('usdRate') || '12200';
+  } catch {
+    return '12200';
+  }
+}
+
+function signedMoney(value) {
+  const rounded = Math.round(Number(value) || 0);
+  return `${rounded > 0 ? '+' : rounded < 0 ? '−' : ''}${money(Math.abs(rounded))}`;
+}
+
+// Finding one product among many by typing a few letters of its name. Before
+// anything is typed it offers the ones used most recently. With onCreate, a
+// name that matches nothing can be added as a new product on the spot.
+function ProductPicker({ options, value, onChange, onCreate, newName, placeholder = 'Найти товар' }) {
+  const [query, setQuery] = useState('');
+  const selected = options.find((option) => String(option.product.id) === String(value)) || null;
+  const matches = options.filter((option) => productMatches(option.product, query)).slice(0, 8);
+  const typed = query.trim();
+  const exact = options.some((option) => normalizeProductSearch(option.product.name) === normalizeProductSearch(typed));
+
+  function pick(option) {
+    onChange(String(option.product.id));
+    setQuery('');
+  }
+
+  if (selected || newName) {
+    return (
+      <div className="picker-selected">
+        <span>
+          <strong>{selected ? selected.product.name : newName}</strong>
+          <small>{selected ? selected.hint : 'новый товар'}</small>
+        </span>
+        <button className="link-button" type="button" onClick={() => onChange('')}>Изменить</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="picker">
+      <input
+        type="search"
+        enterKeyHint="search"
+        autoComplete="off"
+        placeholder={placeholder}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          if (matches.length === 1) pick(matches[0]);
+        }}
+      />
+      <div className="picker-list" role="listbox">
+        {matches.map((option) => (
+          <button key={option.product.id} role="option" aria-selected="false" type="button" onClick={() => pick(option)}>
+            <span>{option.product.name}</span>
+            {option.hint ? <small>{option.hint}</small> : null}
+          </button>
+        ))}
+        {onCreate && typed && !exact ? (
+          <button className="picker-new" type="button" onClick={() => { onCreate(typed); setQuery(''); }}>
+            + Новый товар «{typed}»
+          </button>
+        ) : null}
+        {!matches.length && !(onCreate && typed) ? <p className="hint">Ничего не найдено</p> : null}
+      </div>
+    </div>
+  );
+}
+
+// Склад: goods the salon resells. The owner records deliveries; the
+// administrator records sales, which wait for the owner; the screen shows what
+// is left and what the goods earned. A sale's amount is what the salon kept
+// after the seller's share, and its margin is that amount less the average
+// purchase price of the units sold (src/utils/stock.js).
+function StockView({ data, reload, setError }) {
+  const isOwner = data.appRole === 'owner';
+  const canWrite = !isReadOnly(data) && ['owner', 'admin'].includes(data.appRole);
+  const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('stock', 'month');
+  const [form, setForm] = useState(null);
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+
+  const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
+  const [saleForm, setSaleForm] = useState(emptySale);
+  const [saleRequestId, setSaleRequestId] = useState(newRequestId);
+  const [receiptForm, setReceiptForm] = useState({
+    product_id: '', product_name: '', category: 'care', qty: '', unit_cost: '', paid_by: 'ishxona',
+  });
+  const [writeoffForm, setWriteoffForm] = useState({ product_id: '', qty: '1', reason: 'used', note: '' });
+
+  const products = data.products;
+  const levels = stockLevels({
+    products,
+    receipts: data.productReceipts,
+    sales: data.productSales,
+    writeoffs: data.productWriteoffs,
+  });
+  const visibleLevels = levels.filter((row) => row.product.active !== false || row.qty !== 0);
+  const levelOf = (id) => levels.find((row) => String(row.product.id) === String(id)) || null;
+  const nameOf = (id) => levelOf(id)?.product.name || 'товар';
+  const recent = productsByRecentUse(products, data.productReceipts, data.productSales);
+  const inStockOptions = recent
+    .map((product) => levelOf(product.id))
+    .filter((row) => row && row.qty > 0)
+    .map((row) => ({ product: row.product, hint: `осталось ${row.qty}` }));
+  const receiptOptions = recent.map((product) => {
+    const row = levelOf(product.id);
+    return { product, hint: row ? `на складе ${row.qty}` : '' };
+  });
+  const range = getRange(period, customFrom, customTo, data.productSales, 'sale_date');
+  const summary = productSalesSummary(data.productSales, range);
+  const stockValue = levels.reduce((sum, row) => sum + row.value, 0);
+
+  const movements = [
+    ...data.productReceipts.map((row) => ({ kind: 'receipt', row, date: row.receipt_date })),
+    ...data.productSales.map((row) => ({ kind: 'sale', row, date: row.sale_date })),
+    ...data.productWriteoffs.map((row) => ({ kind: 'writeoff', row, date: row.writeoff_date })),
+  ]
+    .filter((item) => inRange(item.date, range.from, range.to))
+    .sort((left, right) => (
+      String(right.date).localeCompare(String(left.date))
+      || String(right.row.created_at || '').localeCompare(String(left.row.created_at || ''))
+    ));
+
+  function toggleForm(next) {
+    setMessage('');
+    setForm((current) => (current === next ? null : next));
+  }
+
+  const saleLevel = levelOf(saleForm.product_id);
+  const saleQty = Number(saleForm.qty) || 0;
+  const saleCost = saleLevel ? saleLevel.unitCost * saleQty : 0;
+  const saleAmount = Number(saleForm.amount) || 0;
+
+  async function submitSale(event) {
+    event.preventDefault();
+    if (!saleLevel) return setError('Выберите товар.');
+    if (!Number.isInteger(saleQty) || saleQty < 1) return setError('Количество — целое число от 1.');
+    if (saleQty > saleLevel.qty) return setError(`На складе только ${saleLevel.qty} шт. «${saleLevel.product.name}».`);
+    if (!saleAmount) return setError('Введите сумму.');
+    if (!saleForm.payment_method) return setError('Выберите способ оплаты.');
+    const ok = await run(
+      () => callLegacyApi('addProductSale', {
+        product_id: saleLevel.product.id,
+        qty: saleQty,
+        amount: saleAmount,
+        payment_method: saleForm.payment_method,
+        client_request_id: saleRequestId,
+      }).then(reload),
+      isOwner ? 'Продажа сохранена.' : 'Отправлено на подтверждение.',
+    );
+    if (!ok) return;
+    haptic('success');
+    setSaleRequestId(newRequestId());
+    setSaleForm(emptySale);
+  }
+
+  const receiptIsNew = receiptForm.product_id === NEW_PRODUCT;
+  const receiptQty = Number(receiptForm.qty) || 0;
+  const receiptUnitCost = Number(receiptForm.unit_cost) || 0;
+
+  async function submitReceipt(event) {
+    event.preventDefault();
+    if (receiptIsNew && !receiptForm.product_name.trim()) return setError('Введите название товара.');
+    if (!receiptIsNew && !receiptForm.product_id) return setError('Выберите товар.');
+    if (!Number.isInteger(receiptQty) || receiptQty < 1) return setError('Количество — целое число от 1.');
+    if (!receiptUnitCost) return setError('Введите цену за штуку.');
+    const ok = await run(
+      () => callLegacyApi('addProductReceipt', {
+        product_id: receiptIsNew ? null : Number(receiptForm.product_id),
+        product_name: receiptIsNew ? receiptForm.product_name.trim() : null,
+        category: receiptForm.category,
+        qty: receiptQty,
+        unit_cost: receiptUnitCost,
+        paid_by: receiptForm.paid_by,
+        usd_rate: Number(storedUsdRate()) || null,
+      }).then(reload),
+      'Приход сохранён.',
+    );
+    if (!ok) return;
+    haptic('success');
+    setReceiptForm((current) => ({ ...current, product_id: '', product_name: '', qty: '', unit_cost: '' }));
+  }
+
+  async function submitWriteoff(event) {
+    event.preventDefault();
+    const level = levelOf(writeoffForm.product_id);
+    const qty = Number(writeoffForm.qty) || 0;
+    if (!level) return setError('Выберите товар.');
+    if (!Number.isInteger(qty) || qty < 1) return setError('Количество — целое число от 1.');
+    if (qty > level.qty) return setError(`На складе только ${level.qty} шт. «${level.product.name}».`);
+    const ok = await run(
+      () => callLegacyApi('addProductWriteoff', {
+        product_id: level.product.id,
+        qty,
+        reason: writeoffForm.reason,
+        note: writeoffForm.note.trim() || null,
+      }).then(reload),
+      'Списано.',
+    );
+    if (!ok) return;
+    setWriteoffForm({ product_id: '', qty: '1', reason: 'used', note: '' });
+  }
+
+  async function deleteEntry(item) {
+    const what = item.kind === 'receipt'
+      ? `приход «${nameOf(item.row.product_id)}» × ${item.row.qty}`
+      : item.kind === 'sale'
+        ? `продажу «${nameOf(item.row.product_id)}» на ${money(item.row.amount)} сум`
+        : `списание «${nameOf(item.row.product_id)}» × ${item.row.qty}`;
+    if (!await confirmAction(`Удалить ${what}?`)) return;
+    await run(
+      () => callLegacyApi('delStockEntry', { kind: item.kind, id: item.row.id }).then(reload),
+      'Удалено.',
+    );
+  }
+
+  async function hideProduct(product) {
+    if (!await confirmAction(`Убрать «${product.name}» из списка?`)) return;
+    await run(() => callLegacyApi('setProductActive', { product_id: product.id, active: false }).then(reload), 'Убрано из списка.');
+  }
+
+  const canDelete = (item) => canWrite && (
+    isOwner
+      ? item.date >= shiftDate(TODAY, -2)
+      : item.kind === 'sale' && item.row.status === 'pending'
+  );
+
+  return (
+    <section className="view-grid">
+      <div className="wide period-block">
+        <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
+        <p className="period-range">{displayRange(range)}</p>
+      </div>
+
+      <div className="card wide hero-card revenue-hero stock-hero">
+        <div className="revenue-hero-top">
+          <span>Маржа с товаров {period === 'month' ? `за ${monthName(TODAY)}` : period === 'day' ? 'за сегодня' : 'за период'}</span>
+        </div>
+        <div className="revenue-hero-value">
+          <strong><CountUp value={summary.margin} /></strong>
+          <span>сум</span>
+        </div>
+        <div className="stock-hero-facts">
+          <span>Продано<strong>{summary.qty} шт.</strong></span>
+          <span>Сумма<strong>{compactMoney(summary.amount)}</strong></span>
+          <span>Закупка<strong>{compactMoney(summary.cost)}</strong></span>
+        </div>
+        <span className="revenue-hero-note">Товар на складе: {compactMoney(stockValue)} сум</span>
+      </div>
+
+      {message ? <div className="notice success wide">{message}</div> : null}
+
+      {canWrite ? (
+        <div className="wide stock-actions">
+          <button className={`btn${form === 'sale' ? '' : ' ghost'}`} type="button" onClick={() => toggleForm('sale')}>Продажа</button>
+          <button className={`btn${form === 'receipt' ? '' : ' ghost'}`} type="button" onClick={() => toggleForm('receipt')}>Приход</button>
+          <button className={`btn${form === 'writeoff' ? '' : ' ghost'}`} type="button" onClick={() => toggleForm('writeoff')}>Списание</button>
+        </div>
+      ) : null}
+
+      {canWrite && form === 'sale' ? (
+        <form className="card wide stock-form" onSubmit={submitSale}>
+          <h2>Продажа</h2>
+          <ProductPicker
+            options={inStockOptions}
+            value={saleForm.product_id}
+            onChange={(id) => setSaleForm({ ...saleForm, product_id: id })}
+          />
+          <div className="settings-pair">
+            <label>
+              Количество
+              <input type="number" inputMode="numeric" min="1" step="1" value={saleForm.qty} onChange={(event) => setSaleForm({ ...saleForm, qty: event.target.value })} />
+            </label>
+            <label>
+              Сумма
+              <MoneyInput placeholder="сум" value={saleForm.amount} onChange={(value) => setSaleForm({ ...saleForm, amount: value })} />
+            </label>
+          </div>
+          <div className="pay-types">
+            {PAYMENT_METHODS.map(([value, label]) => (
+              <button
+                aria-pressed={saleForm.payment_method === value}
+                className={`pay-type ${value} ${saleForm.payment_method === value ? 'on' : ''}`}
+                key={value}
+                type="button"
+                onClick={() => setSaleForm({ ...saleForm, payment_method: value })}
+              >
+                <span className="payment-dot" />{label}
+              </button>
+            ))}
+          </div>
+          {saleLevel && saleAmount ? (
+            <div className={`stock-preview ${saleAmount - saleCost < 0 ? 'is-negative' : ''}`}>
+              <span>Закупка {money(Math.round(saleCost))}</span>
+              <strong>Маржа {signedMoney(saleAmount - saleCost)}</strong>
+            </div>
+          ) : null}
+          <button className="btn" type="submit" disabled={busy}>{isOwner ? 'Сохранить' : 'Отправить на подтверждение'}</button>
+        </form>
+      ) : null}
+
+      {canWrite && form === 'receipt' ? (
+        <form className="card wide stock-form" onSubmit={submitReceipt}>
+          <h2>Приход</h2>
+          <ProductPicker
+            options={receiptOptions}
+            value={receiptIsNew ? '' : receiptForm.product_id}
+            newName={receiptIsNew ? receiptForm.product_name : ''}
+            onChange={(id) => setReceiptForm({ ...receiptForm, product_id: id, product_name: '' })}
+            onCreate={(name) => setReceiptForm({ ...receiptForm, product_id: NEW_PRODUCT, product_name: name })}
+            placeholder="Найти или добавить товар"
+          />
+          {receiptIsNew ? (
+            <div className="seg" role="radiogroup" aria-label="Вид товара">
+              {PRODUCT_CATEGORIES.map(([value, label]) => (
+                <button key={value} type="button" role="radio" aria-checked={receiptForm.category === value} className={receiptForm.category === value ? 'on' : ''} onClick={() => setReceiptForm({ ...receiptForm, category: value })}>{label}</button>
+              ))}
+            </div>
+          ) : null}
+          <div className="settings-pair">
+            <label>
+              Количество
+              <input type="number" inputMode="numeric" min="1" step="1" value={receiptForm.qty} onChange={(event) => setReceiptForm({ ...receiptForm, qty: event.target.value })} />
+            </label>
+            <label>
+              Цена за штуку
+              <MoneyInput placeholder="сум" value={receiptForm.unit_cost} onChange={(value) => setReceiptForm({ ...receiptForm, unit_cost: value })} />
+            </label>
+          </div>
+          {receiptQty && receiptUnitCost ? (
+            <div className="stock-preview"><span>Итого</span><strong>{money(receiptQty * receiptUnitCost)} сум</strong></div>
+          ) : null}
+          <span className="stock-label">Из чьих денег</span>
+          <div className="seg" role="radiogroup" aria-label="Из чьих денег">
+            {RECEIPT_PAYERS.map(([value, label]) => (
+              <button key={value} type="button" role="radio" aria-checked={receiptForm.paid_by === value} className={receiptForm.paid_by === value ? 'on' : ''} onClick={() => setReceiptForm({ ...receiptForm, paid_by: value })}>{label}</button>
+            ))}
+          </div>
+          <button className="btn" type="submit" disabled={busy}>Сохранить</button>
+        </form>
+      ) : null}
+
+      {canWrite && form === 'writeoff' ? (
+        <form className="card wide stock-form" onSubmit={submitWriteoff}>
+          <h2>Списание</h2>
+          <ProductPicker
+            options={inStockOptions}
+            value={writeoffForm.product_id}
+            onChange={(id) => setWriteoffForm({ ...writeoffForm, product_id: id })}
+          />
+          <label>
+            Количество
+            <input type="number" inputMode="numeric" min="1" step="1" value={writeoffForm.qty} onChange={(event) => setWriteoffForm({ ...writeoffForm, qty: event.target.value })} />
+          </label>
+          <div className="seg" role="radiogroup" aria-label="Причина">
+            {WRITEOFF_REASONS.map(([value, label]) => (
+              <button key={value} type="button" role="radio" aria-checked={writeoffForm.reason === value} className={writeoffForm.reason === value ? 'on' : ''} onClick={() => setWriteoffForm({ ...writeoffForm, reason: value })}>{label}</button>
+            ))}
+          </div>
+          <input maxLength={300} placeholder="Комментарий" value={writeoffForm.note} onChange={(event) => setWriteoffForm({ ...writeoffForm, note: event.target.value })} />
+          <button className="btn" type="submit" disabled={busy}>Списать</button>
+        </form>
+      ) : null}
+
+      <div className="card wide">
+        <div className="section-heading">
+          <h2>Остатки</h2>
+          <span className="date-badge">сейчас</span>
+        </div>
+        <Rows
+          rows={visibleLevels}
+          empty="Товаров пока нет."
+          render={(row) => (
+            <div className={`row stock-row${row.qty <= 0 ? ' is-empty' : row.qty <= 2 ? ' is-low' : ''}`} key={row.product.id}>
+              <div>
+                <strong>{row.product.name}</strong>
+                <span>{PRODUCT_CATEGORY_LABELS[row.product.category] || 'Товар'} · {money(Math.round(row.unitCost))} за шт.</span>
+              </div>
+              <div className="stock-qty">
+                <strong>{row.qty} шт.</strong>
+                {row.qty > 0 ? (
+                  <span>{money(Math.round(row.value))}</span>
+                ) : isOwner && canWrite && row.qty === 0 ? (
+                  <button className="link-button" type="button" disabled={busy} onClick={() => hideProduct(row.product)}>Скрыть</button>
+                ) : (
+                  <span>закончился</span>
+                )}
+              </div>
+            </div>
+          )}
+        />
+      </div>
+
+      <div className="card wide">
+        <SectionHeading label="Движение товара" range={range} />
+        <Rows
+          rows={movements.slice(0, 150)}
+          empty="За этот период движения не было."
+          render={(item) => {
+            const { row } = item;
+            const name = `${nameOf(row.product_id)} × ${row.qty}`;
+            let title;
+            let details;
+            let amount;
+            let status = null;
+            if (item.kind === 'receipt') {
+              title = `Приход · ${name}`;
+              details = `${money(row.unit_cost)} за шт. · ${RECEIPT_PAYER_LABELS[row.paid_by] || row.paid_by}`;
+              amount = money(row.total_cost);
+            } else if (item.kind === 'sale') {
+              title = `Продажа · ${name}`;
+              details = `${PAYMENT_LABELS[row.payment_method] || '—'}${row.status === 'rejected' ? '' : ` · маржа ${signedMoney(productSaleMargin(row))}`}`;
+              amount = money(row.amount);
+              if (row.status === 'pending') status = <span className="approval pending">Ждёт подтверждения</span>;
+              if (row.status === 'rejected') status = <span className="approval rejected">Отклонено</span>;
+            } else {
+              title = `Списание · ${name}`;
+              details = `${WRITEOFF_REASON_LABELS[row.reason] || row.reason}${row.note ? ` · ${row.note}` : ''}`;
+              amount = '—';
+            }
+            return (
+              <div className={`row stock-move is-${item.kind}${row.status === 'rejected' ? ' is-rejected' : ''}`} key={`${item.kind}-${row.id}`}>
+                <div>
+                  <strong>{title}</strong>
+                  <span>{displayDate(item.date)} · {details}</span>
+                  {status}
+                </div>
+                <div>
+                  <strong>{amount}</strong>
+                  {canDelete(item) ? <button className="del" type="button" aria-label="Удалить" disabled={busy} onClick={() => deleteEntry(item)}>×</button> : null}
+                </div>
+              </div>
+            );
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 const AUDIT_ENTITY_LABELS = {
   fine: 'Штраф',
   expense: 'Расход',
@@ -2630,6 +3195,9 @@ const AUDIT_ENTITY_LABELS = {
   debt_payment: 'Платёж по долгу',
   sale: 'Продажа',
   attendance: 'Отметка о приходе',
+  product_receipts: 'Приход товара',
+  product_sales: 'Продажа товара',
+  product_writeoffs: 'Списание товара',
 };
 
 function auditRowSummary(event) {
@@ -2945,6 +3513,7 @@ const NAV_ITEMS = [
   { id: 'overview', label: 'Главная', views: ['overview'], icon: 'home' },
   { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
   { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
+  { id: 'stock', label: 'Склад', views: ['stock'], icon: 'box' },
   { id: 'team', label: 'Команда', views: ['attendance', 'master'], icon: 'team' },
 ];
 
@@ -2959,18 +3528,20 @@ const VIEW_TITLES = {
   finance: 'Расходы',
   attendance: 'Команда',
   master: 'Команда',
+  stock: 'Склад',
   settings: 'Настройки',
 };
 
 function viewIdsForUser(data) {
   if (data.role === 'admin') {
     // No «Рабочий день» (entering sales for a master) and no settings.
-    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'attendance'];
+    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance'];
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
       'admin',
       'finance',
+      'stock',
       'attendance',
       'master',
       'settings',
@@ -3016,6 +3587,7 @@ function NavIcon({ name }) {
   if (name === 'home') return <svg {...common}><path d="M3 11l9-7 9 7" /><path d="M5 10v10h14V10" /></svg>;
   if (name === 'receipt') return <svg {...common}><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 12h6" /></svg>;
   if (name === 'wallet') return <svg {...common}><rect x="3" y="6" width="18" height="14" rx="3" /><path d="M3 10h18M16 15h2" /></svg>;
+  if (name === 'box') return <svg {...common}><path d="M21 8l-9-5-9 5 9 5 9-5z" /><path d="M3 8v8l9 5 9-5V8" /><path d="M12 13v8" /></svg>;
   return <svg {...common}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2.2.6 3.5 2.6 3.5 6" /></svg>;
 }
 
@@ -3498,7 +4070,7 @@ export default function App() {
       .filter((item) => item.views.length)
   ), [availableViews]);
   // The badge is work for whoever approves; a read-only account has none.
-  const pendingSalesCount = isReadOnly(data) ? 0 : getPendingSales(data.sales).length;
+  const pendingSalesCount = isReadOnly(data) ? 0 : approvalQueue(data).count;
 
   function openView(next) {
     if (next === view) return;
@@ -3534,6 +4106,7 @@ export default function App() {
     admin: AdminView,
     attendance: AttendanceView,
     finance: FinanceView,
+    stock: StockView,
     settings: SettingsView,
   }[view] || MasterView;
 
@@ -3584,10 +4157,10 @@ export default function App() {
       <CurrentView data={data} reload={load} setError={setError} setView={openView} />
 
       {!isMaster && navItems.length ? (
-        <nav className="tabbar" aria-label="Разделы">
+        <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>
           {navItems.map((item) => {
             const active = item.views.includes(view);
-            const showsPending = item.id === 'sales' && pendingSalesCount;
+            const badge = item.id === 'sales' ? pendingSalesCount : 0;
             return (
               <button
                 aria-current={active ? 'page' : undefined}
@@ -3598,9 +4171,9 @@ export default function App() {
               >
                 <NavIcon name={item.icon} />
                 <span>{item.label}</span>
-                {showsPending ? (
-                  <b className="tabbar-badge" aria-label={`${pendingSalesCount} продаж ожидают подтверждения`}>
-                    {pendingSalesCount > 99 ? '99+' : pendingSalesCount}
+                {badge ? (
+                  <b className="tabbar-badge" aria-label={`${badge} продаж ожидают подтверждения`}>
+                    {badge > 99 ? '99+' : badge}
                   </b>
                 ) : null}
               </button>

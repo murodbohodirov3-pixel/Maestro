@@ -14,6 +14,7 @@ import {
   shiftDate,
 } from './reporting.js';
 import { operatingExpenses, totalExpenses, totalFines, totalSalesAmount } from './calculations.js';
+import { productIncome } from './stock.js';
 
 export function monthStart(day) {
   return `${String(day).slice(0, 7)}-01`;
@@ -99,7 +100,7 @@ export function monthForecast(sales, today) {
 // current month runs to its last day, the same window Обзор uses, so its
 // profit matches the headline figure exactly. Profit is only computed when the
 // masters are given, because a single master's months have no profit.
-export function monthlySeries({ sales, fines = [], expenses = [], masters = null, today, months = 12 }) {
+export function monthlySeries({ sales, fines = [], expenses = [], productSales = [], masters = null, today, months = 12 }) {
   const firstSale = sales.reduce((first, sale) => {
     const day = rowDate(sale);
     return day && (!first || day < first) ? day : first;
@@ -125,7 +126,8 @@ export function monthlySeries({ sales, fines = [], expenses = [], masters = null
       const monthExpenses = expenses.filter((expense) => inRange(rowDate(expense, 'date'), from, to));
       row.profit = row.revenue
         - masterPayoutForPeriod(masters, monthSales, monthFines)
-        - totalExpenses(operatingExpenses(monthExpenses));
+        - totalExpenses(operatingExpenses(monthExpenses))
+        + productIncome(productSales, { from, to });
     }
 
     series.push(row);

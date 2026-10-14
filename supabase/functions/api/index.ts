@@ -81,6 +81,18 @@ async function fetchAllRows(
   }
 }
 
+// The stock tables arrive with their own migration. Until it has run, a missing
+// table must cost the app its Склад screen, not the whole load.
+async function fetchStockRows(table: string, orderColumn: string) {
+  try {
+    return await fetchAllRows(table, orderColumn);
+  } catch (error) {
+    const code = String((error as { code?: string })?.code || '');
+    if (code === '42P01' || code === 'PGRST205') return [];
+    throw error;
+  }
+}
+
 async function fetchAppointments(filters: Record<string, string | number> = {}) {
   const rows: Record<string, unknown>[] = [];
   const fromDate = `${tashkentDate(-60)}T00:00:00+05:00`;
@@ -406,7 +418,7 @@ Deno.serve(async (req) => {
         .from('audit_events')
         .select('id,occurred_at,entity_type,entity_id,operation,event_name,actor_user_id,actor_name,actor_role,actor_external_id,source,correlation_id,changed_fields,old_values,new_values,metadata')
         .eq('operation', 'delete')
-        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment', 'sale', 'attendance'])
+        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment', 'sale', 'attendance', 'product_receipts', 'product_sales', 'product_writeoffs'])
         .order('id', { ascending: false })
         .limit(limit + 1);
       if (/^\d+$/.test(cursor)) query = query.lt('id', cursor);
@@ -437,7 +449,7 @@ Deno.serve(async (req) => {
       const byDate = since ? { column: 'date', since } : null;
 
       if (isAdmin || isPartner) {
-        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients] = await Promise.all([
+        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients, products, product_receipts, product_sales, product_writeoffs] = await Promise.all([
           fetchAllRows('sales', 'd', {}, byDay),
           fetchAllRows('fines', 'id', {}, byDay),
           fetchAllRows('attendance', 'id', {}, byDay),
@@ -452,6 +464,11 @@ Deno.serve(async (req) => {
           // measured against the master's own shift, not only the salon cutoff.
           fetchAllRows('master_schedule_rules', 'iso_weekday'),
           canManageClients ? fetchAllRows('client_export', 'last_contact_at') : Promise.resolve([]),
+          // Склад is small and bounded by the shelf, so it always comes whole.
+          fetchStockRows('products', 'id'),
+          fetchStockRows('product_receipts', 'receipt_date'),
+          fetchStockRows('product_sales', 'sale_date'),
+          fetchStockRows('product_writeoffs', 'writeoff_date'),
         ]);
 
         return json({
@@ -470,6 +487,10 @@ Deno.serve(async (req) => {
           appointments,
           master_schedule_rules,
           clients,
+          products,
+          product_receipts,
+          product_sales,
+          product_writeoffs,
           appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
           windowSince: since,
@@ -749,6 +770,146 @@ Deno.serve(async (req) => {
       return json(result);
     }
 
+    // Склад. The owner and an administrator keep the shelf; only the owner
+    // decides on a sale, and an administrator's sale waits for him.
+    const STOCK_ACTIONS = ['addProductReceipt', 'addProductSale', 'setProductSaleApproval', 'addProductWriteoff', 'delStockEntry', 'setProductActive'];
+    if (STOCK_ACTIONS.includes(action)) {
+      const role = appUserResult.data.role;
+      if (!['owner', 'admin'].includes(role)) return json({ error: 'forbidden' }, 403);
+      if (action === 'setProductSaleApproval' && role !== 'owner') return json({ error: 'forbidden' }, 403);
+    }
+    const isOwner = appUserResult.data.role === 'owner';
+    const stockResult = (result: Record<string, unknown> | null, error: { message: string } | null) => {
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) {
+        const code = String(result?.error || 'stock_action_failed');
+        const status = code === 'forbidden'
+          ? 403
+          : ['product_not_found', 'product_sale_not_found', 'stock_entry_not_found'].includes(code)
+            ? 404
+            : ['not_enough_stock', 'receipt_already_sold', 'product_still_in_stock', 'product_name_taken'].includes(code)
+              ? 409
+              : 400;
+        return json(result, status);
+      }
+      return json(result);
+    };
+    const wholeNumber = (value: unknown) => {
+      const number = Number(value);
+      return Number.isInteger(number) ? number : null;
+    };
+
+    // Stock entries are dated by the server: a delivery, a sale or a write-off
+    // is recorded the day it happens, never backdated.
+    if (action === 'addProductReceipt') {
+      const date = tashkentDate();
+      const qty = wholeNumber(payload.qty);
+      const unitCost = wholeNumber(payload.unit_cost);
+      const productId = payload.product_id == null || payload.product_id === '' ? null : wholeNumber(payload.product_id);
+      const productName = productId == null ? String(payload.product_name ?? '').trim().slice(0, 80) : null;
+      const usdRate = Number(payload.usd_rate);
+      if (qty == null || qty < 1 || qty > 100000
+        || unitCost == null || unitCost < 1 || unitCost > MAX_SALE_AMOUNT
+        || (productId == null && !productName)
+        || !['ishxona', 'murod', 'jamshid', 'opening'].includes(String(payload.paid_by))
+        || !['care', 'drinks', 'other'].includes(String(payload.category ?? 'care'))) {
+        return json({ error: 'invalid_receipt' }, 400);
+      }
+      if (qty * unitCost > MAX_SALE_AMOUNT) return json({ error: 'receipt_amount_too_large' }, 400);
+      const { data: result, error } = await sb.rpc('maestro_add_product_receipt', {
+        p_product_id: productId,
+        p_product_name: productName,
+        p_category: String(payload.category ?? 'care'),
+        p_receipt_date: date,
+        p_qty: qty,
+        p_unit_cost: unitCost,
+        p_paid_by: String(payload.paid_by),
+        p_usd_rate: Number.isFinite(usdRate) && usdRate > 0 ? usdRate : null,
+        p_note: payload.note ? String(payload.note).trim().slice(0, 300) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      return stockResult(result, error);
+    }
+
+    if (action === 'addProductSale') {
+      const productId = wholeNumber(payload.product_id);
+      const qty = wholeNumber(payload.qty);
+      const amount = wholeNumber(payload.amount);
+      const date = tashkentDate();
+      const paymentMethod = String(payload.payment_method ?? '');
+      if (productId == null || qty == null || qty < 1 || qty > 1000
+        || amount == null || amount < 1
+        || !['cash', 'card', 'qr'].includes(paymentMethod)) {
+        return json({ error: 'invalid_product_sale' }, 400);
+      }
+      if (amount > MAX_SALE_AMOUNT) return json({ error: 'sale_amount_too_large' }, 400);
+      const requestId = String(payload.client_request_id ?? '');
+      const { data: result, error } = await sb.rpc('maestro_add_product_sale', {
+        p_product_id: productId,
+        p_sale_date: date,
+        p_qty: qty,
+        p_amount: amount,
+        p_payment_method: paymentMethod,
+        p_approved: isOwner,
+        p_actor_user_id: appUserResult.data.id,
+        p_client_request_id: UUID_PATTERN.test(requestId) ? requestId : null,
+      });
+      return stockResult(result, error);
+    }
+
+    if (action === 'setProductSaleApproval') {
+      const { data: result, error } = await sb.rpc('maestro_set_product_sale_status', {
+        p_id: wholeNumber(payload.id),
+        p_status: String(payload.status ?? ''),
+        p_actor_user_id: appUserResult.data.id,
+      });
+      return stockResult(result, error);
+    }
+
+    if (action === 'addProductWriteoff') {
+      const productId = wholeNumber(payload.product_id);
+      const qty = wholeNumber(payload.qty);
+      const date = tashkentDate();
+      if (productId == null || qty == null || qty < 1 || qty > 100000
+        || !['used', 'gift', 'damaged', 'recount'].includes(String(payload.reason))) {
+        return json({ error: 'invalid_writeoff' }, 400);
+      }
+      const { data: result, error } = await sb.rpc('maestro_add_product_writeoff', {
+        p_product_id: productId,
+        p_writeoff_date: date,
+        p_qty: qty,
+        p_reason: String(payload.reason),
+        p_note: payload.note ? String(payload.note).trim().slice(0, 300) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      return stockResult(result, error);
+    }
+
+    if (action === 'delStockEntry') {
+      const kind = String(payload.kind ?? '');
+      const id = wholeNumber(payload.id);
+      if (!['receipt', 'sale', 'writeoff'].includes(kind) || id == null) {
+        return json({ error: 'invalid_stock_entry' }, 400);
+      }
+      const { data: result, error } = await sb.rpc('maestro_delete_stock_entry', {
+        p_kind: kind,
+        p_id: id,
+        p_actor_user_id: appUserResult.data.id,
+        p_any_recent: isOwner,
+        p_correlation_id: requestId,
+      });
+      return stockResult(result, error);
+    }
+
+    if (action === 'setProductActive') {
+      if (!isOwner) return json({ error: 'forbidden' }, 403);
+      const { data: result, error } = await sb.rpc('maestro_set_product_active', {
+        p_product_id: wholeNumber(payload.product_id),
+        p_active: payload.active === true,
+      });
+      return stockResult(result, error);
+    }
+
     if (action === 'addAppointment') {
       const appointmentMasterId = canManageCalendar
         ? Number(payload.master_id)
@@ -953,6 +1114,10 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'delExpense') {
+      // A purchase for Склад is removed with its receipt, or the shelf would
+      // keep goods nobody paid for.
+      const linked = await sb.from('product_receipts').select('id').eq('expense_id', payload.id).maybeSingle();
+      if (!linked.error && linked.data) return json({ error: 'expense_belongs_to_stock' }, 409);
       const { data: result, error } = await sb.rpc('maestro_delete_expense', {
         p_id: payload.id,
         p_actor_user_id: appUserResult.data.id,
