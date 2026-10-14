@@ -27,6 +27,8 @@ function tashkentTime() {
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Zero-padded 24-hour HH:MM, so two times compare correctly as strings.
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 // A single haircut cannot cost this much. The ceiling exists so a stray extra
 // digit is rejected at the door instead of skewing every report behind it.
 const MAX_SALE_AMOUNT = 100_000_000;
@@ -692,6 +694,61 @@ Deno.serve(async (req) => {
       return json(result);
     }
 
+    if (action === 'setMasterSchedule' || action === 'delMasterSchedule') {
+      if (!canEditSettings) return json({ error: 'forbidden' }, 403);
+    }
+
+    if (action === 'setMasterSchedule') {
+      const masterId = Number(payload.master_id);
+      const effectiveFrom = String(payload.effective_from ?? '');
+      const days = Array.isArray(payload.days) ? payload.days : null;
+      if (!Number.isInteger(masterId) || !isValidIsoDate(effectiveFrom) || !days || days.length > 7) {
+        return json({ error: 'invalid_schedule' }, 400);
+      }
+      // A wrong year in the date picker would otherwise re-judge a year of
+      // attendance. Two months back is room enough to record a change late.
+      if (effectiveFrom < tashkentDate(-62) || effectiveFrom > tashkentDate(366)) {
+        return json({ error: 'schedule_date_out_of_range' }, 400);
+      }
+      const workDays: { iso_weekday: number; starts_at: string; ends_at: string }[] = [];
+      for (const day of days) {
+        const weekday = Number(day?.iso_weekday);
+        const startsAt = String(day?.starts_at ?? '');
+        const endsAt = String(day?.ends_at ?? '');
+        if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7
+          || !CLOCK_TIME.test(startsAt) || !CLOCK_TIME.test(endsAt) || endsAt <= startsAt) {
+          return json({ error: 'invalid_schedule' }, 400);
+        }
+        workDays.push({ iso_weekday: weekday, starts_at: startsAt, ends_at: endsAt });
+      }
+      if (!workDays.length) return json({ error: 'schedule_needs_work_day' }, 400);
+
+      const { data: result, error } = await sb.rpc('maestro_set_master_schedule', {
+        p_master_id: masterId,
+        p_effective_from: effectiveFrom,
+        p_days: workDays,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, result?.error === 'master_not_active' ? 409 : 400);
+      return json(result);
+    }
+
+    if (action === 'delMasterSchedule') {
+      const masterId = Number(payload.master_id);
+      const effectiveFrom = String(payload.effective_from ?? '');
+      if (!Number.isInteger(masterId) || !isValidIsoDate(effectiveFrom)) {
+        return json({ error: 'invalid_schedule' }, 400);
+      }
+      const { data: result, error } = await sb.rpc('maestro_delete_master_schedule', {
+        p_master_id: masterId,
+        p_effective_from: effectiveFrom,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, result?.error === 'schedule_not_found' ? 404 : 409);
+      return json(result);
+    }
+
     if (action === 'addAppointment') {
       const appointmentMasterId = canManageCalendar
         ? Number(payload.master_id)
@@ -825,6 +882,14 @@ Deno.serve(async (req) => {
           return json({ error: 'invalid_goal' }, 400);
         }
         patch.monthly_revenue_goal = goal;
+      }
+      // Minutes after a master's own scheduled start before he counts as late.
+      if (payload.late_grace_minutes !== undefined) {
+        const grace = Number(payload.late_grace_minutes);
+        if (!Number.isInteger(grace) || grace < 0 || grace > 120) {
+          return json({ error: 'invalid_late_grace' }, 400);
+        }
+        patch.late_grace_minutes = grace;
       }
       if (!Object.keys(patch).length) return json({ error: 'no_settings_to_update' }, 400);
       const { error } = await sb.from('settings').update(patch).eq('id', 1);

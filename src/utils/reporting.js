@@ -291,37 +291,129 @@ export function weekdayBreakdown(sales) {
   });
 }
 
-// The salon keeps one cutoff for everyone, but a master whose shift starts
-// after it cannot be late before he is due: two of them now start in the
-// afternoon. The threshold is the later of the two, so a shift that begins
-// earlier than the cutoff keeps the cutoff, grace included.
-export function shiftStartFor(master, date, scheduleRules = [], shiftStart = '09:00') {
-  const weekday = weekdayIndex(date);
-  if (!master || weekday == null) return shiftStart;
+// Rows stored before schedules had dates carry none: they are the week that
+// was always in force.
+export function scheduleVersionOf(rule) {
+  return String(rule?.effective_from || '').slice(0, 10) || '0000-00-00';
+}
 
-  const scheduled = scheduleRules
-    .filter((rule) => (
-      String(rule.master_id) === String(master.id)
-      && Number(rule.iso_weekday) === weekday + 1
-      && rule.active !== false
-    ))
+// A master's week as it stood on a date. A change of hours is saved as a new
+// version from its own date, so a past day is judged by the hours in force
+// then, and moving a shift never rewrites last month's lateness.
+export function scheduleRulesOn(master, date, scheduleRules = []) {
+  if (!master || !date) return [];
+  const own = scheduleRules.filter((rule) => (
+    String(rule.master_id) === String(master.id) && rule.active !== false
+  ));
+  let version = null;
+  own.forEach((rule) => {
+    const from = scheduleVersionOf(rule);
+    if (from <= date && (version == null || from > version)) version = from;
+  });
+  return version == null ? [] : own.filter((rule) => scheduleVersionOf(rule) === version);
+}
+
+// Every version of a master's week, oldest first.
+export function scheduleVersions(master, scheduleRules = []) {
+  const byVersion = new Map();
+  scheduleRules
+    .filter((rule) => String(rule.master_id) === String(master?.id) && rule.active !== false)
+    .forEach((rule) => {
+      const from = scheduleVersionOf(rule);
+      if (!byVersion.has(from)) byVersion.set(from, []);
+      byVersion.get(from).push(rule);
+    });
+  return [...byVersion.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : 1))
+    .map(([from, rules]) => ({ from, rules }));
+}
+
+// One line for a week: neighbouring days with the same hours are joined, so
+// «Пн–Сб 14:00–22:00 · Вс 10:00–22:00» reads at a glance.
+export function scheduleSummary(rules = []) {
+  const hours = WEEKDAY_SHORT.map((_, index) => {
+    const day = rules.filter((rule) => Number(rule.iso_weekday) === index + 1);
+    if (!day.length) return null;
+    const starts = day.map((rule) => String(rule.starts_at).slice(0, 5)).sort()[0];
+    const ends = day.map((rule) => String(rule.ends_at).slice(0, 5)).sort().pop();
+    return `${starts}–${ends}`;
+  });
+  const groups = [];
+  hours.forEach((value, index) => {
+    const last = groups[groups.length - 1];
+    if (last && last.value === value) last.to = index;
+    else groups.push({ from: index, to: index, value });
+  });
+  return groups
+    .map(({ from, to, value }) => {
+      const days = from === to ? WEEKDAY_SHORT[from] : `${WEEKDAY_SHORT[from]}–${WEEKDAY_SHORT[to]}`;
+      return `${days} ${value || 'выходной'}`;
+    })
+    .join(' · ');
+}
+
+// How lateness is measured, read from settings. Until late_rule_since the salon
+// kept one cutoff for everyone (shift_start, 10:10), and a master whose shift
+// began later was judged from his own start. From that date, decided by the
+// owner on 2026-10-14, each master is judged from his own scheduled start plus
+// the same grace for everyone. A plain time string is the old rule alone.
+export function lateRuleFrom(value) {
+  if (value && typeof value === 'object') {
+    const grace = Number(value.graceMinutes);
+    return {
+      shiftStart: value.shiftStart || '09:00',
+      graceMinutes: Number.isFinite(grace) && grace >= 0 ? Math.trunc(grace) : 10,
+      since: value.since ? String(value.since).slice(0, 10) : null,
+    };
+  }
+  return { shiftStart: value || '09:00', graceMinutes: 0, since: null };
+}
+
+export function lateRuleFromSettings(settings = {}) {
+  return lateRuleFrom({
+    shiftStart: settings.shift_start,
+    graceMinutes: settings.late_grace_minutes,
+    since: settings.late_rule_since,
+  });
+}
+
+// The start of a master's shift on a date by his schedule, or null when the
+// schedule gives him that day off or he has none.
+export function scheduledStartOn(master, date, scheduleRules = []) {
+  const weekday = weekdayIndex(date);
+  if (!master || weekday == null) return null;
+  const starts = scheduleRulesOn(master, date, scheduleRules)
+    .filter((rule) => Number(rule.iso_weekday) === weekday + 1)
     .map((rule) => timeToMinutes(rule.starts_at))
     .filter((minutes) => minutes != null);
-  if (!scheduled.length) return shiftStart;
+  return starts.length ? minutesToTime(Math.min(...starts)) : null;
+}
 
-  const earliestShift = Math.min(...scheduled);
-  const cutoff = timeToMinutes(shiftStart);
-  return cutoff == null || earliestShift > cutoff ? minutesToTime(earliestShift) : shiftStart;
+// The time after which an arrival counts as late, or null when nothing is late
+// that day. Under the old rule the salon cutoff holds unless the master's own
+// shift starts after it; under the new one it is his start plus the grace, and
+// a day his schedule does not cover has no lateness at all.
+export function shiftStartFor(master, date, scheduleRules = [], lateRule = '09:00') {
+  const rule = lateRuleFrom(lateRule);
+  const start = scheduledStartOn(master, date, scheduleRules);
+
+  if (rule.since && date >= rule.since) {
+    return start == null ? null : minutesToTime(timeToMinutes(start) + rule.graceMinutes);
+  }
+
+  if (start == null) return rule.shiftStart;
+  const cutoff = timeToMinutes(rule.shiftStart);
+  return cutoff == null || timeToMinutes(start) > cutoff ? start : rule.shiftStart;
 }
 
 // Who is systematically late and what it cost. The bot already computed this;
 // the app never showed it.
-export function latenessSummary(masters, attendance, fines, shiftStart = '09:00', scheduleRules = []) {
+export function latenessSummary(masters, attendance, fines, lateRule = '09:00', scheduleRules = []) {
   return mastersForPeriod(masters, attendance, fines).map((master) => {
     const records = attendance.filter((row) => belongsToMaster(row, master));
     const lateMinutes = records.map((row) => minutesLate(
       row.arrived_at || row.arrived,
-      shiftStartFor(master, rowDate(row), scheduleRules, shiftStart),
+      shiftStartFor(master, rowDate(row), scheduleRules, lateRule),
     ));
     const lateDays = lateMinutes.filter((value) => value > 0).length;
     const totalLateMinutes = lateMinutes.reduce((sum, value) => sum + value, 0);
@@ -353,6 +445,8 @@ export function attendanceGrid({
   range,
   today,
   shiftStart = '09:00',
+  // lateRuleFromSettings(settings); a bare shiftStart is the old cutoff rule.
+  lateRule = shiftStart,
 }) {
   if (!range?.from || !range?.to || !today) return [];
   const last = range.to < today ? range.to : today;
@@ -373,7 +467,6 @@ export function attendanceGrid({
     const first = activityDates[0] || today;
     const lastActive = activityDates[activityDates.length - 1] || today;
     const byDay = new Map(records.map((row) => [rowDate(row), row]));
-    const rules = scheduleRules.filter((rule) => String(rule.master_id) === String(master.id) && rule.active !== false);
 
     days.forEach((day) => {
       if (day < first || (inactive && day > lastActive)) return;
@@ -382,8 +475,9 @@ export function attendanceGrid({
         String(status.master_id) === String(master.id) && status.work_date === day
       ));
       const weekday = weekdayIndex(day);
+      const rules = scheduleRulesOn(master, day, scheduleRules);
       const scheduled = !rules.length || rules.some((rule) => Number(rule.iso_weekday) === weekday + 1);
-      const start = shiftStartFor(master, day, scheduleRules, shiftStart);
+      const start = shiftStartFor(master, day, scheduleRules, lateRule);
       const arrived = record ? (record.arrived || record.arrived_at || '') : '';
       const lateBy = arrived ? minutesLate(arrived, start) : 0;
 

@@ -183,8 +183,8 @@ async function loadPeriodData(previousFrom: string, currentTo: string) {
     fetchAllRows('expenses', 'id,date,section,name,amount_uzs,usd_rate,minus_from,category', 'date', previousFrom, currentTo),
     fetchAllRows('attendance', 'id,master,master_id,d,attendance_date,arrived,arrived_at', 'd', previousFrom, currentTo),
     fetchAllRows('masters', 'id,name,pct,active', 'id'),
-    fetchAllRows('settings', 'id,shift_start', 'id'),
-    fetchAllRows('master_schedule_rules', 'id,master_id,iso_weekday,starts_at,active', 'iso_weekday'),
+    fetchAllRows('settings', 'id,shift_start,late_grace_minutes,late_rule_since', 'id'),
+    fetchAllRows('master_schedule_rules', 'id,master_id,iso_weekday,starts_at,active,effective_from', 'iso_weekday'),
   ]);
   return { sales, fines, expenses, attendance, masters, settings, scheduleRules };
 }
@@ -366,36 +366,56 @@ function isoWeekdayOf(date: string) {
   return ((new Date(parsed).getUTCDay() + 6) % 7) + 1;
 }
 
-// The same rule the app uses: the salon cutoff, unless this master's shift on
-// that weekday starts later, in which case he cannot be late before it.
-function shiftMinutesFor(master: Row, date: string, rules: Row[], cutoffMinutes: number) {
-  const weekday = isoWeekdayOf(date);
-  if (weekday == null) return cutoffMinutes;
+// Schedules are stored as versions, each from its own date; a day is judged by
+// the master's latest version that had started by then (scheduleRulesOn in the
+// app's reporting.js).
+function scheduleVersionOf(rule: Row) {
+  return String(rule.effective_from || '').slice(0, 10) || '0000-00-00';
+}
 
-  const scheduled = rules
-    .filter((rule) => (
-      String(rule.master_id) === String(master.id)
-      && Number(rule.iso_weekday) === weekday
-      && rule.active !== false
-    ))
+type LateRule = { cutoffMinutes: number; graceMinutes: number; since: string | null };
+
+// The same rule the app uses (shiftStartFor in reporting.js). Before
+// late_rule_since: the salon cutoff, unless this master's shift on that weekday
+// starts later. From it: his own start plus the grace, and nothing is late on a
+// day his schedule does not cover. Null means no lateness that day.
+function shiftMinutesFor(master: Row, date: string, rules: Row[], lateRule: LateRule) {
+  const weekday = isoWeekdayOf(date);
+  const newRule = Boolean(lateRule.since && date >= lateRule.since);
+  if (weekday == null) return newRule ? null : lateRule.cutoffMinutes;
+
+  const own = rules.filter((rule) => String(rule.master_id) === String(master.id) && rule.active !== false);
+  const version = own
+    .map(scheduleVersionOf)
+    .filter((from) => from <= date)
+    .sort()
+    .pop();
+  const scheduled = own
+    .filter((rule) => scheduleVersionOf(rule) === version && Number(rule.iso_weekday) === weekday)
     .map((rule) => timeMinutes(rule.starts_at))
     .filter((value): value is number => value != null);
 
-  return scheduled.length ? Math.max(cutoffMinutes, Math.min(...scheduled)) : cutoffMinutes;
+  if (newRule) return scheduled.length ? Math.min(...scheduled) + lateRule.graceMinutes : null;
+  return scheduled.length ? Math.max(lateRule.cutoffMinutes, Math.min(...scheduled)) : lateRule.cutoffMinutes;
 }
 
 function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, periods: ReturnType<typeof getPeriods>) {
   const rows = data.attendance.filter((item) => inRange(item, periods.current.from, periods.current.to));
   const fines = data.fines.filter((item) => inRange(item, periods.current.from, periods.current.to));
   const shiftStart = String(data.settings[0]?.shift_start || '09:00');
-  const shiftMinutes = timeMinutes(shiftStart) ?? 540;
+  const grace = Number(data.settings[0]?.late_grace_minutes);
+  const lateRule: LateRule = {
+    cutoffMinutes: timeMinutes(shiftStart) ?? 540,
+    graceMinutes: Number.isFinite(grace) && grace >= 0 ? Math.trunc(grace) : 10,
+    since: data.settings[0]?.late_rule_since ? String(data.settings[0].late_rule_since).slice(0, 10) : null,
+  };
   const masters = mastersForPeriod(data.masters, rows, fines).map((master) => {
     const name = String(master.name || '');
     const records = rows.filter((item) => belongsToMaster(item, master));
     const lateMinutes = records.map((item) => {
       const arrived = timeMinutes(item.arrived_at || item.arrived);
-      const due = shiftMinutesFor(master, rowDate(item), data.scheduleRules, shiftMinutes);
-      return arrived == null ? 0 : Math.max(0, arrived - due);
+      const due = shiftMinutesFor(master, rowDate(item), data.scheduleRules, lateRule);
+      return arrived == null || due == null ? 0 : Math.max(0, arrived - due);
     });
     const lateDays = lateMinutes.filter((value) => value > 0).length;
     return {
@@ -410,7 +430,11 @@ function attendanceReport(data: Awaited<ReturnType<typeof loadPeriodData>>, peri
   return {
     report: 'attendance_report',
     period: periods.current,
+    // Before the switch date: one salon cutoff. From it: each master's own
+    // scheduled start plus this grace.
     shiftStart,
+    lateGraceMinutes: lateRule.graceMinutes,
+    lateRuleSince: lateRule.since,
     masters,
     caveats: ['Отсутствие записи посещаемости не всегда означает отсутствие мастера.'],
   };

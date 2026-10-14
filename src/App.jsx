@@ -33,7 +33,12 @@ import {
   inRange,
   masterPayoutForPeriod,
   mastersForPeriod,
+  lateRuleFromSettings,
   minutesLate,
+  scheduleRulesOn,
+  scheduleSummary,
+  scheduleVersions,
+  scheduledStartOn,
   shiftStartFor,
   paymentMix,
   percentageDifference,
@@ -219,6 +224,12 @@ const ACTION_ERROR_TEXT = {
   slot_already_booked: 'Это время уже занято.',
   master_day_off: 'У мастера в этот день выходной.',
   client_blocked: 'Этот клиент заблокирован.',
+  invalid_late_grace: 'Допуск — целое число минут от 0 до 120.',
+  invalid_schedule: 'Проверьте график: у каждого рабочего дня конец позже начала.',
+  schedule_needs_work_day: 'Отметьте хотя бы один рабочий день. Отпуск ставьте выходными в «Команде».',
+  schedule_date_out_of_range: 'Дату можно выбрать не раньше чем два месяца назад и не позже чем через год.',
+  schedule_already_started: 'Этот график уже действует — его можно только заменить новым.',
+  schedule_not_found: 'Этот график уже отменён — обновите экран.',
   not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
 };
 
@@ -1205,6 +1216,14 @@ function saleStatusClass(sale) {
   return '';
 }
 
+// What a master reads under «Я пришёл»: when his shift starts by the schedule,
+// and from when an arrival counts as late.
+function shiftStartHint(start, lateAfter) {
+  if (!start) return lateAfter ? `Опоздание — после ${lateAfter}.` : 'По графику сегодня выходной.';
+  if (!lateAfter || lateAfter === start) return `Смена с ${start}.`;
+  return `Смена с ${start}, опоздание — после ${lateAfter}.`;
+}
+
 function MasterView({ data, reload, setError }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
   const [payType, setPayType] = useState(null);
@@ -1267,8 +1286,9 @@ function MasterView({ data, reload, setError }) {
     masterProfile,
     TODAY,
     data.scheduleRules,
-    data.settings.shift_start || '09:00',
+    lateRuleFromSettings(data.settings),
   );
+  const scheduledStart = scheduledStartOn(masterProfile, TODAY, data.scheduleRules);
 
   useEffect(() => {
     if (!masterName && data.activeMasters[0]?.name) setSelectedMaster(data.activeMasters[0].name);
@@ -1441,7 +1461,9 @@ function MasterView({ data, reload, setError }) {
         ) : (
           <>
             <button className="btn" type="button" onClick={markArrival} disabled={busy || !masterName}>Я пришёл</button>
-            <p className="hint">Смена с {shiftStart}. Если координаты салона заданы, отметка проверяет радиус.</p>
+            <p className="hint">
+              {shiftStartHint(scheduledStart, shiftStart)} Если координаты салона заданы, отметка проверяет радиус.
+            </p>
           </>
         )}
       </div>
@@ -1952,7 +1974,7 @@ function AttendanceView({ data, reload, setError }) {
   const filteredFines = data.fines
     .filter((fine) => inRange(rowDate(fine), range.from, range.to))
     .sort(newestFirst);
-  const shiftStart = data.settings.shift_start || '09:00';
+  const lateRule = lateRuleFromSettings(data.settings);
   const grid = attendanceGrid({
     masters: data.masters,
     attendance: data.attendance,
@@ -1961,7 +1983,7 @@ function AttendanceView({ data, reload, setError }) {
     sales: data.sales,
     range,
     today: TODAY,
-    shiftStart,
+    lateRule,
   });
   // Per-day rows answer "who is here today"; the totals answer "who is
   // habitually late or missing, and what has it cost".
@@ -2110,7 +2132,9 @@ function AttendanceView({ data, reload, setError }) {
               );
             })}
             <p className="hint">
-              Опоздание считается от начала смены мастера по графику, но не раньше {shiftStart}.
+              {lateRule.since && TODAY >= lateRule.since
+                ? `Опоздание считается от начала смены мастера по его графику, допуск ${lateRule.graceMinutes} мин.`
+                : `Опоздание считается от начала смены мастера по графику, но не раньше ${lateRule.shiftStart}.`}{' '}
               «Нет отметки» — прошедший день без прихода и без выходного.
             </p>
           </div>
@@ -3004,9 +3028,213 @@ function GearIcon() {
   );
 }
 
+const SCHEDULE_WEEKDAYS = [[1, 'Пн'], [2, 'Вт'], [3, 'Ср'], [4, 'Чт'], [5, 'Пт'], [6, 'Сб'], [7, 'Вс']];
+// The version every master had before schedules were dated.
+const SCHEDULE_ALWAYS = '2000-01-01';
+
+// One shift a day: if a day ever held two, the editor shows its whole span.
+function scheduleDraftFrom(rules) {
+  const firstWorking = rules[0];
+  const fallback = {
+    starts: firstWorking ? String(firstWorking.starts_at).slice(0, 5) : '10:00',
+    ends: firstWorking ? String(firstWorking.ends_at).slice(0, 5) : '22:00',
+  };
+  return SCHEDULE_WEEKDAYS.map(([iso]) => {
+    const day = rules.filter((rule) => Number(rule.iso_weekday) === iso);
+    if (!day.length) return { iso, works: false, ...fallback };
+    return {
+      iso,
+      works: true,
+      starts: day.map((rule) => String(rule.starts_at).slice(0, 5)).sort()[0],
+      ends: day.map((rule) => String(rule.ends_at).slice(0, 5)).sort().pop(),
+    };
+  });
+}
+
+function scheduleFromLabel(from) {
+  return from <= SCHEDULE_ALWAYS ? '' : `с ${displayDate(from)}`;
+}
+
+// The owner sets each master's week here instead of asking for it in SQL. A
+// change is saved from a date: the days before it keep the week they were
+// worked under, so lateness already counted does not move.
+function MasterSchedules({ data, reload, setError }) {
+  const masters = data.activeMasters;
+  const [masterId, setMasterId] = useState(masters[0]?.id ?? null);
+  const master = masters.find((item) => String(item.id) === String(masterId)) || masters[0] || null;
+  const versions = scheduleVersions(master, data.scheduleRules);
+  const current = scheduleRulesOn(master, TODAY, data.scheduleRules);
+  const currentFrom = versions.filter((version) => version.from <= TODAY).pop()?.from || null;
+  const upcoming = versions.filter((version) => version.from > TODAY);
+  const [draft, setDraft] = useState(() => scheduleDraftFrom(current));
+  const [from, setFrom] = useState(TODAY);
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const firstWorking = draft.find((day) => day.works);
+
+  function pickMaster(id) {
+    const next = masters.find((item) => String(item.id) === String(id));
+    setMasterId(id);
+    setDraft(scheduleDraftFrom(scheduleRulesOn(next, TODAY, data.scheduleRules)));
+    setFrom(TODAY);
+    setMessage('');
+  }
+
+  function editVersion(version) {
+    setDraft(scheduleDraftFrom(version.rules));
+    setFrom(version.from > TODAY ? version.from : TODAY);
+    setMessage('');
+  }
+
+  function setDay(iso, patch) {
+    setDraft((days) => days.map((day) => (day.iso === iso ? { ...day, ...patch } : day)));
+  }
+
+  // The hours typed on one day, copied to every working day: most masters
+  // keep the same hours all week.
+  function copyToWorkingDays(source) {
+    setDraft((days) => days.map((day) => (day.works ? { ...day, starts: source.starts, ends: source.ends } : day)));
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    if (!master) return;
+    const working = draft.filter((day) => day.works);
+    if (!working.length) return setError(ACTION_ERROR_TEXT.schedule_needs_work_day);
+    const broken = working.find((day) => !day.starts || !day.ends || day.ends <= day.starts);
+    if (broken) {
+      const label = SCHEDULE_WEEKDAYS.find(([iso]) => iso === broken.iso)[1];
+      return setError(`${label}: конец смены должен быть позже начала.`);
+    }
+    if (!from) return setError('Выберите, с какого дня действует график.');
+    if (from < TODAY && !await confirmAction(
+      `График начнёт действовать задним числом, с ${displayDate(from)}. Опоздания и табель за эти дни пересчитаются. Продолжить?`,
+    )) return;
+
+    const ok = await run(
+      () => callLegacyApi('setMasterSchedule', {
+        master_id: master.id,
+        effective_from: from,
+        days: working.map((day) => ({ iso_weekday: day.iso, starts_at: day.starts, ends_at: day.ends })),
+      }).then(reload),
+      from > TODAY
+        ? `${master.name}: график сохранён. Начнёт действовать ${displayDate(from)}, до этого — прежний.`
+        : `${master.name}: график сохранён и действует с ${displayDate(from)}.`,
+    );
+    if (ok) haptic('success');
+  }
+
+  async function cancelUpcoming(version) {
+    if (!master || !await confirmAction(`${master.name}: отменить график с ${displayDate(version.from)}?`)) return;
+    const ok = await run(
+      () => callLegacyApi('delMasterSchedule', { master_id: master.id, effective_from: version.from }).then(reload),
+      'Будущий график отменён.',
+    );
+    if (ok) {
+      setDraft(scheduleDraftFrom(current));
+      setFrom(TODAY);
+    }
+  }
+
+  if (!masters.length) return null;
+
+  return (
+    <form className="card wide settings-card schedule-card" onSubmit={save}>
+      <h2>График мастеров</h2>
+      <div className="seg" role="tablist" aria-label="Мастер">
+        {masters.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={String(item.id) === String(master?.id)}
+            className={String(item.id) === String(master?.id) ? 'on' : ''}
+            onClick={() => pickMaster(item.id)}
+          >
+            {item.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="schedule-now">
+        <span>Сейчас{currentFrom && scheduleFromLabel(currentFrom) ? ` · ${scheduleFromLabel(currentFrom)}` : ''}</span>
+        <strong>{current.length ? scheduleSummary(current) : 'График не задан — опоздания не считаются'}</strong>
+      </div>
+      {upcoming.map((version) => (
+        <div className="schedule-next" key={version.from}>
+          <span>С {displayDate(version.from)}</span>
+          <strong>{scheduleSummary(version.rules)}</strong>
+          <div className="schedule-next-actions">
+            <button className="btn ghost" type="button" disabled={busy} onClick={() => editVersion(version)}>Изменить</button>
+            <button className="btn ghost schedule-cancel" type="button" disabled={busy} onClick={() => cancelUpcoming(version)}>Отменить</button>
+          </div>
+        </div>
+      ))}
+
+      <div className="schedule-days">
+        {draft.map((day) => {
+          const label = SCHEDULE_WEEKDAYS.find(([iso]) => iso === day.iso)[1];
+          return (
+            <div className={day.works ? 'schedule-day' : 'schedule-day off'} key={day.iso}>
+              <button
+                type="button"
+                className={day.works ? 'schedule-day-toggle on' : 'schedule-day-toggle'}
+                aria-pressed={day.works}
+                aria-label={`${label}: ${day.works ? 'рабочий день' : 'выходной'}`}
+                onClick={() => setDay(day.iso, { works: !day.works })}
+              >
+                {label}
+              </button>
+              {day.works ? (
+                <>
+                  <input
+                    type="time"
+                    aria-label={`${label}: начало`}
+                    value={day.starts}
+                    onChange={(event) => setDay(day.iso, { starts: event.target.value })}
+                  />
+                  <span className="schedule-dash">–</span>
+                  <input
+                    type="time"
+                    aria-label={`${label}: конец`}
+                    value={day.ends}
+                    onChange={(event) => setDay(day.iso, { ends: event.target.value })}
+                  />
+                </>
+              ) : (
+                <span className="schedule-off-label">выходной</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {firstWorking ? (
+        <button className="btn ghost" type="button" onClick={() => copyToWorkingDays(firstWorking)}>
+          Часы {SCHEDULE_WEEKDAYS.find(([iso]) => iso === firstWorking.iso)[1]} — на все рабочие дни
+        </button>
+      ) : null}
+      <p className="hint">Нажмите на день, чтобы сделать его выходным или рабочим. Разовый выходной на дату ставится в «Команде».</p>
+
+      <label>
+        Действует с
+        <input
+          type="date"
+          value={from}
+          min={shiftDate(TODAY, -62)}
+          max={shiftDate(TODAY, 366)}
+          onChange={(event) => setFrom(event.target.value)}
+        />
+      </label>
+      <p className="hint">Дни до этой даты считаются по прежнему графику.</p>
+      {message ? <div className="notice success">{message}</div> : null}
+      <button className="btn" type="submit" disabled={busy}>Сохранить график</button>
+    </form>
+  );
+}
+
 // Everything that is set once and rarely touched, moved out of the screens
-// that are read every day: the month's goal, the shift and the salon's
-// location, and the deletion log.
+// that are read every day: the month's goal, the masters' schedules, the
+// grace for lateness and the salon's location, and the deletion log.
 function SettingsView({ data, reload, setError }) {
   const canEdit = ['owner', 'admin'].includes(data.appRole);
   const [message, setMessage] = useState('');
@@ -3014,7 +3242,7 @@ function SettingsView({ data, reload, setError }) {
   const goal = Number(data.settings.monthly_revenue_goal) || null;
   const [goalDraft, setGoalDraft] = useState(goal ? String(goal) : '');
   const [settings, setSettings] = useState({
-    shift_start: data.settings.shift_start || '09:00',
+    late_grace_minutes: String(data.settings.late_grace_minutes ?? 10),
     salon_lat: data.settings.salon_lat || '',
     salon_lng: data.settings.salon_lng || '',
     salon_radius: data.settings.salon_radius || 100,
@@ -3035,8 +3263,12 @@ function SettingsView({ data, reload, setError }) {
 
   async function saveSettings(event) {
     event.preventDefault();
+    const grace = Number(settings.late_grace_minutes);
+    if (settings.late_grace_minutes === '' || !Number.isInteger(grace) || grace < 0 || grace > 120) {
+      return setError('Допуск — целое число минут от 0 до 120.');
+    }
     await run(() => callLegacyApi('setSettings', {
-      shift_start: settings.shift_start,
+      late_grace_minutes: grace,
       salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
       salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
       salon_radius: Number(settings.salon_radius) || 100,
@@ -3079,11 +3311,24 @@ function SettingsView({ data, reload, setError }) {
         </form>
       ) : null}
 
+      {canEdit ? <MasterSchedules data={data} reload={reload} setError={setError} /> : null}
+
       {canEdit ? (
         <form className="card wide settings-card" onSubmit={saveSettings}>
-          <h2>Смена и салон</h2>
-          <label>Начало смены<input type="time" value={settings.shift_start} onChange={(event) => setSettings({ ...settings, shift_start: event.target.value })} /></label>
-          <p className="hint">От него считаются опоздания. У мастера, чья смена по графику начинается позже, — от его смены.</p>
+          <h2>Отметка прихода</h2>
+          <label>
+            Допуск на опоздание, мин
+            <input
+              type="number"
+              inputMode="numeric"
+              min="0"
+              max="120"
+              step="1"
+              value={settings.late_grace_minutes}
+              onChange={(event) => setSettings({ ...settings, late_grace_minutes: event.target.value })}
+            />
+          </label>
+          <p className="hint">Опоздание считается от начала смены мастера по его графику плюс эти минуты: смена с 10:00 и допуск 10 — опоздание после 10:10.</p>
           <label>Радиус отметки, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
           <div className="settings-pair">
             <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>

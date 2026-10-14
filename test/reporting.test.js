@@ -11,6 +11,8 @@ import {
   finishedRange,
   firstDayOf,
   latenessSummary,
+  lateRuleFrom,
+  lateRuleFromSettings,
   masterPayoutForPeriod,
   mastersForPeriod,
   minutesLate,
@@ -20,6 +22,10 @@ import {
   percentageDifference,
   previousRange,
   recognizedFinesTotal,
+  scheduleRulesOn,
+  scheduleSummary,
+  scheduleVersions,
+  scheduledStartOn,
   shiftProductivity,
   shiftStartFor,
   startedAfter,
@@ -216,6 +222,105 @@ test('a shift that starts after the salon cutoff moves the late threshold', () =
   assert.equal(shiftStartFor(MASTERS[0], '2026-09-07', AFTERNOON_RULES, '10:10'), '10:10');
   const disabled = AFTERNOON_RULES.map((rule) => ({ ...rule, active: false }));
   assert.equal(shiftStartFor(javlon, '2026-09-07', disabled, '10:10'), '10:10');
+});
+
+// Жавлон worked afternoons until a new week took over on Thursday 2026-10-15:
+// mornings Monday to Saturday, Sunday off.
+const VERSIONED_RULES = [
+  ...[1, 2, 3, 4, 5, 6, 7].map((iso) => ({ master_id: 3, iso_weekday: iso, starts_at: '14:00:00', ends_at: '22:00:00', effective_from: '2000-01-01', active: true })),
+  ...[1, 2, 3, 4, 5, 6].map((iso) => ({ master_id: 3, iso_weekday: iso, starts_at: '10:00:00', ends_at: '20:00:00', effective_from: '2026-10-15', active: true })),
+];
+
+test('a past day is judged by the schedule that was in force on it', () => {
+  const javlon = MASTERS[1];
+  assert.equal(shiftStartFor(javlon, '2026-10-14', VERSIONED_RULES, '10:10'), '14:00');
+  assert.equal(shiftStartFor(javlon, '2026-10-15', VERSIONED_RULES, '10:10'), '10:10');
+  assert.deepEqual(scheduleRulesOn(javlon, '2026-10-14', VERSIONED_RULES).map((rule) => rule.iso_weekday), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(scheduleRulesOn(javlon, '2026-10-18', VERSIONED_RULES).map((rule) => rule.iso_weekday), [1, 2, 3, 4, 5, 6]);
+  // Rows saved before schedules had dates are the week always in force.
+  const undated = AFTERNOON_RULES.map(({ effective_from: _, ...rule }) => rule);
+  assert.equal(scheduleRulesOn(javlon, '2026-01-01', undated).length, 2);
+  // A version that has not started yet does not apply to today.
+  assert.deepEqual(scheduleRulesOn(javlon, '2026-10-01', VERSIONED_RULES.slice(7)), []);
+});
+
+test('a day off in the new week is a day off only from its date', () => {
+  const masters = [{ id: 3, name: 'Жавлон', active: true }];
+  const attendance = [{ master_id: 3, d: '2026-10-11', arrived: '13:55' }];
+  // Sunday 2026-10-11 under the old week, Sunday 2026-10-18 under the new one.
+  const grid = attendanceGrid({
+    masters,
+    attendance,
+    scheduleRules: VERSIONED_RULES,
+    range: { from: '2026-10-11', to: '2026-10-18' },
+    today: '2026-10-20',
+    shiftStart: '10:10',
+  });
+  const row = (d) => grid.find((item) => item.d === d);
+  assert.equal(row('2026-10-11').status, 'on-time', 'on time against the old 14:00 start');
+  assert.equal(row('2026-10-12').shiftStart, '14:00');
+  assert.equal(row('2026-10-16').shiftStart, '10:10');
+  assert.equal(row('2026-10-18').status, 'day-off');
+});
+
+test('versions are listed oldest first and a week reads as one line', () => {
+  const versions = scheduleVersions(MASTERS[1], VERSIONED_RULES);
+  assert.deepEqual(versions.map((version) => version.from), ['2000-01-01', '2026-10-15']);
+  assert.equal(scheduleSummary(versions[0].rules), 'Пн–Вс 14:00–22:00');
+  assert.equal(scheduleSummary(versions[1].rules), 'Пн–Сб 10:00–20:00 · Вс выходной');
+  const split = [
+    { iso_weekday: 1, starts_at: '15:00', ends_at: '22:00' },
+    { iso_weekday: 2, starts_at: '15:00', ends_at: '22:00' },
+    { iso_weekday: 4, starts_at: '10:00', ends_at: '22:00' },
+  ];
+  assert.equal(scheduleSummary(split), 'Пн–Вт 15:00–22:00 · Ср выходной · Чт 10:00–22:00 · Пт–Вс выходной');
+});
+
+// From 2026-10-15 every master is judged from his own start plus ten minutes;
+// before it the salon cutoff of 10:10 still holds for the days already worked.
+const NEW_RULE = { shiftStart: '10:10', graceMinutes: 10, since: '2026-10-15' };
+const EARLY_RULES = [1, 2, 3, 4, 5, 6, 7].map((iso) => ({ master_id: 4, iso_weekday: iso, starts_at: '09:00:00', ends_at: '23:00:00', active: true }));
+
+test('from the switch date lateness counts from the master\'s own start plus the grace', () => {
+  const jamoliddin = { id: 4, name: 'Жамолиддин' };
+  const javlon = MASTERS[1];
+  assert.equal(shiftStartFor(jamoliddin, '2026-10-14', EARLY_RULES, NEW_RULE), '10:10', 'the old cutoff before the switch');
+  assert.equal(shiftStartFor(jamoliddin, '2026-10-15', EARLY_RULES, NEW_RULE), '09:10');
+  assert.equal(minutesLate('09:06', shiftStartFor(jamoliddin, '2026-10-15', EARLY_RULES, NEW_RULE)), 0);
+  assert.equal(minutesLate('09:25', shiftStartFor(jamoliddin, '2026-10-15', EARLY_RULES, NEW_RULE)), 15);
+  // Afternoon shifts had no grace and now get the same ten minutes.
+  assert.equal(shiftStartFor(javlon, '2026-10-14', VERSIONED_RULES, NEW_RULE), '14:00');
+  assert.equal(shiftStartFor(javlon, '2026-10-19', VERSIONED_RULES.slice(0, 7), NEW_RULE), '14:10');
+  // A day off by the schedule, or no schedule at all, has nothing to be late for.
+  assert.equal(shiftStartFor(javlon, '2026-10-18', VERSIONED_RULES, NEW_RULE), null);
+  assert.equal(minutesLate('13:00', null), 0);
+  assert.equal(shiftStartFor(MASTERS[0], '2026-10-16', EARLY_RULES, NEW_RULE), null);
+  assert.equal(scheduledStartOn(jamoliddin, '2026-10-16', EARLY_RULES), '09:00');
+});
+
+test('the lateness rule is read from settings with a ten-minute default grace', () => {
+  assert.deepEqual(
+    lateRuleFromSettings({ shift_start: '10:10', late_grace_minutes: 5, late_rule_since: '2026-10-15' }),
+    { shiftStart: '10:10', graceMinutes: 5, since: '2026-10-15' },
+  );
+  assert.deepEqual(lateRuleFromSettings({ shift_start: '10:10' }), { shiftStart: '10:10', graceMinutes: 10, since: null });
+  assert.deepEqual(lateRuleFrom('10:10'), { shiftStart: '10:10', graceMinutes: 0, since: null });
+});
+
+test('the register keeps the old verdict before the switch and the new one after', () => {
+  const masters = [{ id: 4, name: 'Жамолиддин', active: true }];
+  const attendance = [
+    { master_id: 4, d: '2026-10-14', arrived: '09:40' },
+    { master_id: 4, d: '2026-10-15', arrived: '09:40' },
+  ];
+  const grid = attendanceGrid({
+    masters, attendance, scheduleRules: EARLY_RULES, lateRule: NEW_RULE,
+    range: { from: '2026-10-14', to: '2026-10-15' }, today: '2026-10-16',
+  });
+  assert.deepEqual(grid.map((row) => [row.d, row.status, row.lateBy]), [
+    ['2026-10-14', 'on-time', 0],
+    ['2026-10-15', 'late', 30],
+  ]);
 });
 
 test('lateness is measured against the afternoon shift, not the salon cutoff', () => {

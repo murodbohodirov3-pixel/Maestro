@@ -4441,3 +4441,119 @@ label {
   font-size: 14px;
   font-weight: 600;
 }
+
+/* Настройки → График мастеров: the week in force, a change waiting for its
+   date, and one row per weekday that a tap turns into a day off. */
+.schedule-card .seg {
+  margin: 0;
+}
+
+.schedule-now,
+.schedule-next {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-control);
+  background: var(--brass-soft);
+}
+
+.schedule-now span,
+.schedule-next span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.schedule-now strong,
+.schedule-next strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.schedule-next {
+  border: 1px solid var(--pending-line);
+  background: var(--pending-bg);
+}
+
+.schedule-next span {
+  color: var(--pending);
+}
+
+.schedule-next-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.schedule-next-actions .btn {
+  min-height: 38px;
+  flex: 1;
+}
+
+.schedule-next-actions .btn.schedule-cancel {
+  color: var(--fine);
+}
+
+.schedule-days {
+  display: grid;
+  gap: 8px;
+}
+
+.schedule-day {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 12px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-day.off {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
+.schedule-day input[type="time"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.schedule-day-toggle {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.schedule-day-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #FFFFFF;
+}
+
+.schedule-dash {
+  color: var(--muted);
+  text-align: center;
+}
+
+.schedule-off-label {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.schedule-card .notice {
+  margin: 0;
+}
