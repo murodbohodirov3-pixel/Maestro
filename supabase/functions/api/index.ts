@@ -3,6 +3,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
+import { masterBookingNotice } from '../_shared/bookingCore.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -17,6 +18,7 @@ import {
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const APP_URL = Deno.env.get('MAESTRO_APP_URL') || 'https://maestro-pied-two.vercel.app';
 const TELEGRAM_OAUTH_CLIENT_ID = Deno.env.get('TELEGRAM_OAUTH_CLIENT_ID') || '8865126796';
 const TELEGRAM_LOGIN_CLIENT_SECRET = Deno.env.get('TELEGRAM_LOGIN_CLIENT_SECRET') || '';
 const TELEGRAM_ISSUER = 'https://oauth.telegram.org';
@@ -345,6 +347,49 @@ async function messageOwners(text: string) {
     })));
 }
 
+// A master's Telegram chat: his own login, or the id the masters table kept
+// from before logins.
+async function masterChatId(masterId: number) {
+  const login = await sb.from('app_users').select('telegram_id')
+    .eq('master_id', masterId).eq('active', true).not('telegram_id', 'is', null).limit(1).maybeSingle();
+  if (login.data?.telegram_id) return String(login.data.telegram_id);
+  const master = await sb.from('masters').select('telegram_id').eq('id', masterId).maybeSingle();
+  return master.data?.telegram_id ? String(master.data.telegram_id) : null;
+}
+
+// A booking taken by phone or Telegram reaches its master at once, with a
+// button into the app where it sits in «Мои записи».
+async function tellMasterAboutBooking(appointmentId: string) {
+  const { data: appointment } = await sb.from('appointments')
+    .select('master_id, starts_at, client_name, client_phone, service_name')
+    .eq('id', appointmentId).maybeSingle();
+  if (!appointment) return;
+  const chatId = await masterChatId(Number(appointment.master_id));
+  if (!chatId) return;
+  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: masterBookingNotice({
+        startsAt: appointment.starts_at,
+        clientName: appointment.client_name,
+        clientPhone: maskPhoneForStaff(appointment.client_phone),
+        serviceName: appointment.service_name,
+      }),
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: 'Открыть приложение', web_app: { url: APP_URL } }]] },
+    }),
+  });
+  if (!response.ok) console.warn('[maestro-api] booking notice refused', response.status, await response.text());
+}
+
+// The attendance sheet names a master; the fines are keyed by his id.
+async function masterIdFor(name: string) {
+  const { data } = await sb.from('masters').select('id').eq('name', name).maybeSingle();
+  return data?.id ? Number(data.id) : null;
+}
+
 function formatSum(value: number) {
   return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
@@ -534,12 +579,15 @@ Deno.serve(async (req) => {
         since: tashkentDate(-1),
       });
       // And the bookings: every master's day, with numbers to call clients.
-      const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses] = await Promise.all([
+      const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses, deskSettings] = await Promise.all([
         sb.from('masters').select('id, name, active').eq('active', true).order('id'),
         fetchAppointments({}, false),
         fetchAllRows('booking_services', 'id'),
         fetchAllRows('master_schedule_rules', 'iso_weekday'),
         fetchAllRows('master_day_statuses', 'work_date'),
+        // Only when the booking control started: older open bookings are not
+        // shown as overdue.
+        sb.from('settings').select('booking_control_since').eq('id', 1),
       ]);
       if (deskMasters.error) return json({ error: deskMasters.error.message }, 500);
       return json({
@@ -551,7 +599,7 @@ Deno.serve(async (req) => {
         booking_services: bookingServices,
         master_schedule_rules: scheduleRules,
         master_day_statuses: dayStatuses,
-        settings: [],
+        settings: deskSettings.data ?? [],
         sessionToken: issuedSessionToken,
       });
     }
@@ -740,6 +788,7 @@ Deno.serve(async (req) => {
       });
       if (error) return json({ error: error.message }, 500);
       if (!data?.ok) return json(data ?? { error: 'invalid_booking' }, data?.error === 'slot_unavailable' ? 409 : 400);
+      if (data.appointment_id) inBackground(tellMasterAboutBooking(String(data.appointment_id)));
       return json(data);
     }
 
@@ -820,6 +869,18 @@ Deno.serve(async (req) => {
         });
         if (check.error) return json({ error: check.error.message }, 500);
         if (!check.data?.ok) return json({ error: check.data?.error || 'appointment_closed' }, 409);
+      }
+
+      // A master whose booking has ended and is still open closes it before
+      // recording anyone else (owner's decision of 2026-10-16): «Пришёл» turns
+      // it into a visit, «Не пришёл» closes it without one. A visit that closes
+      // a booking is always let through.
+      if (!isAdmin && appointmentId === null) {
+        const unclosed = await sb.rpc('maestro_unclosed_bookings', { p_master_id: masterRecord.data.id });
+        if (unclosed.error) return json({ error: unclosed.error.message }, 500);
+        if ((unclosed.data ?? []).length) {
+          return json({ error: 'bookings_to_close', bookings: unclosed.data }, 409);
+        }
       }
 
       const row: Record<string, unknown> = {
@@ -975,7 +1036,22 @@ Deno.serve(async (req) => {
         .from('attendance')
         .upsert({ master, d, arrived }, { onConflict: 'master,d' });
       if (error) return json({ error: error.message }, 500);
-      return json({ ok: true });
+      // A late arrival is fined on the spot (owner's decision of 2026-10-16);
+      // the owner correcting it to on time takes that fine back. The arrival
+      // stands either way, so a failure here is logged rather than returned.
+      const masterId = await masterIdFor(master);
+      let fine = null;
+      if (masterId) {
+        const settled = await sb.rpc('maestro_settle_late_fine', {
+          p_master_id: masterId,
+          p_day: d,
+          p_arrived: arrived,
+          p_actor_user_id: appUserResult.data.id,
+        });
+        if (settled.error) console.error('[maestro-api] late fine', settled.error.message);
+        else if (settled.data?.fined) fine = settled.data;
+      }
+      return json({ ok: true, fine });
     }
 
     if (action === 'delAttendance') {
@@ -988,11 +1064,26 @@ Deno.serve(async (req) => {
       }
       const { error } = await sb.from('attendance').delete().eq('master', master).eq('d', d);
       if (error) return json({ error: error.message }, 500);
+      // The owner removing a wrong arrival removes the fine it brought. A
+      // master clearing his own check-in keeps it: that is no way out of one.
+      if (isAdmin) {
+        const masterId = await masterIdFor(master);
+        if (masterId) {
+          const dropped = await sb.rpc('maestro_drop_auto_fine', {
+            p_master_id: masterId,
+            p_day: d,
+            p_kind: 'late',
+            p_actor_user_id: appUserResult.data.id,
+          });
+          if (dropped.error) console.error('[maestro-api] drop late fine', dropped.error.message);
+        }
+      }
       return json({ ok: true });
     }
 
     if (action === 'setMasterDayOff') {
-      if (!canManageCalendar) return json({ error: 'forbidden' }, 403);
+      // Days off are the partner's to set (owner's decision of 2026-10-16).
+      if (!canManageCalendar && !isPartner) return json({ error: 'forbidden' }, 403);
       const masterId = Number(payload.master_id);
       if (!Number.isInteger(masterId) || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.work_date || ''))) {
         return json({ error: 'invalid_day_off_request' }, 400);
@@ -1005,6 +1096,17 @@ Deno.serve(async (req) => {
       });
       if (error) return json({ error: error.message }, 500);
       if (!result?.ok) return json(result, result?.error === 'appointments_exist' ? 409 : 400);
+      // A day off set after 18:00 takes back that day's «нет отметки» fine.
+      if (payload.enabled === true) {
+        const dropped = await sb.rpc('maestro_drop_auto_fine', {
+          p_master_id: masterId,
+          p_day: payload.work_date,
+          p_kind: 'no_mark',
+          p_actor_user_id: appUserResult.data.id,
+        });
+        if (dropped.error) console.error('[maestro-api] drop no-mark fine', dropped.error.message);
+        else if (dropped.data) return json({ ...result, fine_dropped: dropped.data });
+      }
       return json(result);
     }
 
@@ -1352,6 +1454,15 @@ Deno.serve(async (req) => {
           return json({ error: 'invalid_late_grace' }, 400);
         }
         patch.late_grace_minutes = grace;
+      }
+      // The automatic fines: for a late arrival, and for no mark by 18:00.
+      for (const key of ['late_fine_amount', 'no_mark_fine_amount']) {
+        if (payload[key] === undefined) continue;
+        const amount = Number(payload[key]);
+        if (!Number.isInteger(amount) || amount < 0 || amount > 10_000_000) {
+          return json({ error: 'invalid_fine' }, 400);
+        }
+        patch[key] = amount;
       }
       if (!Object.keys(patch).length) return json({ error: 'no_settings_to_update' }, 400);
       const { error } = await sb.from('settings').update(patch).eq('id', 1);

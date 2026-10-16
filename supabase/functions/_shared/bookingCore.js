@@ -250,3 +250,33 @@ export function staffNotice({ kind, startsAt, masterName, serviceName, price, cl
   if (comment) lines.push(`💬 ${escapeHtml(comment)}`);
   return lines.join('\n');
 }
+
+// A master's nudge half an hour into a booking he has not closed. «Не пришёл»
+// is a button under it; «Пришёл» is a visit, recorded in the app.
+export function masterReminder({ startsAt, clientName, serviceName }) {
+  const local = new Date(new Date(startsAt).getTime() + TASHKENT_OFFSET_MS);
+  const time = `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+  return [
+    '⏰ <b>Закройте запись</b>',
+    `${time} · ${escapeHtml(clientName)}${serviceName ? ` · ${escapeHtml(serviceName)}` : ''}`,
+    'Пришёл — внесите визит в приложении.',
+  ].join('\n');
+}
+
+export const MASTER_REPLIES = {
+  noShow: 'Отмечено: не пришёл.',
+  closed: 'Запись уже закрыта.',
+  notYours: 'Это не ваша запись.',
+};
+
+// A booking made for a master by phone or Telegram (owner's request of
+// 2026-10-16): he hears about it the moment it is saved. The number comes in
+// masked, as everywhere a master sees it.
+export function masterBookingNotice({ startsAt, clientName, clientPhone, serviceName }) {
+  return [
+    '📅 <b>Новая запись</b>',
+    formatWhen(startsAt, 'ru'),
+    `👤 ${escapeHtml(clientName)}${clientPhone ? ` · ${escapeHtml(clientPhone)}` : ''}`,
+    serviceName ? `✂️ ${escapeHtml(serviceName)}` : null,
+  ].filter(Boolean).join('\n');
+}

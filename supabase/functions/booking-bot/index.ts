@@ -5,23 +5,29 @@
 //                       button if this Telegram user's number is known)
 //   contact           → only the user's own contact; confirms his latest hold
 //   c:<id> / x:<id>   → confirm with the known number / cancel
+//   n:<id>            → a master marks his booking «Не пришёл»
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
-// 24 h and 2 h reminders; {"action":"webhook_info"} and {"action":"set_webhook"}
+// clients' 24 h and 2 h reminders and the masters' «закройте запись» half an
+// hour into an open booking; {"action":"webhook_info"} and {"action":"set_webhook"}
 // manage the webhook without the bot token ever leaving the server.
 import {
   bookingLines,
   botText,
   langOf,
+  MASTER_REPLIES,
   maskPhone,
+  masterReminder,
   staffNotice,
 } from '../_shared/bookingCore.js';
 import { bookingSettings, db, tokenHash } from '../_shared/bookingHttp.ts';
+import { maskPhoneForStaff } from '../_shared/access.js';
 
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN') || '';
 const WEBHOOK_SECRET = Deno.env.get('BOOKING_BOT_WEBHOOK_SECRET') || '';
 const CRON_SECRET = Deno.env.get('BOOKING_CRON_SECRET') || '';
 const SITE = Deno.env.get('BOOKING_SITE_URL') || 'https://maestro-booking.vercel.app';
 const ADMIN_CHAT = Deno.env.get('BOOKING_ADMIN_CHAT_ID') || '';
+const APP_URL = Deno.env.get('MAESTRO_APP_URL') || 'https://maestro-pied-two.vercel.app';
 const WEBHOOK_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -84,21 +90,27 @@ function linesOf(facts: BookingFacts, lang: string, withPrice = true) {
 }
 
 // The master in person, if he ever opened the bot, and the administrators'
-// group. A failed delivery is logged and never stops the client's answer.
+// group. The group calls clients and reads the number whole; the master gets
+// it masked, as everywhere he sees it. A failed delivery is logged and never
+// stops the client's answer.
 async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, unknown>) {
   const booking = facts.booking as { starts_at: string; total_price_uzs: number };
-  const text = staffNotice({
+  const phone = facts.client_phone ? String(facts.client_phone) : '';
+  const textWith = (clientPhone: string) => staffNotice({
     kind,
     startsAt: booking.starts_at,
     masterName: String(facts.master_name ?? ''),
     serviceName: String(facts.service_name ?? ''),
     price: booking.total_price_uzs,
     clientName: String(facts.client_name ?? ''),
-    clientPhone: facts.client_phone ? String(facts.client_phone) : '',
+    clientPhone,
     comment: facts.comment ? String(facts.comment) : '',
   });
-  const targets = [...new Set([facts.master_chat_id, ADMIN_CHAT].filter(Boolean).map(String))];
-  await Promise.all(targets.map((chatId) => send(chatId, text)));
+  const masterChat = facts.master_chat_id ? String(facts.master_chat_id) : '';
+  await Promise.all([
+    ADMIN_CHAT && ADMIN_CHAT !== masterChat ? send(ADMIN_CHAT, textWith(phone)) : null,
+    masterChat ? send(masterChat, textWith(maskPhoneForStaff(phone) || '')) : null,
+  ]);
 }
 
 async function confirm(appointmentId: string, tgUserId: string, phone: string | null, username: string | null, chatId: number, fallbackLang: string) {
@@ -201,6 +213,7 @@ async function handleCallback(query: Record<string, any>) {
     await confirm(appointmentId, tgUserId, null, query.from.username ?? null, chatId, fallbackLang);
     return;
   }
+  if (kind === 'n') return masterNoShow(appointmentId, tgUserId, chatId, query.message?.message_id);
   if (kind !== 'x') return;
 
   const { data, error } = await db.rpc('maestro_cancel_booking_by_client', {
@@ -225,6 +238,29 @@ async function handleCallback(query: Record<string, any>) {
   if (data.already_cancelled) return send(chatId, text.cancelled(SITE));
   await send(chatId, text.cancelled(SITE));
   await notifyStaff('cancelled', data);
+}
+
+// «Не пришёл» under a master's reminder: the same outcome as in the app, with
+// the master as the actor, so only the booking's own master gets through.
+async function masterNoShow(appointmentId: string, tgUserId: string, chatId: number, messageId?: number) {
+  const { data: user, error: userError } = await db.from('app_users')
+    .select('id').eq('telegram_id', tgUserId).eq('active', true).maybeSingle();
+  if (userError) throw userError;
+  if (!user) return send(chatId, MASTER_REPLIES.notYours);
+  const { data, error } = await db.rpc('maestro_set_appointment_outcome', {
+    p_appointment_id: appointmentId,
+    p_outcome: 'no_show',
+    p_cancelled_by: null,
+    p_reason_code: 'no_show_no_notice',
+    p_reason_note: null,
+    p_actor_user_id: user.id,
+  });
+  if (error) throw error;
+  if (data?.error === 'forbidden') return send(chatId, MASTER_REPLIES.notYours);
+  if (messageId) {
+    await telegram('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
+  }
+  return send(chatId, data?.ok ? MASTER_REPLIES.noShow : MASTER_REPLIES.closed);
 }
 
 async function handleUpdate(update: Record<string, any>) {
@@ -277,6 +313,30 @@ async function sendReminders() {
         p_error: String(result.description || 'send_failed').slice(0, 500),
       });
     }
+  }
+  return { claimed: (data ?? []).length, sent, masters: await sendMasterReminders() };
+}
+
+// Half an hour into a booking still open, its master hears about it once.
+async function sendMasterReminders() {
+  const { data, error } = await db.rpc('maestro_claim_master_reminders', { p_limit: 25 });
+  if (error) throw error;
+  let sent = 0;
+  for (const notice of data ?? []) {
+    if (!notice.master_chat_id) continue;
+    const result = await send(notice.master_chat_id, masterReminder({
+      startsAt: notice.starts_at,
+      clientName: notice.client_name,
+      serviceName: notice.service_name,
+    }), {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: 'Не пришёл', callback_data: `n:${notice.appointment_id}` },
+          { text: 'Открыть приложение', web_app: { url: APP_URL } },
+        ]],
+      },
+    });
+    if (result.ok) sent += 1;
   }
   return { claimed: (data ?? []).length, sent };
 }

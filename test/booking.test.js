@@ -10,7 +10,10 @@ import {
   isIsoDate,
   isZonedMoment,
   maskPhone,
+  MASTER_REPLIES,
+  masterBookingNotice,
   masterOffers,
+  masterReminder,
   nearestByMaster,
   parseOrigins,
   servicesTotal,
@@ -136,4 +139,26 @@ test('a known number is shown masked, and staff messages carry the client in ful
   assert.match(notice, /Новая запись с сайта/);
   assert.match(notice, /Азиз &lt;b&gt;, \+998901234567/);
   assert.doesNotMatch(notice, /💬/);
+});
+
+test('a master hears of a booking made for him, with the number masked', () => {
+  const text = masterBookingNotice({
+    startsAt: '2026-10-16T10:00:00Z',
+    clientName: 'Азиз <VIP>',
+    clientPhone: '+998 90 *** ** 22',
+    serviceName: 'Стрижка',
+  });
+  assert.match(text, /Новая запись/);
+  assert.match(text, /15:00/);
+  assert.match(text, /Азиз &lt;VIP&gt; · \+998 90 \*\*\* \*\* 22/);
+  assert.match(text, /Стрижка/);
+  assert.doesNotMatch(masterBookingNotice({ startsAt: '2026-10-16T10:00:00Z', clientName: 'Азиз' }), /undefined|null/);
+});
+
+test('half an hour into an open booking the master is reminded to close it', () => {
+  const text = masterReminder({ startsAt: '2026-10-16T10:00:00Z', clientName: 'Азиз', serviceName: 'Стрижка' });
+  assert.match(text, /Закройте запись/);
+  assert.match(text, /15:00 · Азиз · Стрижка/);
+  assert.equal(text.split('\n').length, 3);
+  assert.equal(MASTER_REPLIES.noShow, 'Отмечено: не пришёл.');
 });

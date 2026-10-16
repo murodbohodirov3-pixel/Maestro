@@ -9,6 +9,7 @@ import {
   masterHoursOn,
   tashkentMoment,
   tashkentParts,
+  unclosedByMaster,
   visibleBookings,
 } from '../src/utils/bookings.js';
 
@@ -63,4 +64,26 @@ test('the card says how well the salon knows the client', () => {
   assert.equal(clientBadge({ client_id: 'x', client_visit_count: 0, client_known_before: true }), 'постоянный');
   assert.equal(clientBadge({ client_id: 'x', client_visit_count: 6 }), '7-й визит');
   assert.equal(clientBadge({ client_id: null }), null);
+});
+
+test('bookings left open before the control started neither block nor count', () => {
+  const since = '2026-10-16T08:00:00Z';
+  const now = new Date('2026-10-16T12:00:00Z');
+  const old = { ...BOOKING, id: 'old', starts_at: '2026-09-16T09:00:00Z', ends_at: '2026-09-16T10:00:00Z' };
+  assert.equal(isOverdueBooking(old, now), true);
+  assert.equal(isOverdueBooking(old, now, since), false);
+  assert.equal(isOverdueBooking(BOOKING, now, since), true);
+});
+
+test('the owner sees who has bookings to close, most first, oldest named', () => {
+  const now = new Date('2026-10-16T18:00:00Z');
+  const masters = [{ id: 3, name: 'Жавлон' }, { id: 4, name: 'Салим' }, { id: 5, name: 'Иброхим' }];
+  const rows = unclosedByMaster([
+    { ...BOOKING, id: 'a2', starts_at: '2026-10-16T12:00:00Z', ends_at: '2026-10-16T13:00:00Z' },
+    BOOKING,
+    { ...BOOKING, id: 'b', master_id: 4 },
+    { ...BOOKING, id: 'c', master_id: 5, status: 'completed' },
+    { ...BOOKING, id: 'd', master_id: 5, starts_at: '2026-10-16T19:00:00Z', ends_at: '2026-10-16T20:00:00Z' },
+  ], masters, now);
+  assert.deepEqual(rows.map((row) => [row.master.name, row.count, row.oldest.id]), [['Жавлон', 2, 'a'], ['Салим', 1, 'b']]);
 });

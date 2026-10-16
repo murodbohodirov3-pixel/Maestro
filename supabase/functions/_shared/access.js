@@ -3,8 +3,9 @@
 // A partner (соучредитель) reads the salon's figures and changes none of them.
 // Since 2026-10-16 he also takes bookings that come by phone or Telegram, like
 // the owner and the administrator: finds or makes the client's card, books a
-// free time, marks a cancellation or a no-show. The server is what enforces
-// this; the app only leaves the other buttons out.
+// free time, marks a cancellation or a no-show. And he sets the masters' days
+// off: a master with neither an arrival nor a day off by 18:00 is fined. The
+// server is what enforces this; the app only leaves the other buttons out.
 
 export const PARTNER_ROLE = 'partner';
 
@@ -17,6 +18,7 @@ const PARTNER_ACTIONS = new Set([
   'setAppointmentOutcome',
   'searchClients',
   'addClient',
+  'setMasterDayOff',
 ]);
 
 export function partnerMayCall(action) {

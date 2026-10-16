@@ -4819,6 +4819,37 @@ label {
 }
 
 /* Команда → «Записи»: one day, masters side by side, time down the page. */
+.unclosed-card {
+  display: grid;
+  gap: 8px;
+  border-color: var(--fine);
+  background: var(--negative-soft);
+}
+
+.unclosed-card > strong {
+  color: var(--fine);
+}
+
+.unclosed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.unclosed-chips button {
+  border: 1px solid var(--fine);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 6px 12px;
+  font: inherit;
+}
+
+.unclosed-chips b {
+  color: var(--fine);
+  margin-left: 4px;
+}
+
 .day-chips {
   display: flex;
   gap: 6px;

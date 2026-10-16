@@ -78,8 +78,30 @@ export function isOpenBooking(appointment) {
   return appointment.status === 'pending' && appointment.source !== 'web';
 }
 
-export function isOverdueBooking(appointment, now = new Date()) {
-  return isOpenBooking(appointment) && new Date(appointment.ends_at).getTime() <= new Date(now).getTime();
+// The control started on settings.booking_control_since: bookings left open
+// before it (July to September 2026) neither block a master nor count as his.
+export function isControlledBooking(appointment, since) {
+  return !since || new Date(appointment.starts_at).getTime() >= new Date(since).getTime();
+}
+
+// Ended and still open: the master owes it «Пришёл» or «Не пришёл».
+export function isOverdueBooking(appointment, now = new Date(), since = null) {
+  return isOpenBooking(appointment)
+    && isControlledBooking(appointment, since)
+    && new Date(appointment.ends_at).getTime() <= new Date(now).getTime();
+}
+
+// The owner's «не закрыто»: per master, how many and since when.
+export function unclosedByMaster(appointments, masters, now = new Date(), since = null) {
+  return masters
+    .map((master) => {
+      const open = appointments
+        .filter((appointment) => String(appointment.master_id) === String(master.id) && isOverdueBooking(appointment, now, since))
+        .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
+      return { master, count: open.length, oldest: open[0] || null };
+    })
+    .filter((row) => row.count > 0)
+    .sort((left, right) => right.count - left.count);
 }
 
 // «Пришёл» opens from half an hour before the start.

@@ -60,11 +60,13 @@ import {
   canRecordVisit,
   clientBadge,
   dayFrame,
+  isControlledBooking,
   isOpenBooking,
   isOverdueBooking,
   masterHoursOn,
   minutesLabel,
   tashkentParts,
+  unclosedByMaster,
   visibleBookings,
 } from './utils/bookings.js';
 import {
@@ -304,16 +306,26 @@ const ACTION_ERROR_TEXT = {
   schedule_already_started: 'Этот график уже действует — его можно только заменить новым.',
   schedule_not_found: 'Этот график уже отменён — обновите экран.',
   not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
+  invalid_fine: 'Проверьте сумму штрафа.',
 };
 
 function actionErrorText(error) {
   const code = String(error?.details?.error || error?.message || '');
+  if (code === 'bookings_to_close') return unclosedText(error.details?.bookings);
   if (ACTION_ERROR_TEXT[code]) return ACTION_ERROR_TEXT[code];
   if (code.startsWith('unauthorized')) return 'Сессия истекла. Откройте приложение через Telegram заново.';
   if (/Failed to fetch|NetworkError|network/i.test(code)) {
     return 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.';
   }
   return code ? `Не удалось выполнить: ${code}` : 'Не удалось выполнить действие.';
+}
+
+// A master with a booking that has ended and is still open records no other
+// visit until he closes it (owner's decision of 2026-10-16).
+function unclosedText(bookings = []) {
+  const first = bookings[0];
+  const which = first ? `: ${bookingTimeLine(first)} · ${first.client_name}` : '';
+  return `Сначала закройте запись${which}. В «Мои записи» — «Пришёл» или «Не пришёл».`;
 }
 
 // Every mutation used to fire and forget. A failure became an unhandled
@@ -356,7 +368,17 @@ const FINE_REASONS = [
   { value: 'other', label: 'Другое' },
 ];
 
-const FINE_REASON_LABELS = Object.fromEntries(FINE_REASONS.map((item) => [item.value, item.label]));
+// What the automatic fines write; not offered in the form.
+const FINE_REASON_LABELS = {
+  ...Object.fromEntries(FINE_REASONS.map((item) => [item.value, item.label])),
+  no_mark: 'Нет отметки к 18:00',
+};
+
+// The automatic fines' amounts, decided by the owner on 2026-10-16.
+function lateFineAmount(settings) {
+  const amount = Number(settings?.late_fine_amount);
+  return Number.isFinite(amount) && amount > 0 ? amount : 100000;
+}
 
 function fineReasonLabel(reason) {
   if (!reason) return 'причина не указана';
@@ -1845,7 +1867,12 @@ function BookingsView({ data, reload, setError, onVisit }) {
   const [date, setDate] = useState(TODAY);
   const [openId, setOpenId] = useState(null);
   const [newDraft, setNewDraft] = useState(null);
-  const isOwner = data.appRole === 'owner';
+  // Days off are set by the owner and by the partner (decision of 2026-10-16).
+  const canSetDayOff = ['owner', 'partner'].includes(data.appRole);
+  const controlSince = data.settings.booking_control_since || null;
+  const unclosed = ['owner', 'partner'].includes(data.appRole)
+    ? unclosedByMaster(data.appointments, data.masters, new Date(), controlSince)
+    : [];
   const closeBooking = useCallback(() => setOpenId(null), []);
   const closeNew = useCallback(() => setNewDraft(null), []);
   const { run } = useAction(setError);
@@ -1869,7 +1896,7 @@ function BookingsView({ data, reload, setError, onVisit }) {
   }
 
   async function toggleDayOff(master, masterHours) {
-    if (!isOwner) return;
+    if (!canSetDayOff) return;
     const enable = !masterHours.dayOff;
     if (!await confirmAction(enable ? `${master.name}: выходной ${displayDate(date)}?` : `${master.name}: отменить выходной ${displayDate(date)}?`)) return;
     await run(() => callLegacyApi('setMasterDayOff', { master_id: master.id, work_date: date, enabled: enable }).then(reload));
@@ -1877,6 +1904,22 @@ function BookingsView({ data, reload, setError, onVisit }) {
 
   return (
     <section className="view-grid">
+      {unclosed.length ? (
+        <div className="card wide unclosed-card">
+          <strong>Не закрыто</strong>
+          <div className="unclosed-chips">
+            {unclosed.map((row) => (
+              <button
+                key={row.master.id}
+                type="button"
+                onClick={() => { setDate(tashkentParts(row.oldest.starts_at).date); setOpenId(row.oldest.id); }}
+              >
+                {row.master.name} <b>{row.count}</b>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="wide day-chips">
         {days.map((day, index) => (
           <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>
@@ -1921,7 +1964,7 @@ function BookingsView({ data, reload, setError, onVisit }) {
                 )}
                 {mine.map((appointment) => {
                   const position = blockPosition(appointment, frame.start, MINUTE_PX);
-                  const overdue = isOverdueBooking(appointment);
+                  const overdue = isOverdueBooking(appointment, new Date(), controlSince);
                   return (
                     <button
                       className={`booking-block is-${appointment.status}${appointment.source === 'web' ? ' is-web' : ''}${overdue ? ' is-overdue' : ''}`}
@@ -1963,8 +2006,10 @@ function BookingsView({ data, reload, setError, onVisit }) {
 // with the overdue ones first and in red until he closes them.
 function MyBookings({ data, masterId, reload, setError, onVisit }) {
   const [chooser, setChooser] = useState(null);
+  const controlSince = data.settings.booking_control_since || null;
   const mine = data.appointments
     .filter((appointment) => String(appointment.master_id) === String(masterId) && isOpenBooking(appointment))
+    .filter((appointment) => isControlledBooking(appointment, controlSince))
     .filter((appointment) => tashkentParts(appointment.starts_at).date <= shiftDate(TODAY, 7))
     .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
   if (!mine.length) return null;
@@ -1974,7 +2019,7 @@ function MyBookings({ data, masterId, reload, setError, onVisit }) {
       <h2>Мои записи</h2>
       <div className="rows">
         {mine.map((appointment) => {
-          const overdue = isOverdueBooking(appointment);
+          const overdue = isOverdueBooking(appointment, new Date(), controlSince);
           const visitReady = canRecordVisit(appointment);
           const started = new Date(appointment.starts_at).getTime() <= Date.now();
           return (
@@ -2126,6 +2171,13 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     if (!visitClient) return setError('Выберите клиента или создайте карточку.');
     const needsKnownBefore = !visitClient.visit_count && !visitClient.known_before;
     if (needsKnownBefore && knownBefore === null) return setError('Отметьте, был ли клиент у нас раньше.');
+    if (data.role === 'master' && !visitBooking) {
+      const waiting = data.appointments
+        .filter((appointment) => String(appointment.master_id) === String(masterProfile?.id))
+        .filter((appointment) => isOverdueBooking(appointment, new Date(), data.settings.booking_control_since || null))
+        .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
+      if (waiting.length) return setError(unclosedText(waiting));
+    }
 
     const payload = {
       master: masterName,
@@ -2208,11 +2260,15 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     }
 
     // The server stamps the actual Tashkent time; sending it here would let a
-    // phone clock decide whether an arrival counts as late.
-    await run(
-      () => callLegacyApi('setAttendance', { master: masterName, d: TODAY }).then(reload),
-      'Приход отмечен.',
-    );
+    // phone clock decide whether an arrival counts as late. A late arrival is
+    // fined there and then, and the master is told so.
+    let fine = null;
+    const ok = await run(async () => {
+      const result = await callLegacyApi('setAttendance', { master: masterName, d: TODAY });
+      fine = result?.fine || null;
+      await reload();
+    }, 'Приход отмечен.');
+    if (ok && fine?.new) setMessage(`Приход отмечен. Опоздание ${fine.minutes} мин — штраф ${money(fine.amount)} сум.`);
   }
 
   async function resetArrival() {
@@ -2939,7 +2995,7 @@ function AttendanceView({ data, reload, setError }) {
     const key = `${item.master}-${rowDate(item)}`;
     setSavingFineKey(key);
     try {
-      await createFine(item.master, rowDate(item), 50000, 'late');
+      await createFine(item.master, rowDate(item), lateFineAmount(data.settings), 'late');
     } finally {
       setSavingFineKey('');
     }
@@ -3030,8 +3086,20 @@ function AttendanceView({ data, reload, setError }) {
             const quickFineExists = data.fines.some((fine) => (
               belongsToMaster(fine, row.master)
               && rowDate(fine) === row.d
-              && Number(fine.amount) === 50000
+              && (fine.reason === 'late' || fine.auto)
             ));
+            const dayOffButton = (
+              <button
+                className={`day-off-button ${row.dayOff ? 'active' : ''}`}
+                disabled={savingDayOffKey === dayOffKey}
+                type="button"
+                onClick={() => toggleDayOff(masterName, row.d, !row.dayOff)}
+              >
+                {savingDayOffKey === dayOffKey
+                  ? 'Сохраняю…'
+                  : row.dayOff ? 'Отменить выходной' : 'Выходной'}
+              </button>
+            );
 
             return (
               <div className={`attendance-row ${row.status}`} key={`${masterName}-${row.d}`}>
@@ -3049,7 +3117,12 @@ function AttendanceView({ data, reload, setError }) {
                   </span>
                 </div>
                 {readOnly ? (
-                  arrived ? <span className="attendance-time">{arrived}</span> : null
+                  // The partner sets days off (decision of 2026-10-16), and
+                  // nothing else on this sheet.
+                  <div className="attendance-actions">
+                    {arrived ? <span className="attendance-time">{arrived}</span> : null}
+                    {row.record ? null : dayOffButton}
+                  </div>
                 ) : (
                 <div className="attendance-actions">
                   <input
@@ -3059,21 +3132,12 @@ function AttendanceView({ data, reload, setError }) {
                     disabled={row.dayOff}
                     onBlur={(event) => saveAttendance(masterName, row.d, event.target.value)}
                   />
-                  <button
-                    className={`day-off-button ${row.dayOff ? 'active' : ''}`}
-                    disabled={savingDayOffKey === dayOffKey}
-                    type="button"
-                    onClick={() => toggleDayOff(masterName, row.d, !row.dayOff)}
-                  >
-                    {savingDayOffKey === dayOffKey
-                      ? 'Сохраняю…'
-                      : row.dayOff ? 'Отменить выходной' : 'Выходной'}
-                  </button>
+                  {dayOffButton}
                   {row.status === 'late' ? (
                     <button
                       className="fine-button"
                       disabled={quickFineExists || savingFineKey === fineKey}
-                      title="Автоматически выставить штраф 50 000 сум"
+                      title={`Штраф ${money(lateFineAmount(data.settings))} сум`}
                       type="button"
                       onClick={() => addLateFine({ master: masterName, d: row.d })}
                     >
@@ -3148,7 +3212,7 @@ function AttendanceView({ data, reload, setError }) {
                 <div>
                   <strong>{fine.master}</strong>
                   <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
-                  <span>{fineReasonLabel(fine.reason)}</span>
+                  <span>{fineReasonLabel(fine.reason)}{fine.auto ? ' · авто' : ''}</span>
                 </div>
                 <button
                   className="del"
@@ -4742,6 +4806,8 @@ function SettingsView({ data, reload, setError }) {
   const [goalDraft, setGoalDraft] = useState(goal ? String(goal) : '');
   const [settings, setSettings] = useState({
     late_grace_minutes: String(data.settings.late_grace_minutes ?? 10),
+    late_fine_amount: String(data.settings.late_fine_amount ?? 100000),
+    no_mark_fine_amount: String(data.settings.no_mark_fine_amount ?? 100000),
     salon_lat: data.settings.salon_lat || '',
     salon_lng: data.settings.salon_lng || '',
     salon_radius: data.settings.salon_radius || 100,
@@ -4766,8 +4832,15 @@ function SettingsView({ data, reload, setError }) {
     if (settings.late_grace_minutes === '' || !Number.isInteger(grace) || grace < 0 || grace > 120) {
       return setError('Допуск — целое число минут от 0 до 120.');
     }
+    const lateFine = Number(settings.late_fine_amount);
+    const noMarkFine = Number(settings.no_mark_fine_amount);
+    if (![lateFine, noMarkFine].every((value) => Number.isInteger(value) && value >= 0 && value <= 10000000)) {
+      return setError(ACTION_ERROR_TEXT.invalid_fine);
+    }
     await run(() => callLegacyApi('setSettings', {
       late_grace_minutes: grace,
+      late_fine_amount: lateFine,
+      no_mark_fine_amount: noMarkFine,
       salon_lat: settings.salon_lat === '' ? null : Number(settings.salon_lat),
       salon_lng: settings.salon_lng === '' ? null : Number(settings.salon_lng),
       salon_radius: Number(settings.salon_radius) || 100,
@@ -4828,6 +4901,14 @@ function SettingsView({ data, reload, setError }) {
             />
           </label>
           <p className="hint">Опоздание считается от начала смены мастера по его графику плюс эти минуты: смена с 10:00 и допуск 10 — опоздание после 10:10.</p>
+          <label>
+            Штраф за опоздание
+            <MoneyInput value={settings.late_fine_amount} onChange={(value) => setSettings({ ...settings, late_fine_amount: value })} />
+          </label>
+          <label>
+            Штраф без отметки к 18:00
+            <MoneyInput value={settings.no_mark_fine_amount} onChange={(value) => setSettings({ ...settings, no_mark_fine_amount: value })} />
+          </label>
           <label>Радиус отметки, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
           <div className="settings-pair">
             <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
