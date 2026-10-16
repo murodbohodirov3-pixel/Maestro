@@ -253,42 +253,79 @@ export function staffNotice({ kind, startsAt, masterName, serviceName, price, cl
 
 // A master's nudge a quarter of an hour after a booking he has not closed
 // ended: by then the client has either been served or not come. «Не пришёл» is
-// a button under it; «Пришёл» is a visit, recorded in the app.
-export function masterReminder({ startsAt, endsAt, clientName, serviceName }) {
+// a button under it; «Пришёл» is a visit, recorded in the app. Every text to a
+// master is in his language (app_users.lang).
+const MASTER_TEXT = {
+  ru: {
+    remindHead: '⏰ <b>Закройте запись</b>',
+    remindHint: 'Был — внесите визит в приложении.',
+    noShowButton: 'Не пришёл',
+    openButton: 'Открыть приложение',
+    was: 'было',
+    now: 'стало',
+    heads: {
+      new: '📅 <b>Новая запись</b>',
+      cancelled: '❌ <b>Запись отменена</b>',
+      moved: '🔁 <b>Запись перенесена</b>',
+      away: '↪️ <b>Запись передана другому мастеру</b>',
+    },
+    replies: {
+      noShow: 'Отмечено: не пришёл.',
+      closed: 'Запись уже закрыта.',
+      notYours: 'Это не ваша запись.',
+    },
+  },
+  uz: {
+    remindHead: '⏰ <b>Yozuvni yoping</b>',
+    remindHint: 'Kelgan boʻlsa — tashrifni ilovada kiriting.',
+    noShowButton: 'Kelmadi',
+    openButton: 'Ilovani ochish',
+    was: 'avval',
+    now: 'endi',
+    heads: {
+      new: '📅 <b>Yangi yozuv</b>',
+      cancelled: '❌ <b>Yozuv bekor qilindi</b>',
+      moved: '🔁 <b>Yozuv koʻchirildi</b>',
+      away: '↪️ <b>Yozuv boshqa barberga oʻtkazildi</b>',
+    },
+    replies: {
+      noShow: 'Belgilandi: kelmadi.',
+      closed: 'Yozuv allaqachon yopilgan.',
+      notYours: 'Bu sizning yozuvingiz emas.',
+    },
+  },
+};
+
+export function masterText(lang) {
+  return MASTER_TEXT[langOf(lang)];
+}
+
+export function masterReminder({ startsAt, endsAt, clientName, serviceName, lang = 'ru' }) {
+  const text = masterText(lang);
   const clock = (value) => {
     const local = new Date(new Date(value).getTime() + TASHKENT_OFFSET_MS);
     return `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
   };
   const time = endsAt ? `${clock(startsAt)}–${clock(endsAt)}` : clock(startsAt);
   return [
-    '⏰ <b>Закройте запись</b>',
+    text.remindHead,
     `${time} · ${escapeHtml(clientName)}${serviceName ? ` · ${escapeHtml(serviceName)}` : ''}`,
-    'Был — внесите визит в приложении.',
+    text.remindHint,
   ].join('\n');
 }
 
-export const MASTER_REPLIES = {
-  noShow: 'Отмечено: не пришёл.',
-  closed: 'Запись уже закрыта.',
-  notYours: 'Это не ваша запись.',
-};
+export const MASTER_REPLIES = MASTER_TEXT.ru.replies;
 
 // What a master hears about his bookings (owner's requests of 2026-10-16): a
 // new one the moment it is saved, a cancelled one, a moved one, and one handed
 // to another master. The number comes in masked, as everywhere he sees it.
-const MASTER_NOTICE_HEADS = {
-  new: '📅 <b>Новая запись</b>',
-  cancelled: '❌ <b>Запись отменена</b>',
-  moved: '🔁 <b>Запись перенесена</b>',
-  away: '↪️ <b>Запись передана другому мастеру</b>',
-};
-
-export function masterBookingNotice({ kind = 'new', startsAt, previousStartsAt, clientName, clientPhone, serviceName }) {
+export function masterBookingNotice({ kind = 'new', startsAt, previousStartsAt, clientName, clientPhone, serviceName, lang = 'ru' }) {
+  const text = masterText(lang);
   const when = kind === 'moved' && previousStartsAt
-    ? [`было: ${formatWhen(previousStartsAt, 'ru')}`, `стало: <b>${formatWhen(startsAt, 'ru')}</b>`]
-    : [formatWhen(startsAt, 'ru')];
+    ? [`${text.was}: ${formatWhen(previousStartsAt, lang)}`, `${text.now}: <b>${formatWhen(startsAt, lang)}</b>`]
+    : [formatWhen(startsAt, lang)];
   return [
-    MASTER_NOTICE_HEADS[kind] || MASTER_NOTICE_HEADS.new,
+    text.heads[kind] || text.heads.new,
     ...when,
     `👤 ${escapeHtml(clientName)}${clientPhone ? ` · ${escapeHtml(clientPhone)}` : ''}`,
     serviceName ? `✂️ ${escapeHtml(serviceName)}` : null,

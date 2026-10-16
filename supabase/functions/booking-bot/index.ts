@@ -14,9 +14,10 @@ import {
   bookingLines,
   botText,
   langOf,
-  MASTER_REPLIES,
   maskPhone,
+  masterBookingNotice,
   masterReminder,
+  masterText,
   staffNotice,
 } from '../_shared/bookingCore.js';
 import { bookingSettings, db, tokenHash } from '../_shared/bookingHttp.ts';
@@ -121,9 +122,21 @@ async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, 
   });
   const masterChat = facts.master_chat_id ? String(facts.master_chat_id) : '';
   const desk = (await deskChats()).filter((chatId) => chatId !== masterChat);
+  let masterLang = 'ru';
+  if (masterChat) {
+    const { data: login } = await db.from('app_users').select('lang').eq('telegram_id', masterChat).maybeSingle();
+    masterLang = String(login?.lang || 'ru');
+  }
   await Promise.all([
     ...desk.map((chatId) => send(chatId, textWith(phone))),
-    masterChat ? send(masterChat, textWith(maskPhoneForStaff(phone) || '')) : null,
+    masterChat ? send(masterChat, masterBookingNotice({
+      kind: kind === 'cancelled' ? 'cancelled' : 'new',
+      startsAt: booking.starts_at,
+      clientName: String(facts.client_name ?? ''),
+      clientPhone: maskPhoneForStaff(phone) || '',
+      serviceName: String(facts.service_name ?? ''),
+      lang: masterLang,
+    }), { reply_markup: { inline_keyboard: [[{ text: masterText(masterLang).openButton, web_app: { url: APP_URL } }]] } }) : null,
   ]);
 }
 
@@ -258,9 +271,10 @@ async function handleCallback(query: Record<string, any>) {
 // the master as the actor, so only the booking's own master gets through.
 async function masterNoShow(appointmentId: string, tgUserId: string, chatId: number, messageId?: number) {
   const { data: user, error: userError } = await db.from('app_users')
-    .select('id').eq('telegram_id', tgUserId).eq('active', true).maybeSingle();
+    .select('id, lang').eq('telegram_id', tgUserId).eq('active', true).maybeSingle();
   if (userError) throw userError;
-  if (!user) return send(chatId, MASTER_REPLIES.notYours);
+  const replies = masterText(user?.lang).replies;
+  if (!user) return send(chatId, replies.notYours);
   const { data, error } = await db.rpc('maestro_set_appointment_outcome', {
     p_appointment_id: appointmentId,
     p_outcome: 'no_show',
@@ -270,11 +284,11 @@ async function masterNoShow(appointmentId: string, tgUserId: string, chatId: num
     p_actor_user_id: user.id,
   });
   if (error) throw error;
-  if (data?.error === 'forbidden') return send(chatId, MASTER_REPLIES.notYours);
+  if (data?.error === 'forbidden') return send(chatId, replies.notYours);
   if (messageId) {
     await telegram('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
   }
-  return send(chatId, data?.ok ? MASTER_REPLIES.noShow : MASTER_REPLIES.closed);
+  return send(chatId, data?.ok ? replies.noShow : replies.closed);
 }
 
 async function handleUpdate(update: Record<string, any>) {
@@ -333,16 +347,18 @@ async function sendMasterReminders() {
   let sent = 0;
   for (const notice of data ?? []) {
     if (!notice.master_chat_id) continue;
+    const words = masterText(notice.master_lang);
     const result = await send(notice.master_chat_id, masterReminder({
       startsAt: notice.starts_at,
       endsAt: notice.ends_at,
       clientName: notice.client_name,
       serviceName: notice.service_name,
+      lang: notice.master_lang,
     }), {
       reply_markup: {
         inline_keyboard: [[
-          { text: 'Не пришёл', callback_data: `n:${notice.appointment_id}` },
-          { text: 'Открыть приложение', web_app: { url: APP_URL } },
+          { text: words.noShowButton, callback_data: `n:${notice.appointment_id}` },
+          { text: words.openButton, web_app: { url: APP_URL } },
         ]],
       },
     });

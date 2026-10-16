@@ -3,7 +3,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
-import { masterBookingNotice } from '../_shared/bookingCore.js';
+import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -347,14 +347,14 @@ async function messageOwners(text: string) {
     })));
 }
 
-// A master's Telegram chat: his own login, or the id the masters table kept
-// from before logins.
-async function masterChatId(masterId: number) {
-  const login = await sb.from('app_users').select('telegram_id')
+// A master's Telegram chat and language: his own login, or the id the masters
+// table kept from before logins.
+async function masterChat(masterId: number) {
+  const login = await sb.from('app_users').select('telegram_id, lang')
     .eq('master_id', masterId).eq('active', true).not('telegram_id', 'is', null).limit(1).maybeSingle();
-  if (login.data?.telegram_id) return String(login.data.telegram_id);
+  if (login.data?.telegram_id) return { chatId: String(login.data.telegram_id), lang: String(login.data.lang || 'ru') };
   const master = await sb.from('masters').select('telegram_id').eq('id', masterId).maybeSingle();
-  return master.data?.telegram_id ? String(master.data.telegram_id) : null;
+  return master.data?.telegram_id ? { chatId: String(master.data.telegram_id), lang: 'ru' } : null;
 }
 
 type BookingNoticeRow = {
@@ -368,15 +368,16 @@ type BookingNoticeRow = {
 // A booking taken, cancelled or moved by the desk reaches its master at once,
 // with a button into the app where it sits in «Мои записи».
 async function tellMaster(masterId: number, kind: 'new' | 'cancelled' | 'moved' | 'away', appointment: BookingNoticeRow, previousStartsAt: string | null = null) {
-  const chatId = await masterChatId(masterId);
-  if (!chatId) return;
+  const chat = await masterChat(masterId);
+  if (!chat) return;
   const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      chat_id: chatId,
+      chat_id: chat.chatId,
       text: masterBookingNotice({
         kind,
+        lang: chat.lang,
         startsAt: appointment.starts_at,
         previousStartsAt,
         clientName: appointment.client_name,
@@ -384,7 +385,7 @@ async function tellMaster(masterId: number, kind: 'new' | 'cancelled' | 'moved' 
         serviceName: appointment.service_name,
       }),
       parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [[{ text: 'Открыть приложение', web_app: { url: APP_URL } }]] },
+      reply_markup: { inline_keyboard: [[{ text: masterText(chat.lang).openButton, web_app: { url: APP_URL } }]] },
     }),
   });
   if (!response.ok) console.warn('[maestro-api] booking notice refused', response.status, await response.text());
@@ -442,7 +443,7 @@ Deno.serve(async (req) => {
       const user = await exchangeTelegramOAuthCode(payload);
       appUserResult = await sb
         .from('app_users')
-        .select('id, role, master_id, active')
+        .select('id, role, master_id, active, lang')
         .eq('telegram_id', user.id)
         .maybeSingle();
       if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
@@ -468,7 +469,7 @@ Deno.serve(async (req) => {
       if (!session.error && session.data) {
         appUserResult = await sb
           .from('app_users')
-          .select('id, role, master_id, active')
+          .select('id, role, master_id, active, lang')
           .eq('id', session.data.user_id)
           .maybeSingle();
       }
@@ -495,7 +496,7 @@ Deno.serve(async (req) => {
       }
       appUserResult = await sb
         .from('app_users')
-        .select('id, role, master_id, active')
+        .select('id, role, master_id, active, lang')
         .eq('telegram_id', user.id)
         .maybeSingle();
       if (!appUserResult.error && appUserResult.data) {
@@ -574,6 +575,15 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Each person's language (owner's decision of 2026-10-16).
+    if (action === 'setLanguage') {
+      const lang = String(payload.lang ?? '');
+      if (!['ru', 'uz'].includes(lang)) return json({ error: 'invalid_language' }, 400);
+      const { error } = await sb.from('app_users').update({ lang }).eq('id', appUserResult.data.id);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, lang });
+    }
+
     if (action === 'load' && isFrontDesk) {
       // The administrator's Склад: names and quantities, her own recent sales,
       // nothing about prices, revenue or the masters.
@@ -606,6 +616,7 @@ Deno.serve(async (req) => {
       return json({
         role: 'frontdesk',
         appRole: appUserResult.data.role,
+        lang: appUserResult.data.lang || 'ru',
         ...desk,
         masters: deskMasters.data ?? [],
         appointments,
@@ -661,6 +672,7 @@ Deno.serve(async (req) => {
 
         return json({
           role: 'admin',
+          lang: appUserResult.data.lang || 'ru',
           masters,
           settings,
           sales,
@@ -704,6 +716,7 @@ Deno.serve(async (req) => {
       return json({
         role: 'master',
         appRole: appUserResult.data.role,
+        lang: appUserResult.data.lang || 'ru',
         me: myMaster,
         masters: meOnly,
         settings,

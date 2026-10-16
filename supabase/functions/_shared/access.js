@@ -20,6 +20,7 @@ const PARTNER_ACTIONS = new Set([
   'addClient',
   'setMasterDayOff',
   'moveBooking',
+  'setLanguage',
 ]);
 
 export function partnerMayCall(action) {
@@ -43,6 +44,7 @@ const ADMIN_ACTIONS = new Set([
   'searchClients',
   'addClient',
   'moveBooking',
+  'setLanguage',
 ]);
 
 export function adminMayCall(action) {

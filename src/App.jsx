@@ -55,6 +55,7 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
+import { applyLanguage, registerNames, tr } from './i18n/index.js';
 import { masterWeek, weekOf, weekPayouts, weekStartOf } from './utils/payouts.js';
 import {
   blockPosition,
@@ -445,7 +446,8 @@ function usePeriodSelection(scope, defaultPeriod) {
 
 // Telegram's own dialog: window.confirm is suppressed in some Mini App clients,
 // and a destructive action that silently does nothing is worse than no guard.
-function confirmAction(question) {
+function confirmAction(text) {
+  const question = tr(text);
   const telegram = window.Telegram?.WebApp;
   if (typeof telegram?.showConfirm === 'function') {
     return new Promise((resolve) => {
@@ -564,8 +566,31 @@ function normalizeData(data) {
     productWriteoffs: data.product_writeoffs || [],
     advances: data.master_advances || [],
     payouts: data.master_payouts || [],
+    lang: data.lang || null,
     settings,
   };
+}
+
+// Each person's language (owner's decision of 2026-10-16): what this phone
+// chose last, else Telegram's own language; the server's answer wins on load.
+const LANG_KEY = 'maestroLang';
+
+function initialLanguage() {
+  try {
+    const stored = localStorage.getItem(LANG_KEY);
+    if (stored === 'ru' || stored === 'uz') return stored;
+  } catch {
+    // No storage: fall through to Telegram's language.
+  }
+  return window.Telegram?.WebApp?.initDataUnsafe?.user?.language_code === 'uz' ? 'uz' : 'ru';
+}
+
+function rememberLanguage(lang) {
+  try {
+    localStorage.setItem(LANG_KEY, lang);
+  } catch {
+    // The server keeps it anyway.
+  }
 }
 
 function emptyState() {
@@ -5261,6 +5286,24 @@ export default function App() {
   const loadInFlightRef = useRef(null);
   const [error, setError] = useState('');
   const [loginRequired, setLoginRequired] = useState(false);
+  const [lang, setLang] = useState(initialLanguage);
+  // The server's language is taken once, on the first load; after that the
+  // person's own switch decides.
+  const langSettledRef = useRef(false);
+
+  useEffect(() => {
+    applyLanguage(lang);
+  }, [lang]);
+
+  function toggleLanguage() {
+    const next = lang === 'uz' ? 'ru' : 'uz';
+    langSettledRef.current = true;
+    setLang(next);
+    rememberLanguage(next);
+    callLegacyApi('setLanguage', { lang: next }).catch(() => {
+      // The phone remembers it; the server learns on the next switch.
+    });
+  }
 
   // Telegram paints its own header and the area behind the app; matching them
   // to the page removes the seam at the top of the screen.
@@ -5314,6 +5357,12 @@ export default function App() {
 
       const result = await callLegacyApi('load', since ? { since } : {});
       const normalized = normalizeData(result);
+      registerNames(normalized.bookingServices.map((service) => [service.name_ru, service.name_uz]));
+      if (!langSettledRef.current && normalized.lang) {
+        langSettledRef.current = true;
+        setLang(normalized.lang);
+        rememberLanguage(normalized.lang);
+      }
       // Trust the window only if the server confirms it applied one; an older
       // deployment ignores `since` and answers with everything, which merges
       // correctly either way but must not discard rows it did return.
@@ -5474,11 +5523,16 @@ export default function App() {
             <h1 className={view === 'overview' ? 'is-wordmark' : ''}>{title}</h1>
             <p>{subtitle}</p>
           </div>
-          {!isMaster && view !== 'settings' && availableViews.includes('settings') ? (
-            <button aria-label="Настройки" className="gear-button" type="button" onClick={() => openView('settings')}>
-              <GearIcon />
+          <div className="app-header-actions">
+            <button aria-label="Язык · Til" className="lang-button" data-no-translate type="button" onClick={toggleLanguage}>
+              {lang === 'uz' ? 'RU' : 'UZ'}
             </button>
-          ) : null}
+            {!isMaster && view !== 'settings' && availableViews.includes('settings') ? (
+              <button aria-label="Настройки" className="gear-button" type="button" onClick={() => openView('settings')}>
+                <GearIcon />
+              </button>
+            ) : null}
+          </div>
         </div>
       </header>
 

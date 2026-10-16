@@ -139,6 +139,29 @@ svg {
   font-size: 13px;
 }
 
+.app-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The language switch: shows the language it switches to. */
+.lang-button {
+  display: grid;
+  min-width: 46px;
+  height: 46px;
+  padding: 0 10px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 23px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
 .gear-button {
   display: grid;
   width: 46px;
