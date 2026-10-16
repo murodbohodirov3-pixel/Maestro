@@ -873,6 +873,38 @@ Deno.serve(async (req) => {
       return json(data);
     }
 
+    // The owner corrects a card's name and number, and merges two cards of one
+    // person (owner's request of 2026-10-17).
+    if (action === 'updateClient') {
+      if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
+      const clientId = String(payload.client_id ?? '');
+      if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
+      const { data, error } = await sb.rpc('maestro_update_client_card', {
+        p_client_id: clientId,
+        p_full_name: String(payload.full_name ?? ''),
+        p_phone: payload.phone ? String(payload.phone) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) return json(data ?? { error: 'invalid_client' }, data?.error === 'client_exists' ? 409 : data?.error === 'client_not_found' ? 404 : 400);
+      return json(data);
+    }
+
+    if (action === 'mergeClients') {
+      if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
+      const from = String(payload.from_id ?? '');
+      const into = String(payload.into_id ?? '');
+      if (!UUID_PATTERN.test(from) || !UUID_PATTERN.test(into)) return json({ error: 'invalid_merge' }, 400);
+      const { data, error } = await sb.rpc('maestro_merge_clients', {
+        p_from: from,
+        p_into: into,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) return json(data ?? { error: 'invalid_merge' }, data?.error === 'client_not_found' ? 404 : 400);
+      return json(data);
+    }
+
     if (action === 'getClient') {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
       const clientId = String(payload.client_id ?? '');

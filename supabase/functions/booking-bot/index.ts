@@ -5,6 +5,7 @@
 //                       button if this Telegram user's number is known)
 //   contact           → only the user's own contact; confirms his latest hold
 //   c:<id> / x:<id>   → confirm with the known number / cancel
+//   p:<id>            → not that number: share another contact
 //   n:<id>            → a master marks his booking «Не пришёл»
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
 // clients' 24 h and 2 h reminders and the masters' «закройте запись» a quarter
@@ -196,12 +197,21 @@ async function handleStart(chatId: number, tgUserId: string, token: string, fall
 
   const head = `<b>${text.title}</b>\n\n${linesOf(data, lang)}`;
   if (data.known_phone) {
-    // A returning client: one button, no contact again.
+    // A returning client: one button, no contact again. The number this
+    // Telegram account is known by may be someone else's (a shared phone, a
+    // card linked by mistake), so another one is a tap away.
     return send(chatId, `${head}\n\n${text.knownNumber(maskPhone(data.known_phone))}`, {
-      reply_markup: { inline_keyboard: [[{ text: text.confirmButton, callback_data: `c:${data.appointment_id}` }]] },
+      reply_markup: { inline_keyboard: [
+        [{ text: text.confirmButton, callback_data: `c:${data.appointment_id}` }],
+        [{ text: text.otherNumberButton, callback_data: `p:${data.appointment_id}` }],
+      ] },
     });
   }
-  return send(chatId, `${head}\n\n${text.askContact}`, {
+  return askForContact(chatId, text, head);
+}
+
+function askForContact(chatId: number, text: ReturnType<typeof botText>, head = '') {
+  return send(chatId, `${head ? `${head}\n\n` : ''}${text.askContact}`, {
     reply_markup: {
       keyboard: [[{ text: text.shareButton, request_contact: true }]],
       resize_keyboard: true,
@@ -241,6 +251,13 @@ async function handleCallback(query: Record<string, any>) {
     return;
   }
   if (kind === 'n') return masterNoShow(appointmentId, tgUserId, chatId, query.message?.message_id);
+  // «Другой номер»: the contact the person shares confirms the hold instead.
+  if (kind === 'p') {
+    if (query.message?.message_id) {
+      await telegram('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
+    }
+    return askForContact(chatId, botText(fallbackLang));
+  }
   if (kind !== 'x') return;
 
   const { data, error } = await db.rpc('maestro_cancel_booking_by_client', {

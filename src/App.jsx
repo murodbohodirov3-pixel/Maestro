@@ -309,6 +309,10 @@ const ACTION_ERROR_TEXT = {
   schedule_not_found: 'Этот график уже отменён — обновите экран.',
   not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
   invalid_fine: 'Проверьте сумму штрафа.',
+  invalid_client_name: 'Введите имя клиента.',
+  invalid_phone: 'Проверьте номер: например, 90 123 45 67.',
+  invalid_merge: 'Эти карточки нельзя объединить.',
+  client_not_found: 'Карточка не найдена — обновите экран.',
   slot_unavailable: 'Это время уже занято — выберите другое.',
   appointment_closed: 'Запись уже закрыта — обновите экран.',
   appointment_not_found: 'Запись не найдена — обновите экран.',
@@ -1534,8 +1538,15 @@ function ClientPicker({ client, onChange, setError }) {
 
 // The owner's view of one client: the whole number, how to reach him, and
 // every visit — when, at what time, to which master, for how much.
-function ClientSheet({ clientId, onClose, setError }) {
+function ClientSheet({ clientId, onClose, setError, reload }) {
+  // The card shown; a merge moves it to the card that stays.
+  const [currentId, setCurrentId] = useState(clientId);
   const [card, setCard] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ full_name: '', phone: '' });
+  const [conflict, setConflict] = useState(null);
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
 
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
@@ -1550,11 +1561,58 @@ function ClientSheet({ clientId, onClose, setError }) {
 
   useEffect(() => {
     let alive = true;
-    callLegacyApi('getClient', { client_id: clientId })
+    setCard(null);
+    callLegacyApi('getClient', { client_id: currentId })
       .then((result) => { if (alive) setCard(result); })
       .catch((error) => { if (alive) { setError(actionErrorText(error)); onClose(); } });
     return () => { alive = false; };
-  }, [clientId, onClose, setError]);
+  }, [currentId, onClose, setError]);
+
+  function startEdit() {
+    setDraft({ full_name: card?.client?.full_name || '', phone: card?.client?.phone || '' });
+    setConflict(null);
+    setMessage('');
+    setEditing(true);
+  }
+
+  async function saveEdit() {
+    if (!draft.full_name.trim()) return setError('Введите имя клиента.');
+    setConflict(null);
+    let refused = null;
+    const ok = await run(async () => {
+      try {
+        await callLegacyApi('updateClient', { client_id: currentId, full_name: draft.full_name.trim(), phone: draft.phone.trim() || null });
+      } catch (error) {
+        if (error.details?.error === 'client_exists') {
+          refused = error.details;
+          return;
+        }
+        throw error;
+      }
+    });
+    if (!ok) return;
+    if (refused) {
+      setConflict(refused);
+      return;
+    }
+    setMessage('Карточка сохранена.');
+    setEditing(false);
+    const result = await callLegacyApi('getClient', { client_id: currentId }).catch(() => null);
+    if (result) setCard(result);
+    reload?.();
+  }
+
+  // The number belongs to another card: both are one person.
+  async function mergeInto() {
+    if (!conflict?.client_id) return;
+    const ok = await run(() => callLegacyApi('mergeClients', { from_id: currentId, into_id: conflict.client_id }));
+    if (!ok) return;
+    setMessage(`Карточки объединены: ${conflict.full_name}.`);
+    setEditing(false);
+    setConflict(null);
+    setCurrentId(conflict.client_id);
+    reload?.();
+  }
 
   const client = card?.client;
   const visits = (card?.visits || []).filter((visit) => !visit.rejected);
@@ -1582,10 +1640,31 @@ function ClientSheet({ clientId, onClose, setError }) {
         </div>
         {client ? (
           <>
-            <div className="settings-actions client-contact">
-              {client.phone ? <a className="btn ghost" href={`tel:${client.phone}`}>Позвонить</a> : null}
-              {telegramLink ? <a className="btn ghost" href={telegramLink} rel="noreferrer" target="_blank">Написать</a> : null}
-            </div>
+            {editing ? (
+              <div className="client-new client-edit">
+                <input aria-label="Имя" maxLength={120} placeholder="Имя" value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} />
+                <input aria-label="Телефон" inputMode="tel" maxLength={20} placeholder="Телефон" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
+                {conflict ? (
+                  <div className="client-exists">
+                    <span>
+                      <strong>Этот номер у карточки «{conflict.full_name}»</strong>
+                    </span>
+                    <button className="btn" type="button" disabled={busy} onClick={mergeInto}>{busy ? 'Объединяю…' : 'Объединить'}</button>
+                  </div>
+                ) : null}
+                <div className="settings-actions">
+                  <button className="btn" type="button" disabled={busy} onClick={saveEdit}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => { setEditing(false); setConflict(null); }}>Отмена</button>
+                </div>
+              </div>
+            ) : (
+              <div className="settings-actions client-contact">
+                {client.phone ? <a className="btn ghost" href={`tel:${client.phone}`}>Позвонить</a> : null}
+                {telegramLink ? <a className="btn ghost" href={telegramLink} rel="noreferrer" target="_blank">Написать</a> : null}
+                <button className="btn ghost" type="button" onClick={startEdit}>Изменить</button>
+              </div>
+            )}
+            {message ? <p className="success">{message}</p> : null}
             <div className="rows">
               {timeline.map((entry) => (entry.kind === 'visit' ? (
                 <div className="row" key={`v-${entry.visit.id}`}>
@@ -1613,7 +1692,7 @@ function ClientSheet({ clientId, onClose, setError }) {
 }
 
 // Продажи: the owner looks a client up by name or number and opens his card.
-function ClientFinder({ setError }) {
+function ClientFinder({ setError, reload }) {
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState(null);
   const { results, searching } = useClientSearch(query, setError);
@@ -1642,7 +1721,7 @@ function ClientFinder({ setError }) {
           {!searching && !results.length ? <p className="hint">Не найден</p> : null}
         </div>
       ) : null}
-      {openId ? <ClientSheet clientId={openId} onClose={close} setError={setError} /> : null}
+      {openId ? <ClientSheet clientId={openId} onClose={close} setError={setError} reload={reload} /> : null}
     </div>
   );
 }
@@ -1870,7 +1949,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
             {moving ? null : <OutcomeChooser appointment={appointment} reload={reload} setError={setError} onDone={onClose} />}
           </>
         )}
-        {clientOpen ? <ClientSheet clientId={appointment.client_id} onClose={closeClient} setError={setError} /> : null}
+        {clientOpen ? <ClientSheet clientId={appointment.client_id} onClose={closeClient} setError={setError} reload={reload} /> : null}
       </div>
     </div>
   );
@@ -2871,8 +2950,8 @@ function AdminView({ data, reload, setError }) {
       </div>
       ) : null}
 
-      {isOwner ? <ClientFinder setError={setError} /> : null}
-      {openClient ? <ClientSheet clientId={openClient} onClose={closeClient} setError={setError} /> : null}
+      {isOwner ? <ClientFinder setError={setError} reload={reload} /> : null}
+      {openClient ? <ClientSheet clientId={openClient} onClose={closeClient} setError={setError} reload={reload} /> : null}
 
       <div className="wide period-block">
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />

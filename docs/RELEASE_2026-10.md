@@ -131,3 +131,15 @@ https://maestro-pied-two.vercel.app есть строки `Toʻlovlar` и `Вы�
   - `select cron.unschedule('maestro-no-mark-fines')` — остановить штрафы в 18:00;
   - то же для `maestro-booking-reminders` и `maestro-booking-holds`;
   - `update settings set auto_fines_since = null` — выключить автоштрафы целиком.
+
+## Дополнение 17.10 — карточки клиентов
+
+Владелец правит имя и номер карточки и объединяет две карточки одного человека; запись с сайта
+больше не переименовывает существующую карточку; в боте рядом с известным номером — «Другой номер».
+
+1. Миграция `20261017100000_client_card_edits.sql` и запись в историю миграций.
+2. `docs/release-2026-10/fix_staff_linked_cards.sql` — карточка Oybek получает имя обратно,
+   карточки клиентов отвязываются от Telegram салона и владельца, тестовая запись «Мурод» уходит из
+   истории Oybek.
+3. Функции `api` и `booking-bot`.
+4. `git push origin main`.
