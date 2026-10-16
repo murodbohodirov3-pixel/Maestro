@@ -155,10 +155,21 @@ test('a master hears of a booking made for him, with the number masked', () => {
   assert.doesNotMatch(masterBookingNotice({ startsAt: '2026-10-16T10:00:00Z', clientName: 'Азиз' }), /undefined|null/);
 });
 
-test('half an hour into an open booking the master is reminded to close it', () => {
-  const text = masterReminder({ startsAt: '2026-10-16T10:00:00Z', clientName: 'Азиз', serviceName: 'Стрижка' });
+test('after an open booking ends the master is reminded to close it', () => {
+  const text = masterReminder({ startsAt: '2026-10-16T10:00:00Z', endsAt: '2026-10-16T11:00:00Z', clientName: 'Азиз', serviceName: 'Стрижка' });
   assert.match(text, /Закройте запись/);
-  assert.match(text, /15:00 · Азиз · Стрижка/);
+  assert.match(text, /15:00–16:00 · Азиз · Стрижка/);
   assert.equal(text.split('\n').length, 3);
   assert.equal(MASTER_REPLIES.noShow, 'Отмечено: не пришёл.');
+});
+
+test('a master hears when his booking is cancelled, moved, or handed to another', () => {
+  const base = { startsAt: '2026-10-16T12:00:00Z', clientName: 'Азиз', clientPhone: '+998 90 *** ** 22', serviceName: 'Стрижка' };
+  assert.match(masterBookingNotice({ ...base, kind: 'cancelled' }), /Запись отменена[\s\S]*17:00/);
+  const moved = masterBookingNotice({ ...base, kind: 'moved', previousStartsAt: '2026-10-16T10:00:00Z' });
+  assert.match(moved, /Запись перенесена/);
+  assert.match(moved, /было: .*15:00/);
+  assert.match(moved, /стало: <b>.*17:00<\/b>/);
+  assert.match(masterBookingNotice({ ...base, kind: 'away' }), /передана другому мастеру/);
+  assert.match(masterBookingNotice(base), /Новая запись/);
 });

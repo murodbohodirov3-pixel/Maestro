@@ -251,15 +251,19 @@ export function staffNotice({ kind, startsAt, masterName, serviceName, price, cl
   return lines.join('\n');
 }
 
-// A master's nudge half an hour into a booking he has not closed. «Не пришёл»
-// is a button under it; «Пришёл» is a visit, recorded in the app.
-export function masterReminder({ startsAt, clientName, serviceName }) {
-  const local = new Date(new Date(startsAt).getTime() + TASHKENT_OFFSET_MS);
-  const time = `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+// A master's nudge a quarter of an hour after a booking he has not closed
+// ended: by then the client has either been served or not come. «Не пришёл» is
+// a button under it; «Пришёл» is a visit, recorded in the app.
+export function masterReminder({ startsAt, endsAt, clientName, serviceName }) {
+  const clock = (value) => {
+    const local = new Date(new Date(value).getTime() + TASHKENT_OFFSET_MS);
+    return `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+  };
+  const time = endsAt ? `${clock(startsAt)}–${clock(endsAt)}` : clock(startsAt);
   return [
     '⏰ <b>Закройте запись</b>',
     `${time} · ${escapeHtml(clientName)}${serviceName ? ` · ${escapeHtml(serviceName)}` : ''}`,
-    'Пришёл — внесите визит в приложении.',
+    'Был — внесите визит в приложении.',
   ].join('\n');
 }
 
@@ -269,13 +273,23 @@ export const MASTER_REPLIES = {
   notYours: 'Это не ваша запись.',
 };
 
-// A booking made for a master by phone or Telegram (owner's request of
-// 2026-10-16): he hears about it the moment it is saved. The number comes in
-// masked, as everywhere a master sees it.
-export function masterBookingNotice({ startsAt, clientName, clientPhone, serviceName }) {
+// What a master hears about his bookings (owner's requests of 2026-10-16): a
+// new one the moment it is saved, a cancelled one, a moved one, and one handed
+// to another master. The number comes in masked, as everywhere he sees it.
+const MASTER_NOTICE_HEADS = {
+  new: '📅 <b>Новая запись</b>',
+  cancelled: '❌ <b>Запись отменена</b>',
+  moved: '🔁 <b>Запись перенесена</b>',
+  away: '↪️ <b>Запись передана другому мастеру</b>',
+};
+
+export function masterBookingNotice({ kind = 'new', startsAt, previousStartsAt, clientName, clientPhone, serviceName }) {
+  const when = kind === 'moved' && previousStartsAt
+    ? [`было: ${formatWhen(previousStartsAt, 'ru')}`, `стало: <b>${formatWhen(startsAt, 'ru')}</b>`]
+    : [formatWhen(startsAt, 'ru')];
   return [
-    '📅 <b>Новая запись</b>',
-    formatWhen(startsAt, 'ru'),
+    MASTER_NOTICE_HEADS[kind] || MASTER_NOTICE_HEADS.new,
+    ...when,
     `👤 ${escapeHtml(clientName)}${clientPhone ? ` · ${escapeHtml(clientPhone)}` : ''}`,
     serviceName ? `✂️ ${escapeHtml(serviceName)}` : null,
   ].filter(Boolean).join('\n');

@@ -357,14 +357,18 @@ async function masterChatId(masterId: number) {
   return master.data?.telegram_id ? String(master.data.telegram_id) : null;
 }
 
-// A booking taken by phone or Telegram reaches its master at once, with a
-// button into the app where it sits in «Мои записи».
-async function tellMasterAboutBooking(appointmentId: string) {
-  const { data: appointment } = await sb.from('appointments')
-    .select('master_id, starts_at, client_name, client_phone, service_name')
-    .eq('id', appointmentId).maybeSingle();
-  if (!appointment) return;
-  const chatId = await masterChatId(Number(appointment.master_id));
+type BookingNoticeRow = {
+  master_id: number | string;
+  starts_at: string;
+  client_name: string;
+  client_phone: string | null;
+  service_name: string | null;
+};
+
+// A booking taken, cancelled or moved by the desk reaches its master at once,
+// with a button into the app where it sits in «Мои записи».
+async function tellMaster(masterId: number, kind: 'new' | 'cancelled' | 'moved' | 'away', appointment: BookingNoticeRow, previousStartsAt: string | null = null) {
+  const chatId = await masterChatId(masterId);
   if (!chatId) return;
   const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
@@ -372,7 +376,9 @@ async function tellMasterAboutBooking(appointmentId: string) {
     body: JSON.stringify({
       chat_id: chatId,
       text: masterBookingNotice({
+        kind,
         startsAt: appointment.starts_at,
+        previousStartsAt,
         clientName: appointment.client_name,
         clientPhone: maskPhoneForStaff(appointment.client_phone),
         serviceName: appointment.service_name,
@@ -382,6 +388,13 @@ async function tellMasterAboutBooking(appointmentId: string) {
     }),
   });
   if (!response.ok) console.warn('[maestro-api] booking notice refused', response.status, await response.text());
+}
+
+async function tellMasterAboutBooking(appointmentId: string) {
+  const { data: appointment } = await sb.from('appointments')
+    .select('master_id, starts_at, client_name, client_phone, service_name')
+    .eq('id', appointmentId).maybeSingle();
+  if (appointment) await tellMaster(Number(appointment.master_id), 'new', appointment);
 }
 
 // The attendance sheet names a master; the fines are keyed by his id.
@@ -744,31 +757,43 @@ Deno.serve(async (req) => {
 
     // Bookings taken by phone or Telegram: the owner, the administrator and
     // the partner. A master books nobody; he records the clients who come.
-    if (['bookingSlots', 'addBooking'].includes(action) && !(isOwnerCaller || isFrontDesk || isPartner)) {
+    if (['bookingSlots', 'addBooking', 'moveBooking'].includes(action) && !(isOwnerCaller || isFrontDesk || isPartner)) {
       return json({ error: 'forbidden' }, 403);
     }
 
     if (action === 'bookingSlots') {
       const masterId = Number(payload.master_id);
       const date = String(payload.date ?? '');
+      // Free times for moving a booking: its own length, and its own time is
+      // not in its way.
+      const movingId = UUID_PATTERN.test(String(payload.appointment_id ?? '')) ? String(payload.appointment_id) : null;
       const serviceIds = Array.isArray(payload.service_ids)
         ? [...new Set(payload.service_ids.map((value: unknown) => String(value)))].slice(0, 10)
         : [];
-      if (!Number.isInteger(masterId) || !isValidIsoDate(date) || !serviceIds.length) {
+      if (!Number.isInteger(masterId) || !isValidIsoDate(date) || (!serviceIds.length && !movingId)) {
         return json({ error: 'invalid_booking' }, 400);
       }
       if (date < tashkentDate() || date > tashkentDate(62)) return json({ error: 'invalid_booking' }, 400);
-      const { data: services, error: servicesError } = await sb.from('booking_services')
-        .select('id, duration_minutes').in('id', serviceIds).eq('active', true);
-      if (servicesError) return json({ error: servicesError.message }, 500);
-      if ((services ?? []).length !== serviceIds.length) return json({ error: 'service_not_found' }, 404);
-      const duration = (services ?? []).reduce((sum: number, service: { duration_minutes: number }) => sum + Number(service.duration_minutes), 0);
+      let duration = 0;
+      if (movingId) {
+        const moving = await sb.from('appointments').select('duration_minutes').eq('id', movingId).maybeSingle();
+        if (moving.error) return json({ error: moving.error.message }, 500);
+        if (!moving.data) return json({ error: 'appointment_not_found' }, 404);
+        duration = Number(moving.data.duration_minutes);
+      } else {
+        const { data: services, error: servicesError } = await sb.from('booking_services')
+          .select('id, duration_minutes').in('id', serviceIds).eq('active', true);
+        if (servicesError) return json({ error: servicesError.message }, 500);
+        if ((services ?? []).length !== serviceIds.length) return json({ error: 'service_not_found' }, 404);
+        duration = (services ?? []).reduce((sum: number, service: { duration_minutes: number }) => sum + Number(service.duration_minutes), 0);
+      }
       const { data, error } = await sb.rpc('maestro_booking_slots', {
         p_duration_minutes: duration,
         p_from: date,
         p_to: date,
         p_master_ids: [masterId],
         p_not_before: new Date().toISOString(),
+        p_except_appointment: movingId,
       });
       if (error) return json({ error: error.message }, 500);
       return json({ duration, times: (data ?? []).map((row: { slot_start: string }) => row.slot_start) });
@@ -789,6 +814,39 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 500);
       if (!data?.ok) return json(data ?? { error: 'invalid_booking' }, data?.error === 'slot_unavailable' ? 409 : 400);
       if (data.appointment_id) inBackground(tellMasterAboutBooking(String(data.appointment_id)));
+      return json(data);
+    }
+
+    // Another time or another master, by the same rule as a new booking. The
+    // master hears of it; when the master changes, both do.
+    if (action === 'moveBooking') {
+      const appointmentId = UUID_PATTERN.test(String(payload.id ?? '')) ? String(payload.id) : null;
+      const masterId = Number(payload.master_id);
+      const startsAt = String(payload.starts_at ?? '');
+      if (!appointmentId || !Number.isInteger(masterId) || Number.isNaN(Date.parse(startsAt))) {
+        return json({ error: 'invalid_booking' }, 400);
+      }
+      const { data, error } = await sb.rpc('maestro_move_appointment', {
+        p_appointment_id: appointmentId,
+        p_master_id: masterId,
+        p_starts_at: startsAt,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) {
+        const code = data?.error;
+        return json(data ?? { error: 'invalid_booking' }, code === 'appointment_not_found' ? 404 : ['slot_unavailable', 'appointment_closed'].includes(code) ? 409 : 400);
+      }
+      if (!data.unchanged) {
+        const moved = data.appointment as BookingNoticeRow;
+        const before = Number(data.previous_master_id);
+        if (before === Number(moved.master_id)) {
+          inBackground(tellMaster(before, 'moved', moved, data.previous_starts_at));
+        } else {
+          inBackground(tellMaster(before, 'away', { ...moved, starts_at: data.previous_starts_at }));
+          inBackground(tellMaster(Number(moved.master_id), 'new', moved));
+        }
+      }
       return json(data);
     }
 
@@ -1383,6 +1441,12 @@ Deno.serve(async (req) => {
           return json(result, 409);
         }
         return json(result, 400);
+      }
+      // A booking cancelled by the desk reaches its master; one he closed
+      // himself does not.
+      const closed = result.appointment as BookingNoticeRow | undefined;
+      if (payload.outcome === 'cancelled' && !result.unchanged && closed && Number(closed.master_id) !== myMasterId) {
+        inBackground(tellMaster(Number(closed.master_id), 'cancelled', closed));
       }
       return json(result);
     }

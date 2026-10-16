@@ -230,7 +230,9 @@ create or replace function public.maestro_booking_slots(
   p_from date,
   p_to date,
   p_master_ids bigint[],
-  p_not_before timestamptz
+  p_not_before timestamptz,
+  -- A booking being moved does not stand in its own way.
+  p_except_appointment uuid default null
 )
 returns table (master_id bigint, slot_start timestamptz)
 language sql
@@ -275,6 +277,7 @@ as $$
       select 1 from public.appointments as appointment
       where appointment.master_id = candidate.master_id
         and appointment.status in ('pending', 'confirmed')
+        and appointment.id is distinct from p_except_appointment
         and tstzrange(appointment.starts_at, appointment.ends_at, '[)')
           && tstzrange(candidate.slot_start, candidate.slot_end, '[)')
     )
@@ -904,7 +907,7 @@ declare
 begin
   foreach fn in array array[
     'public.maestro_booking_rate_hit(text, text, integer, interval)',
-    'public.maestro_booking_slots(integer, date, date, bigint[], timestamptz)',
+    'public.maestro_booking_slots(integer, date, date, bigint[], timestamptz, uuid)',
     'public.maestro_booking_nearest(integer, date, date, bigint[], timestamptz, integer)',
     'public.maestro_booking_days(integer, date, date, bigint[], timestamptz)',
     'public.maestro_booking_view(public.appointments)',

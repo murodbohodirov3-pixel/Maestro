@@ -5,9 +5,10 @@
 -- * By 18:00 every master who is due that day has either an arrival or a day
 --   off (the partner, Жамшид, sets days off). Anyone with neither is fined
 --   100 000 by the 18:00 job. A day off set later takes that fine back.
--- * A booking whose time has started half an hour ago and is still open sends
---   the master a reminder from the bot, once; a master with a booking that has
---   ended and is still open records no other visit until he closes it.
+-- * A booking that ended a quarter of an hour ago and is still open sends the
+--   master a reminder from the bot, once — after the end, so a client still in
+--   the chair is never asked about; a master with a booking that has ended and
+--   is still open records no other visit until he closes it.
 -- Fines before auto_fines_since are left as they were; amounts live in settings.
 -- Bookings before booking_control_since (24 left open from July to September)
 -- neither block nor remind: the control starts on the day it is switched on.
@@ -96,7 +97,12 @@ begin
 
   threshold := public.maestro_late_threshold(p_master_id, p_day);
   arrived_minutes := split_part(p_arrived, ':', 1)::integer * 60 + split_part(p_arrived, ':', 2)::integer;
-  if threshold is null or arrived_minutes <= threshold or coalesce(config.late_fine_amount, 0) <= 0 then
+  -- A master who comes in on his day off is not late for anything.
+  if threshold is null or arrived_minutes <= threshold or coalesce(config.late_fine_amount, 0) <= 0
+    or exists (
+      select 1 from public.master_day_statuses as day_status
+      where day_status.master_id = p_master_id and day_status.work_date = p_day and day_status.status = 'day_off'
+    ) then
     perform public.maestro_drop_auto_fine(p_master_id, p_day, 'late', p_actor_user_id);
     return jsonb_build_object('fined', false);
   end if;
@@ -187,15 +193,16 @@ begin
 end;
 $$;
 
--- Open bookings that started half an hour ago and were not yet reminded about:
--- claimed once, with the master's Telegram id.
+-- Open bookings that ended a quarter of an hour ago and were not yet reminded
+-- about: claimed once, with the master's Telegram id.
 create or replace function public.maestro_claim_master_reminders(p_limit integer default 25)
 returns table (
   appointment_id uuid,
   master_chat_id text,
   client_name text,
   service_name text,
-  starts_at timestamptz
+  starts_at timestamptz,
+  ends_at timestamptz
 )
 language sql
 set search_path = ''
@@ -205,8 +212,8 @@ as $$
     from public.appointments as appointment
     where (appointment.status = 'confirmed' or (appointment.status = 'pending' and appointment.source <> 'web'))
       and appointment.master_reminded_at is null
-      and appointment.starts_at <= now() - interval '30 minutes'
-      and appointment.starts_at > now() - interval '1 day'
+      and appointment.ends_at <= now() - interval '15 minutes'
+      and appointment.ends_at > now() - interval '1 day'
       and appointment.starts_at >= coalesce((select booking_control_since from public.settings where id = 1), 'infinity')
     order by appointment.starts_at
     limit greatest(1, least(coalesce(p_limit, 25), 50))
@@ -225,7 +232,7 @@ as $$
         limit 1),
       (select master.telegram_id::text from public.masters as master where master.id = claimed.master_id)
     ),
-    claimed.client_name, claimed.service_name, claimed.starts_at
+    claimed.client_name, claimed.service_name, claimed.starts_at, claimed.ends_at
   from claimed
 $$;
 

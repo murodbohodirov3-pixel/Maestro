@@ -7,8 +7,8 @@
 //   c:<id> / x:<id>   → confirm with the known number / cancel
 //   n:<id>            → a master marks his booking «Не пришёл»
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
-// clients' 24 h and 2 h reminders and the masters' «закройте запись» half an
-// hour into an open booking; {"action":"webhook_info"} and {"action":"set_webhook"}
+// clients' 24 h and 2 h reminders and the masters' «закройте запись» a quarter
+// of an hour after an open booking ended; {"action":"webhook_info"} and {"action":"set_webhook"}
 // manage the webhook without the bot token ever leaving the server.
 import {
   bookingLines,
@@ -317,7 +317,8 @@ async function sendReminders() {
   return { claimed: (data ?? []).length, sent, masters: await sendMasterReminders() };
 }
 
-// Half an hour into a booking still open, its master hears about it once.
+// A quarter of an hour after a booking ended still open, its master hears
+// about it once.
 async function sendMasterReminders() {
   const { data, error } = await db.rpc('maestro_claim_master_reminders', { p_limit: 25 });
   if (error) throw error;
@@ -326,6 +327,7 @@ async function sendMasterReminders() {
     if (!notice.master_chat_id) continue;
     const result = await send(notice.master_chat_id, masterReminder({
       startsAt: notice.starts_at,
+      endsAt: notice.ends_at,
       clientName: notice.client_name,
       serviceName: notice.service_name,
     }), {

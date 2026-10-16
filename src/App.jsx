@@ -307,6 +307,9 @@ const ACTION_ERROR_TEXT = {
   schedule_not_found: 'Этот график уже отменён — обновите экран.',
   not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
   invalid_fine: 'Проверьте сумму штрафа.',
+  slot_unavailable: 'Это время уже занято — выберите другое.',
+  appointment_closed: 'Запись уже закрыта — обновите экран.',
+  appointment_not_found: 'Запись не найдена — обновите экран.',
 };
 
 function actionErrorText(error) {
@@ -1682,8 +1685,76 @@ function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = n
   );
 }
 
+// «Сегодня», «Завтра», then «Пт 23».
+function dayChipLabel(day, index) {
+  if (index === 0) return 'Сегодня';
+  if (index === 1) return 'Завтра';
+  return `${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7]} ${Number(day.slice(8))}`;
+}
+
+// Another time or another master for an open booking (owner's request of
+// 2026-10-16). The master hears of it from the bot.
+function MoveBooking({ data, appointment, reload, setError, onDone }) {
+  const [masterId, setMasterId] = useState(appointment.master_id);
+  const [date, setDate] = useState(() => {
+    const day = tashkentParts(appointment.starts_at).date;
+    return day < TODAY ? TODAY : day;
+  });
+  const [times, setTimes] = useState(null);
+  const [startsAt, setStartsAt] = useState(null);
+  const { run, busy } = useAction(setError);
+  const days = Array.from({ length: 7 }, (_, index) => shiftDate(TODAY, index));
+
+  useEffect(() => {
+    setStartsAt(null);
+    setTimes(null);
+    let alive = true;
+    callLegacyApi('bookingSlots', { master_id: Number(masterId), date, appointment_id: appointment.id })
+      .then((result) => { if (alive) setTimes(result.times || []); })
+      .catch((error) => { if (alive) setError(actionErrorText(error)); });
+    return () => { alive = false; };
+  }, [masterId, date, appointment.id, setError]);
+
+  async function save() {
+    if (!startsAt) return setError('Выберите время.');
+    const ok = await run(() => callLegacyApi('moveBooking', { id: appointment.id, master_id: Number(masterId), starts_at: startsAt }));
+    if (!ok) return;
+    haptic('success');
+    reload();
+    onDone();
+  }
+
+  return (
+    <div className="stock-form move-booking">
+      <div className="seg">
+        {data.activeMasters.map((master) => (
+          <button className={String(master.id) === String(masterId) ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)}>{master.name}</button>
+        ))}
+      </div>
+      <div className="day-chips">
+        {days.map((day, index) => (
+          <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>{dayChipLabel(day, index)}</button>
+        ))}
+        <input aria-label="Другая дата" type="date" value={date} min={TODAY} onChange={(event) => event.target.value && setDate(event.target.value)} />
+      </div>
+      {times ? (
+        times.length ? (
+          <div className="time-chips">
+            {times.map((time) => (
+              <button className={time === startsAt ? 'on' : ''} key={time} type="button" onClick={() => setStartsAt(time)}>{tashkentParts(time).time}</button>
+            ))}
+          </div>
+        ) : <p className="hint">Свободного времени нет.</p>
+      ) : null}
+      <button className="btn" type="button" disabled={busy || !startsAt} onClick={save}>{busy ? 'Переношу…' : 'Перенести'}</button>
+    </div>
+  );
+}
+
 function BookingSheet({ data, appointment, reload, setError, onClose, onVisit }) {
   const isOwner = data.appRole === 'owner';
+  const canMove = ['owner', 'admin', 'partner'].includes(data.appRole);
+  const [moving, setMoving] = useState(false);
   const [clientOpen, setClientOpen] = useState(false);
   const closeClient = useCallback(() => setClientOpen(false), []);
   const master = data.masters.find((item) => String(item.id) === String(appointment.master_id));
@@ -1726,10 +1797,15 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
           </p>
         ) : (
           <>
-            {isOwner && onVisit && canRecordVisit(appointment) ? (
+            {isOwner && onVisit && canRecordVisit(appointment) && !moving ? (
               <button className="btn" type="button" onClick={() => onVisit(appointment)}>Пришёл → визит</button>
             ) : null}
-            <OutcomeChooser appointment={appointment} reload={reload} setError={setError} onDone={onClose} />
+            {canMove ? (
+              moving
+                ? <MoveBooking data={data} appointment={appointment} reload={reload} setError={setError} onDone={onClose} />
+                : <button className="btn ghost" type="button" onClick={() => setMoving(true)}>Перенести</button>
+            ) : null}
+            {moving ? null : <OutcomeChooser appointment={appointment} reload={reload} setError={setError} onDone={onClose} />}
           </>
         )}
         {clientOpen ? <ClientSheet clientId={appointment.client_id} onClose={closeClient} setError={setError} /> : null}
@@ -1923,7 +1999,7 @@ function BookingsView({ data, reload, setError, onVisit }) {
       <div className="wide day-chips">
         {days.map((day, index) => (
           <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>
-            {index === 0 ? 'Сегодня' : index === 1 ? 'Завтра' : `${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7]} ${Number(day.slice(8))}`}
+            {dayChipLabel(day, index)}
           </button>
         ))}
         <input aria-label="Другая дата" type="date" value={date} min={TODAY} onChange={(event) => event.target.value && setDate(event.target.value)} />
