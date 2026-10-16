@@ -1686,7 +1686,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
           </div>
           <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
         </div>
-        {isOwner && appointment.client_phone ? (
+        {['owner', 'admin', 'partner'].includes(data.appRole) && appointment.client_phone ? (
           <div className="settings-actions client-contact">
             <a className="btn ghost" href={`tel:${appointment.client_phone}`}>Позвонить</a>
           </div>

@@ -27,8 +27,7 @@ export function partnerMayCall(action) {
 // owner on 2026-10-15 and 16, she sells goods from Склад and keeps the
 // bookings: books a client over the phone (finding or making his card), marks
 // a no-show or a cancellation. Deliveries, write-offs and every decision are
-// the owner's; she sees no revenue, payouts, expenses or purchase prices, and
-// client numbers only masked.
+// the owner's; she sees no revenue, payouts, expenses or purchase prices.
 export const ADMIN_ROLE = 'admin';
 
 const ADMIN_ACTIONS = new Set([
@@ -75,9 +74,16 @@ export function stockForDesk({ products = [], receipts = [], sales = [], writeof
   return { products: stock, product_sales: ownSales };
 }
 
-// A client's number as anyone but the owner sees it: the operator code and the
-// last two digits, «+998 90 *** ** 22». Enough to tell two Азизs apart, not
-// enough to take the base along.
+// Who sees a client's number whole: the owner, and the two who take bookings
+// and call clients to confirm them — the administrator and the partner
+// (owner's decision of 2026-10-16). A master never does.
+export function seesFullPhones(role) {
+  return ['owner', 'admin', 'partner'].includes(role);
+}
+
+// A client's number as a master sees it: the operator code and the last two
+// digits, «+998 90 *** ** 22». Enough to tell two Азизs apart, not enough to
+// take the base along.
 export function maskPhoneForStaff(phone) {
   const digits = String(phone ?? '').replace(/\D/g, '');
   if (!digits) return null;

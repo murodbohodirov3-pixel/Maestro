@@ -10,6 +10,7 @@ import {
   maskPhoneForStaff,
   partnerMayCall,
   PARTNER_ROLE,
+  seesFullPhones,
   stockForDesk,
 } from '../_shared/access.js';
 
@@ -102,8 +103,8 @@ async function fetchStockRows(table: string, orderColumn: string) {
 }
 
 // Bookings with what their cards show about the client. The hold's token,
-// address and Telegram ids never leave the server; for anyone but the owner
-// the number is masked.
+// address and Telegram ids never leave the server; for a master the number is
+// masked.
 async function fetchAppointments(filters: Record<string, string | number> = {}, maskPhones = false) {
   const rows: Record<string, unknown>[] = [];
   const fromDate = `${tashkentDate(-60)}T00:00:00+05:00`;
@@ -350,12 +351,13 @@ function formatSum(value: number) {
 
 type ClientRow = { id: string; full_name: string; phone_e164: string | null; known_before: boolean; lifecycle_status?: string };
 
-// A client as a master sees him: the number masked. The owner sees it whole.
-function clientForCaller(client: ClientRow & { visit_count?: number; last_visit?: string | null; last_master?: string | null }, isOwnerCaller: boolean) {
+// A client as the caller may see him: the number whole for the owner, the
+// administrator and the partner, masked for a master.
+function clientForCaller(client: ClientRow & { visit_count?: number; last_visit?: string | null; last_master?: string | null }, fullPhone: boolean) {
   return {
     id: client.id,
     full_name: client.full_name,
-    phone: isOwnerCaller ? client.phone_e164 : maskPhoneForStaff(client.phone_e164),
+    phone: fullPhone ? client.phone_e164 : maskPhoneForStaff(client.phone_e164),
     has_phone: Boolean(client.phone_e164),
     known_before: client.known_before === true,
     blocked: client.lifecycle_status === 'blocked',
@@ -531,10 +533,10 @@ Deno.serve(async (req) => {
         userId: appUserResult.data.id,
         since: tashkentDate(-1),
       });
-      // And the bookings: every master's day, numbers masked.
+      // And the bookings: every master's day, with numbers to call clients.
       const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses] = await Promise.all([
         sb.from('masters').select('id, name, active').eq('active', true).order('id'),
-        fetchAppointments({}, true),
+        fetchAppointments({}, false),
         fetchAllRows('booking_services', 'id'),
         fetchAllRows('master_schedule_rules', 'iso_weekday'),
         fetchAllRows('master_day_statuses', 'work_date'),
@@ -580,8 +582,8 @@ Deno.serve(async (req) => {
           canManageCalendar || isPartner ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
           // A partner reads the attendance register, and a day off is part of it.
           canManageCalendar || isPartner ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
-          // The partner books too, and sees numbers masked like everyone but the owner.
-          canManageCalendar || isPartner ? fetchAppointments({}, isPartner) : Promise.resolve([]),
+          // The partner books too, and calls clients like the owner does.
+          canManageCalendar || isPartner ? fetchAppointments() : Promise.resolve([]),
           // Everyone who sees attendance needs the schedule: a late arrival is
           // measured against the master's own shift, not only the salon cutoff.
           fetchAllRows('master_schedule_rules', 'iso_weekday'),
@@ -652,6 +654,7 @@ Deno.serve(async (req) => {
     // or makes a card for him before recording a visit. Only the owner sees a
     // number whole and reads a card's history.
     const isOwnerCaller = appUserResult.data.role === 'owner';
+    const fullPhones = seesFullPhones(appUserResult.data.role);
     if (['searchClients', 'addClient'].includes(action) && !(isOwnerCaller || myMaster || isFrontDesk || isPartner)) {
       return json({ error: 'forbidden' }, 403);
     }
@@ -661,7 +664,7 @@ Deno.serve(async (req) => {
       if (query.length < 2) return json({ clients: [] });
       const { data, error } = await sb.rpc('maestro_search_clients', { p_query: query, p_limit: 10 });
       if (error) return json({ error: error.message }, 500);
-      return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, isOwnerCaller)) });
+      return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, fullPhones)) });
     }
 
     if (action === 'addClient') {
@@ -680,7 +683,7 @@ Deno.serve(async (req) => {
           const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: data.client_id });
           return json({
             error: 'client_exists',
-            client: existing.data ? clientForCaller({ ...existing.data, visit_count: visits.data ?? 0 }, isOwnerCaller) : null,
+            client: existing.data ? clientForCaller({ ...existing.data, visit_count: visits.data ?? 0 }, fullPhones) : null,
           }, 409);
         }
         return json({ error: data?.error || 'invalid_client' }, 400);
@@ -688,7 +691,7 @@ Deno.serve(async (req) => {
       const created = await sb.from('clients').select('id, full_name, phone_e164, known_before, lifecycle_status')
         .eq('id', data.client_id).maybeSingle();
       if (created.error || !created.data) return json({ error: created.error?.message || 'client_not_found' }, 500);
-      return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, isOwnerCaller) });
+      return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, fullPhones) });
     }
 
     // Bookings taken by phone or Telegram: the owner, the administrator and

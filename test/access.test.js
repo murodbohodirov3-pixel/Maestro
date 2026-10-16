@@ -7,6 +7,7 @@ import {
   expenseForPartner,
   maskPhoneForStaff,
   partnerMayCall,
+  seesFullPhones,
   PARTNER_ROLE,
   stockForDesk,
 } from '../supabase/functions/_shared/access.js';
@@ -131,4 +132,9 @@ test('masters see a client number as its operator code and last two digits', () 
   assert.equal(maskPhoneForStaff(null), null);
   assert.equal(maskPhoneForStaff(''), null);
   assert.doesNotMatch(maskPhoneForStaff('+998901234522'), /1234/);
+});
+
+test('numbers are whole for those who call clients, masked for masters', () => {
+  for (const role of ['owner', 'admin', 'partner']) assert.equal(seesFullPhones(role), true, role);
+  for (const role of ['master', 'finance', '', undefined, null]) assert.equal(seesFullPhones(role), false, String(role));
 });
