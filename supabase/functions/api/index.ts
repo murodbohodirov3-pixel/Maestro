@@ -559,7 +559,7 @@ Deno.serve(async (req) => {
         .from('audit_events')
         .select('id,occurred_at,entity_type,entity_id,operation,event_name,actor_user_id,actor_name,actor_role,actor_external_id,source,correlation_id,changed_fields,old_values,new_values,metadata')
         .eq('operation', 'delete')
-        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment', 'sale', 'attendance', 'product_receipts', 'product_sales', 'product_writeoffs'])
+        .in('entity_type', ['fine', 'expense', 'debt', 'debt_payment', 'sale', 'attendance', 'product_receipts', 'product_sales', 'product_writeoffs', 'master_advances', 'master_payouts'])
         .order('id', { ascending: false })
         .limit(limit + 1);
       if (/^\d+$/.test(cursor)) query = query.lt('id', cursor);
@@ -633,7 +633,7 @@ Deno.serve(async (req) => {
       const byDate = since ? { column: 'date', since } : null;
 
       if (isAdmin || isPartner) {
-        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients, products, product_receipts, product_sales, product_writeoffs] = await Promise.all([
+        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients, products, product_receipts, product_sales, product_writeoffs, master_advances, master_payouts] = await Promise.all([
           fetchAllRows('sales', 'd', {}, byDay),
           fetchAllRows('fines', 'id', {}, byDay),
           fetchAllRows('attendance', 'id', {}, byDay),
@@ -654,6 +654,9 @@ Deno.serve(async (req) => {
           fetchStockRows('product_receipts', 'receipt_date'),
           fetchStockRows('product_sales', 'sale_date'),
           fetchStockRows('product_writeoffs', 'writeoff_date'),
+          // Advances and payouts: a row a week per master, small for years.
+          fetchAllRows('master_advances', 'id'),
+          fetchAllRows('master_payouts', 'id'),
         ]);
 
         return json({
@@ -676,13 +679,15 @@ Deno.serve(async (req) => {
           product_receipts,
           product_sales,
           product_writeoffs,
+          master_advances,
+          master_payouts,
           appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
           windowSince: since,
         });
       }
 
-      const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules] = await Promise.all([
+      const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules, master_advances, master_payouts] = await Promise.all([
         fetchAllRows('sales', 'd', { master: myMaster }, byDay),
         fetchAllRows('fines', 'id', { master: myMaster }, byDay),
         fetchAllRows('attendance', 'id', { master: myMaster }, byDay),
@@ -690,6 +695,9 @@ Deno.serve(async (req) => {
         fetchAllRows('master_day_statuses', 'work_date', { master_id: myMasterId! }),
         fetchAppointments({ master_id: myMasterId! }, true),
         fetchAllRows('master_schedule_rules', 'iso_weekday', { master_id: myMasterId! }),
+        // His own advances and payouts: what he will get on Sunday.
+        fetchAllRows('master_advances', 'id', { master_id: myMasterId! }),
+        fetchAllRows('master_payouts', 'id', { master_id: myMasterId! }),
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
@@ -706,6 +714,8 @@ Deno.serve(async (req) => {
         master_day_statuses,
         appointments,
         master_schedule_rules,
+        master_advances,
+        master_payouts,
         sessionToken: issuedSessionToken,
         windowSince: since,
       });
@@ -1486,6 +1496,85 @@ Deno.serve(async (req) => {
       });
       const response = auditedDeleteResponse(action, result, error);
       return json(response.body, response.status);
+    }
+
+    // Advances and weekly payouts (owner's decisions of 2026-10-16): the
+    // owner's alone. An advance is the master's money paid early; it lowers
+    // what is owed for its week and is neither a fine nor salon income.
+    if (['addAdvance', 'delAdvance', 'markPayout', 'delPayout', 'fineToAdvance'].includes(action)) {
+      if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
+    }
+
+    if (action === 'addAdvance') {
+      const masterId = Number(payload.master_id);
+      const amount = Math.round(Number(payload.amount));
+      if (!Number.isInteger(masterId) || !Number.isFinite(amount) || amount <= 0 || amount > 100_000_000) {
+        return json({ error: 'invalid_advance' }, 400);
+      }
+      const master = await sb.from('masters').select('id, name').eq('id', masterId).maybeSingle();
+      if (master.error) return json({ error: master.error.message }, 500);
+      if (!master.data) return json({ error: 'master_not_found' }, 404);
+      const note = payload.note ? String(payload.note).trim().slice(0, 200) || null : null;
+      const { error } = await sb.from('master_advances').insert({
+        master_id: masterId,
+        master: master.data.name,
+        amount,
+        given_on: tashkentDate(),
+        note,
+        created_by_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (action === 'markPayout') {
+      const masterId = Number(payload.master_id);
+      const weekStart = String(payload.week_start ?? '');
+      const amount = Math.round(Number(payload.amount));
+      const whole = (value: unknown) => Math.max(0, Math.round(Number(value) || 0));
+      const monday = isValidIsoDate(weekStart) && new Date(`${weekStart}T12:00:00Z`).getUTCDay() === 1;
+      if (!Number.isInteger(masterId) || !monday || !Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000) {
+        return json({ error: 'invalid_payout' }, 400);
+      }
+      // A week not yet begun has nothing to pay.
+      if (weekStart > tashkentDate()) return json({ error: 'invalid_payout' }, 400);
+      const master = await sb.from('masters').select('id, name').eq('id', masterId).maybeSingle();
+      if (master.error) return json({ error: master.error.message }, 500);
+      if (!master.data) return json({ error: 'master_not_found' }, 404);
+      const weekEnd = new Date(`${weekStart}T12:00:00Z`);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+      const advances = await sb.from('master_advances').select('amount')
+        .eq('master_id', masterId).gte('given_on', weekStart).lte('given_on', weekEnd.toISOString().slice(0, 10));
+      if (advances.error) return json({ error: advances.error.message }, 500);
+      const { error } = await sb.from('master_payouts').insert({
+        master_id: masterId,
+        master: master.data.name,
+        week_start: weekStart,
+        amount,
+        earned: whole(payload.earned),
+        fines: whole(payload.fines),
+        advances: (advances.data ?? []).reduce((sum: number, row: { amount: number }) => sum + Number(row.amount), 0),
+        paid_by_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
+    if (['delAdvance', 'delPayout', 'fineToAdvance'].includes(action)) {
+      const id = Number(payload.id);
+      if (!Number.isInteger(id)) return json({ error: 'invalid_request' }, 400);
+      const rpc = action === 'delAdvance' ? 'maestro_delete_advance'
+        : action === 'delPayout' ? 'maestro_delete_payout'
+          : 'maestro_convert_fine_to_advance';
+      const { data: result, error } = await sb.rpc(rpc, action === 'fineToAdvance'
+        ? { p_fine_id: id, p_actor_user_id: appUserResult.data.id }
+        : { p_id: id, p_actor_user_id: appUserResult.data.id });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) {
+        const code = String(result?.error || 'invalid_request');
+        return json(result, code.endsWith('_not_found') ? 404 : 409);
+      }
+      return json(result);
     }
 
     if (action === 'setSettings') {

@@ -4854,6 +4854,92 @@ label {
 }
 
 /* Команда → «Записи»: one day, masters side by side, time down the page. */
+/* Команда → «Выплаты»: one card a master, the week's figures and what is owed. */
+.payout-card {
+  display: grid;
+  gap: 12px;
+}
+
+.payout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 17px;
+}
+
+.payout-lines {
+  display: grid;
+  gap: 4px;
+}
+
+.payout-lines span {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.payout-lines b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.payout-lines b.danger {
+  color: var(--fine);
+}
+
+.payout-due {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.payout-due span {
+  font-weight: 600;
+}
+
+.payout-due strong {
+  font-size: 22px;
+  color: var(--ink);
+}
+
+.payout-due.is-negative strong {
+  color: var(--fine);
+}
+
+.payout-history {
+  display: grid;
+  gap: 4px;
+}
+
+.payout-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.payout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.payout-actions .btn {
+  flex: 1;
+}
+
+.payout-advance {
+  display: grid;
+  gap: 8px;
+}
+
 .unclosed-card {
   display: grid;
   gap: 8px;

@@ -55,6 +55,7 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
+import { masterWeek, weekOf, weekPayouts, weekStartOf } from './utils/payouts.js';
 import {
   blockPosition,
   canRecordVisit,
@@ -310,6 +311,13 @@ const ACTION_ERROR_TEXT = {
   slot_unavailable: 'Это время уже занято — выберите другое.',
   appointment_closed: 'Запись уже закрыта — обновите экран.',
   appointment_not_found: 'Запись не найдена — обновите экран.',
+  invalid_advance: 'Проверьте сумму аванса.',
+  invalid_payout: 'Проверьте сумму выплаты.',
+  advance_week_paid: 'Эта неделя уже выплачена — аванс не изменить.',
+  advance_not_found: 'Аванс уже удалён — обновите экран.',
+  payout_not_found: 'Выплата уже удалена — обновите экран.',
+  payout_delete_window_expired: 'Выплату старше трёх дней удалить нельзя.',
+  fine_is_automatic: 'Автоматический штраф не переводится в аванс.',
 };
 
 function actionErrorText(error) {
@@ -554,6 +562,8 @@ function normalizeData(data) {
     productReceipts: data.product_receipts || [],
     productSales: data.product_sales || [],
     productWriteoffs: data.product_writeoffs || [],
+    advances: data.master_advances || [],
+    payouts: data.master_payouts || [],
     settings,
   };
 }
@@ -1081,7 +1091,7 @@ function MasterSheet({ data, master, onClose }) {
           ) : null}
           {isNew && firstDay ? <span className="revenue-hero-note">работает с {shortRange({ from: firstDay, to: firstDay })}</span> : null}
           <div className="revenue-hero-inset">
-            <span>К выплате</span>
+            <span>Заработал</span>
             <strong>{money(payFor(monthRange))}</strong>
           </div>
         </div>
@@ -2503,10 +2513,12 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         />
       </div>
 
+      {data.role === 'master' ? <MyWeek data={data} master={masterProfile} /> : null}
+
       <div className="card wide hero-card master-earnings">
         <SectionHeading label="Мой заработок" range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
-        <div className="hero">{money(pay)} <small>сум к выплате</small></div>
+        <div className="hero">{money(pay)} <small>сум заработано</small></div>
         <div className="tiles">
           {/* The rate is already in the header next to the master's name, and it
               does not change from one period to the next. A tile for it took the
@@ -2838,7 +2850,7 @@ function AdminView({ data, reload, setError }) {
                 {[
                   ['name', 'Мастер'],
                   ['revenue', 'Выручка'],
-                  ['pay', 'К выплате'],
+                  ['pay', 'Заработал'],
                 ].map(([key, label]) => (
                   <th aria-sort={masterSort.key === key ? (masterSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'} key={key}>
                     <button className="master-sort" type="button" onClick={() => changeMasterSort(key)}>
@@ -3077,6 +3089,13 @@ function AttendanceView({ data, reload, setError }) {
     }
   }
 
+  // An old «штраф-аванс» becomes the advance it was (owner's decision of
+  // 2026-10-16): same master, amount and day, and it leaves the fines.
+  async function fineToAdvance(fine) {
+    if (!await confirmAction(`Это аванс, а не штраф: ${fine.master}, ${money(fine.amount)} сум?`)) return;
+    await run(() => callLegacyApi('fineToAdvance', { id: fine.id }).then(reload), 'Переведено в авансы.');
+  }
+
   async function deleteFine(fine) {
     if (!recentFineCanBeDeleted(rowDate(fine))) {
       setError('Можно удалять только штрафы не старше 7 дней.');
@@ -3290,6 +3309,9 @@ function AttendanceView({ data, reload, setError }) {
                   <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
                   <span>{fineReasonLabel(fine.reason)}{fine.auto ? ' · авто' : ''}</span>
                 </div>
+                {data.appRole === 'owner' && !fine.auto && rowDate(fine) >= shiftDate(TODAY, -14) ? (
+                  <button className="link-button" type="button" onClick={() => fineToAdvance(fine)}>Это аванс</button>
+                ) : null}
                 <button
                   className="del"
                   disabled={!canDelete}
@@ -4250,6 +4272,194 @@ function DeskStockView({ data, reload, setError }) {
   );
 }
 
+// Команда → «Выплаты» (owner's decisions of 2026-10-16): a week runs Monday to
+// Sunday and is paid on Sunday night. An advance is the master's money paid
+// early: it lowers what is owed for its week and nothing else. The partner
+// reads it; only the owner gives advances and marks a week paid.
+const MONTHS_GENITIVE = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+// «12–18 октября», or «29 сентября – 5 октября» across a month's end.
+function weekLabel(week) {
+  const [, fromMonth, fromDay] = week.from.split('-').map(Number);
+  const [, toMonth, toDay] = week.to.split('-').map(Number);
+  return fromMonth === toMonth
+    ? `${fromDay}–${toDay} ${MONTHS_GENITIVE[toMonth - 1]}`
+    : `${fromDay} ${MONTHS_GENITIVE[fromMonth - 1]} – ${toDay} ${MONTHS_GENITIVE[toMonth - 1]}`;
+}
+
+function PayoutsView({ data, reload, setError }) {
+  const isOwner = data.appRole === 'owner';
+  const thisWeek = weekStartOf(TODAY);
+  const [weekStart, setWeekStart] = useState(thisWeek);
+  const [advanceFor, setAdvanceFor] = useState(null);
+  const [advanceAmount, setAdvanceAmount] = useState('');
+  const [advanceNote, setAdvanceNote] = useState('');
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const week = weekOf(weekStart);
+  const rows = weekPayouts({
+    masters: data.masters,
+    sales: data.sales.filter(isCountedSale),
+    fines: data.fines,
+    advances: data.advances,
+    payouts: data.payouts,
+    week,
+  });
+  const totalDue = rows.reduce((sum, row) => sum + Math.max(0, row.due), 0);
+  const totalAdvances = rows.reduce((sum, row) => sum + row.advances, 0);
+  const totalPaid = rows.reduce((sum, row) => sum + row.paid, 0);
+
+  function openAdvance(masterId) {
+    setAdvanceFor(advanceFor === masterId ? null : masterId);
+    setAdvanceAmount('');
+    setAdvanceNote('');
+    setMessage('');
+  }
+
+  async function giveAdvance(row) {
+    const amount = Number(advanceAmount);
+    if (!amount || amount <= 0) return setError('Введите сумму аванса.');
+    const ok = await run(() => callLegacyApi('addAdvance', {
+      master_id: row.master.id,
+      amount,
+      note: advanceNote.trim() || null,
+    }), `Аванс ${money(amount)} сум: ${row.master.name}.`);
+    if (!ok) return;
+    haptic('success');
+    setAdvanceFor(null);
+    reload();
+  }
+
+  async function markPaid(row) {
+    if (!await confirmAction(`${row.master.name}: выплачено ${money(row.due)} сум за ${weekLabel(week)}?`)) return;
+    const ok = await run(() => callLegacyApi('markPayout', {
+      master_id: row.master.id,
+      week_start: week.from,
+      amount: row.due,
+      earned: row.earned,
+      fines: row.fines,
+    }), `Выплачено: ${row.master.name}, ${money(row.due)} сум.`);
+    if (!ok) return;
+    haptic('success');
+    reload();
+  }
+
+  async function takeBack(kind, item, what) {
+    if (!await confirmAction(`Удалить ${what}?`)) return;
+    const ok = await run(() => callLegacyApi(kind === 'advance' ? 'delAdvance' : 'delPayout', { id: item.id }), 'Удалено.');
+    if (ok) reload();
+  }
+
+  return (
+    <section className="view-grid">
+      <div className="wide day-chips payout-weeks">
+        <button type="button" onClick={() => setWeekStart(shiftDate(weekStart, -7))}>‹</button>
+        <button className={weekStart === thisWeek ? 'on' : ''} type="button" onClick={() => setWeekStart(thisWeek)}>Эта неделя</button>
+        <button className={weekStart === shiftDate(thisWeek, -7) ? 'on' : ''} type="button" onClick={() => setWeekStart(shiftDate(thisWeek, -7))}>Прошлая</button>
+        {weekStart < thisWeek ? <button type="button" onClick={() => setWeekStart(shiftDate(weekStart, 7))}>›</button> : null}
+      </div>
+
+      <div className="card wide hero-card revenue-hero">
+        <div className="revenue-hero-top"><span>К выплате · {weekLabel(week)}</span></div>
+        <div className="revenue-hero-value"><strong>{money(totalDue)}</strong><span>сум</span></div>
+        <div className="stock-hero-facts">
+          <span>Авансы<strong>{money(totalAdvances)}</strong></span>
+          <span>Выплачено<strong>{money(totalPaid)}</strong></span>
+        </div>
+      </div>
+
+      {message ? <div className="notice success wide">{message}</div> : null}
+
+      {rows.map((row) => {
+        const weekPaid = row.paid > 0 && row.due === 0;
+        return (
+          <div className="card payout-card" key={row.master.id}>
+            <div className="payout-head">
+              <strong>{row.master.name}</strong>
+              {weekPaid ? <span className="date-badge is-positive">выплачено</span> : null}
+            </div>
+            <div className="payout-lines">
+              <span>Заработал<b>{money(row.earned)}</b></span>
+              {row.fines ? <span>Штрафы<b className="danger">−{money(row.fines)}</b></span> : null}
+              {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
+              {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
+            </div>
+            <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
+              <span>{row.due < 0 ? 'Аванс больше заработка' : 'К выплате'}</span>
+              <strong>{money(Math.abs(row.due))}</strong>
+            </div>
+            {row.advanceRows.length || row.payoutRows.length ? (
+              <div className="payout-history">
+                {row.advanceRows.map((advance) => (
+                  <div className="payout-history-row" key={`a${advance.id}`}>
+                    <span>Аванс {money(advance.amount)} · {displayDate(advance.given_on)}{advance.note ? ` · ${advance.note}` : ''}</span>
+                    {isOwner && !row.paid ? <button className="del" type="button" disabled={busy} onClick={() => takeBack('advance', advance, `аванс ${row.master.name} ${money(advance.amount)} сум`)}>×</button> : null}
+                  </div>
+                ))}
+                {row.payoutRows.map((payout) => (
+                  <div className="payout-history-row" key={`p${payout.id}`}>
+                    <span>Выплачено {money(payout.amount)} · {displayDate(String(payout.paid_at).slice(0, 10))}</span>
+                    {isOwner ? <button className="del" type="button" disabled={busy} onClick={() => takeBack('payout', payout, `выплату ${row.master.name} ${money(payout.amount)} сум`)}>×</button> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {isOwner ? (
+              <div className="payout-actions">
+                {weekStart === thisWeek ? (
+                  <button className="btn ghost" type="button" onClick={() => openAdvance(row.master.id)}>+ Аванс</button>
+                ) : null}
+                {row.due > 0 ? (
+                  <button className="btn" type="button" disabled={busy} onClick={() => markPaid(row)}>Выплатил {money(row.due)}</button>
+                ) : null}
+              </div>
+            ) : null}
+            {isOwner && advanceFor === row.master.id ? (
+              <div className="payout-advance">
+                <MoneyInput aria-label={`Аванс ${row.master.name}`} placeholder="Сумма аванса" value={advanceAmount} onChange={setAdvanceAmount} />
+                <input maxLength={200} placeholder="Комментарий" value={advanceNote} onChange={(event) => setAdvanceNote(event.target.value)} />
+                <button className="btn" type="button" disabled={busy} onClick={() => giveAdvance(row)}>{busy ? 'Сохраняю…' : 'Выдать аванс'}</button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+// A master's own week in «Рабочий день»: what he gets on Sunday.
+function MyWeek({ data, master }) {
+  if (!master) return null;
+  const week = weekOf(TODAY);
+  const row = masterWeek({
+    master,
+    week,
+    sales: data.sales.filter(isCountedSale),
+    fines: data.fines,
+    advances: data.advances,
+    payouts: data.payouts,
+  });
+  return (
+    <div className="card wide payout-card my-week">
+      <div className="payout-head">
+        <strong>Неделя · {weekLabel(week)}</strong>
+        {row.paid > 0 && row.due === 0 ? <span className="date-badge is-positive">выплачено</span> : null}
+      </div>
+      <div className="payout-lines">
+        <span>Заработал<b>{money(row.earned)}</b></span>
+        {row.fines ? <span>Штрафы<b className="danger">−{money(row.fines)}</b></span> : null}
+        {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
+        {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
+      </div>
+      <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
+        <span>{row.due < 0 ? 'Аванс больше заработка' : 'К выплате в воскресенье'}</span>
+        <strong>{money(Math.abs(row.due))}</strong>
+      </div>
+    </div>
+  );
+}
+
 const AUDIT_ENTITY_LABELS = {
   fine: 'Штраф',
   expense: 'Расход',
@@ -4260,6 +4470,8 @@ const AUDIT_ENTITY_LABELS = {
   product_receipts: 'Приход товара',
   product_sales: 'Продажа товара',
   product_writeoffs: 'Списание товара',
+  master_advances: 'Аванс',
+  master_payouts: 'Выплата',
 };
 
 function auditRowSummary(event) {
@@ -4576,13 +4788,14 @@ const NAV_ITEMS = [
   { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
   { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
   { id: 'stock', label: 'Склад', views: ['stock'], icon: 'box' },
-  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings'], icon: 'team' },
+  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings', 'payouts'], icon: 'team' },
 ];
 
 const TEAM_TABS = [
   ['attendance', 'Посещаемость'],
   ['master', 'Рабочий день'],
   ['bookings', 'Записи'],
+  ['payouts', 'Выплаты'],
 ];
 
 // The administrator has no tab bar: two sections at the top of her screen.
@@ -4599,6 +4812,7 @@ const VIEW_TITLES = {
   master: 'Команда',
   stock: 'Склад',
   bookings: 'Команда',
+  payouts: 'Команда',
   settings: 'Настройки',
 };
 
@@ -4609,7 +4823,7 @@ function viewIdsForUser(data) {
   if (data.role === 'admin') {
     // No «Рабочий день» (entering sales for a master) and no settings.
     // The partner reads everything and takes bookings in «Записи».
-    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance', 'bookings'];
+    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance', 'bookings', 'payouts'];
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
@@ -4619,6 +4833,7 @@ function viewIdsForUser(data) {
       'attendance',
       'master',
       'bookings',
+      ...(data.appRole === 'owner' ? ['payouts'] : []),
       'settings',
     ];
   }
@@ -5223,6 +5438,7 @@ export default function App() {
     finance: FinanceView,
     stock: data.role === 'frontdesk' ? DeskStockView : StockView,
     bookings: BookingsView,
+    payouts: PayoutsView,
     settings: SettingsView,
   }[view] || MasterView;
 
@@ -5241,7 +5457,7 @@ export default function App() {
     : view === 'settings'
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
-  const inTeam = view === 'attendance' || view === 'master' || view === 'bookings';
+  const inTeam = ['attendance', 'master', 'bookings', 'payouts'].includes(view);
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
