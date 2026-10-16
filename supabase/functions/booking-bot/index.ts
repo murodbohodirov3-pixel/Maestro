@@ -26,7 +26,6 @@ const BOT_TOKEN = Deno.env.get('BOT_TOKEN') || '';
 const WEBHOOK_SECRET = Deno.env.get('BOOKING_BOT_WEBHOOK_SECRET') || '';
 const CRON_SECRET = Deno.env.get('BOOKING_CRON_SECRET') || '';
 const SITE = Deno.env.get('BOOKING_SITE_URL') || 'https://maestro-booking.vercel.app';
-const ADMIN_CHAT = Deno.env.get('BOOKING_ADMIN_CHAT_ID') || '';
 const APP_URL = Deno.env.get('MAESTRO_APP_URL') || 'https://maestro-pied-two.vercel.app';
 const WEBHOOK_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -89,10 +88,24 @@ function linesOf(facts: BookingFacts, lang: string, withPrice = true) {
   }, lang);
 }
 
-// The master in person, if he ever opened the bot, and the administrators'
-// group. The group calls clients and reads the number whole; the master gets
-// it masked, as everywhere he sees it. A failed delivery is logged and never
-// stops the client's answer.
+// Those who take bookings hear of every site booking in person (owner's
+// decision of 2026-10-16, no group): the owner, the administrator and the
+// partner, with the number whole, since they call clients.
+async function deskChats(): Promise<string[]> {
+  const { data, error } = await db.from('app_users')
+    .select('telegram_id')
+    .in('role', ['owner', 'admin', 'partner'])
+    .eq('active', true)
+    .not('telegram_id', 'is', null);
+  if (error) {
+    console.warn('[booking-bot] desk chats', error.message);
+    return [];
+  }
+  return [...new Set((data ?? []).map((row: { telegram_id: number | string }) => String(row.telegram_id)))];
+}
+
+// The desk, and the master in person with the number masked, as everywhere he
+// sees it. A failed delivery is logged and never stops the client's answer.
 async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, unknown>) {
   const booking = facts.booking as { starts_at: string; total_price_uzs: number };
   const phone = facts.client_phone ? String(facts.client_phone) : '';
@@ -107,8 +120,9 @@ async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, 
     comment: facts.comment ? String(facts.comment) : '',
   });
   const masterChat = facts.master_chat_id ? String(facts.master_chat_id) : '';
+  const desk = (await deskChats()).filter((chatId) => chatId !== masterChat);
   await Promise.all([
-    ADMIN_CHAT && ADMIN_CHAT !== masterChat ? send(ADMIN_CHAT, textWith(phone)) : null,
+    ...desk.map((chatId) => send(chatId, textWith(phone))),
     masterChat ? send(masterChat, textWith(maskPhoneForStaff(phone) || '')) : null,
   ]);
 }
@@ -267,14 +281,8 @@ async function handleUpdate(update: Record<string, any>) {
   if (update.callback_query) return handleCallback(update.callback_query);
   const message = update.message;
   if (!message || !message.from) return;
-  // A group is only ever written to, except /chatid: it answers with the
-  // group's id, which BOOKING_ADMIN_CHAT_ID needs.
-  if (message.chat?.type !== 'private') {
-    if (/^\/chatid(@\w+)?\s*$/.test(String(message.text ?? ''))) {
-      return send(message.chat.id, `chat_id: <code>${message.chat.id}</code>`);
-    }
-    return;
-  }
+  // Groups are not the bot's business.
+  if (message.chat?.type !== 'private') return;
   if (message.contact) return handleContact(message);
 
   const fallbackLang = langOf(message.from.language_code);

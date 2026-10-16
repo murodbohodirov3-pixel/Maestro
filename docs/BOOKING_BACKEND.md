@@ -54,7 +54,7 @@
    - Если номер этого пользователя уже известен, хватает одной кнопки «Подтвердить». Иначе — кнопка «Поделиться номером».
    - Контакт принимается, только если `contact.user_id` совпадает с `from.id`.
    - Подтверждение — `maestro_confirm_booking`: клиент в CRM с источником `web`, проверка блокировки, статус `confirmed`.
-   - После подтверждения уведомления получают мастер (`app_users.telegram_id`) и группа `BOOKING_ADMIN_CHAT_ID`.
+   - После подтверждения и при отмене клиентом уведомления получают лично владелец, админ и Жамшид (`app_users` с ролями owner, admin, partner; номер полностью) и мастер (номер скрыт). Группы нет (решение владельца 16.10).
    - Отмена клиентом — `maestro_cancel_booking_by_client`.
 4. **Истечение.** pg_cron `maestro-booking-holds` раз в минуту запускает `maestro_expire_booking_holds`: отмена с `cancelled_by = 'system'` и `status_reason_code = 'hold_expired'`.
 5. **Напоминания** за 24 и 2 часа. pg_cron `maestro-booking-reminders` раз в 5 минут вызывает `booking-bot` с `{"action":"reminders"}`. Функция `maestro_claim_web_reminders` берёт их из журнала `appointment_notification_deliveries`.
@@ -71,7 +71,6 @@
 | `BOOKING_IP_SALT` | Соль для хеша IP |
 | `BOOKING_SITE_ORIGINS` | `https://maestro-booking.vercel.app,http://localhost:5181` |
 | `BOOKING_SITE_URL` | `https://maestro-booking.vercel.app`, ссылка в сообщениях бота |
-| `BOOKING_ADMIN_CHAT_ID` | Группа админов. Добавить туда бота и написать в группе `/chatid` |
 
 ## Служебные действия бота
 
