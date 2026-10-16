@@ -184,6 +184,25 @@ begin
 end;
 $$;
 
+-- The partner books and marks a no-show or a cancellation too (owner's
+-- decision of 2026-10-16); the outcome function predates the role and let only
+-- the owner, the administrator and the booking's master through. One word in
+-- its role check changes, so the function is rewritten from its own text.
+do $$
+declare
+  definition text := pg_get_functiondef('public.maestro_set_appointment_outcome(uuid, text, text, text, text, bigint)'::regprocedure);
+  before text := $q$actor_record.role in ('owner', 'admin')$q$;
+begin
+  if position($q$'partner'$q$ in definition) > 0 then
+    return;
+  end if;
+  if position(before in definition) = 0 then
+    raise exception 'maestro_set_appointment_outcome: role check not found';
+  end if;
+  execute replace(definition, before, $q$actor_record.role in ('owner', 'admin', 'partner')$q$);
+end;
+$$;
+
 do $$
 declare
   fn text;
