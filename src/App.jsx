@@ -1687,27 +1687,42 @@ function bookingTimeLine(appointment) {
 function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = null }) {
   const [mode, setMode] = useState(initialMode);
   const [message, setMessage] = useState('');
+  const [savingCode, setSavingCode] = useState(null);
+  // A second tap arrives before the first has re-rendered anything.
+  const savingRef = useRef(false);
   const { run, busy } = useAction(setError, setMessage);
   const started = new Date(appointment.starts_at).getTime() <= Date.now();
 
   async function save(outcome, cancelledBy, reasonCode) {
-    const ok = await run(
-      () => callLegacyApi('setAppointmentOutcome', {
-        id: appointment.id,
-        outcome,
-        cancelled_by: cancelledBy,
-        reason_code: reasonCode,
-      }).then(reload),
-      outcome === 'no_show' ? 'Отмечено: не пришёл.' : 'Запись отменена.',
-    );
-    if (ok) onDone?.();
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSavingCode(reasonCode);
+    let ok = false;
+    try {
+      ok = await run(
+        () => callLegacyApi('setAppointmentOutcome', {
+          id: appointment.id,
+          outcome,
+          cancelled_by: cancelledBy,
+          reason_code: reasonCode,
+        }),
+        outcome === 'no_show' ? 'Отмечено: не пришёл.' : 'Запись отменена.',
+      );
+    } finally {
+      savingRef.current = false;
+      setSavingCode(null);
+    }
+    if (!ok) return;
+    haptic('success');
+    reload();
+    onDone?.();
   }
 
   if (mode === 'no_show') {
     return (
       <div className="outcome-chips">
         {NO_SHOW_REASONS.map(([code, label]) => (
-          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('no_show', null, code)}>{label}</button>
+          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('no_show', null, code)}>{savingCode === code ? 'Сохраняю…' : label}</button>
         ))}
         <button className="link-button" type="button" onClick={() => (initialMode ? onDone?.() : setMode(null))}>Назад</button>
       </div>
@@ -1717,7 +1732,7 @@ function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = n
     return (
       <div className="outcome-chips">
         {CANCEL_REASONS.map(([by, code, label]) => (
-          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('cancelled', by, code)}>{label}</button>
+          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('cancelled', by, code)}>{savingCode === code ? 'Сохраняю…' : label}</button>
         ))}
         <button className="link-button" type="button" onClick={() => (initialMode ? onDone?.() : setMode(null))}>Назад</button>
       </div>
@@ -1937,11 +1952,12 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
         starts_at: startsAt,
         client_id: client.id,
         notes: notes.trim() || null,
-      }).then(reload),
+      }),
       'Записан.',
     );
     if (ok) {
       haptic('success');
+      reload();
       onClose();
     }
   }
@@ -2186,6 +2202,9 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '', qr: '' });
   // The visit's client.
   const [visitClient, setVisitClient] = useState(null);
+  // «Я пришёл» is busy from the first tap, while the phone finds its place.
+  const [arriving, setArriving] = useState(false);
+  const [arrivalMessage, setArrivalMessage] = useState('');
   // The booking this visit closes, when it starts from «Пришёл».
   const [visitBooking, setVisitBooking] = useState(null);
   const formRef = useRef(null);
@@ -2309,10 +2328,13 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     };
 
     const ok = await run(
-      () => callLegacyApi('addSale', payload).then(reload),
+      () => callLegacyApi('addSale', payload),
       data.role === 'master' ? 'Визит отправлен на подтверждение.' : 'Визит сохранён.',
     );
     if (!ok) return;
+    // Saved is saved: the lists catch up behind the message.
+    haptic('success');
+    reload();
 
     setRequestId(newRequestId());
     setPayType(null);
@@ -2343,10 +2365,26 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
 
   async function deleteSale(id) {
     if (!await confirmAction('Удалить эту продажу?')) return;
-    await run(() => callLegacyApi('delSale', { id }).then(reload), 'Продажа удалена.');
+    const ok = await run(() => callLegacyApi('delSale', { id }), 'Продажа удалена.');
+    if (ok) reload();
   }
 
+  // «Я пришёл» first asks the phone where it is, which can take seconds; the
+  // button used to look untouched all that time and got tapped again, each tap
+  // a check-in of its own. It now says what it is doing from the first tap,
+  // and the answer appears under it.
   async function markArrival() {
+    if (arriving) return;
+    setArriving(true);
+    setArrivalMessage('');
+    try {
+      await checkIn();
+    } finally {
+      setArriving(false);
+    }
+  }
+
+  async function checkIn() {
     setError('');
     setMessage('');
 
@@ -2382,17 +2420,22 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     const ok = await run(async () => {
       const result = await callLegacyApi('setAttendance', { master: masterName, d: TODAY });
       fine = result?.fine || null;
-      await reload();
-    }, 'Приход отмечен.');
-    if (ok && fine?.new) setMessage(`Приход отмечен. Опоздание ${fine.minutes} мин — штраф ${money(fine.amount)} сум.`);
+    });
+    if (!ok) return;
+    haptic('success');
+    setArrivalMessage(fine?.new
+      ? `Приход отмечен. Опоздание ${fine.minutes} мин — штраф ${money(fine.amount)} сум.`
+      : 'Приход отмечен.');
+    reload();
   }
 
   async function resetArrival() {
     if (!await confirmAction('Убрать отметку о приходе за сегодня?')) return;
-    await run(
-      () => callLegacyApi('delAttendance', { master: masterName, d: TODAY }).then(reload),
-      'Отметка убрана.',
-    );
+    setArrivalMessage('');
+    const ok = await run(() => callLegacyApi('delAttendance', { master: masterName, d: TODAY }));
+    if (!ok) return;
+    setArrivalMessage('Отметка убрана.');
+    reload();
   }
 
   return (
@@ -2443,11 +2486,15 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
                 ? `Опоздал на ${minutesLate(attendanceToday.arrived || attendanceToday.arrived_at, shiftStart)} мин`
                 : 'Вовремя'}
             </p>
-            <button className="btn ghost" type="button" onClick={resetArrival} disabled={busy}>Изменить</button>
+            <button className="btn ghost" type="button" onClick={resetArrival} disabled={busy}>{busy ? 'Сохраняю…' : 'Изменить'}</button>
+            {arrivalMessage ? <p className="success">{arrivalMessage}</p> : null}
           </>
         ) : (
           <>
-            <button className="btn" type="button" onClick={markArrival} disabled={busy || !masterName}>Я пришёл</button>
+            <button className="btn" type="button" onClick={markArrival} disabled={busy || arriving || !masterName}>
+              {busy ? 'Отмечаю…' : arriving ? 'Проверяем место…' : 'Я пришёл'}
+            </button>
+            {arrivalMessage ? <p className="success">{arrivalMessage}</p> : null}
             <p className="hint">
               {shiftStartHint(scheduledStart, shiftStart)} Если координаты салона заданы, отметка проверяет радиус.
             </p>

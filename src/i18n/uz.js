@@ -33,6 +33,8 @@ export const PHRASES = {
   'Сохраняю…': 'Saqlanmoqda…',
   'Сохраняем…': 'Saqlanmoqda…',
   'Отправляю…': 'Yuborilmoqda…',
+  'Отмечаю…': 'Belgilanmoqda…',
+  'Проверяем место…': 'Joylashuv tekshirilmoqda…',
   'Добавить': 'Qoʻshish',
   'Изменить': 'Oʻzgartirish',
   'Удалить': 'Oʻchirish',
