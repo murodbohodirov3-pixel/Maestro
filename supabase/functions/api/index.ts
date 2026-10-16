@@ -101,13 +101,16 @@ async function fetchStockRows(table: string, orderColumn: string) {
   }
 }
 
-async function fetchAppointments(filters: Record<string, string | number> = {}) {
+// Bookings with what their cards show about the client. The hold's token,
+// address and Telegram ids never leave the server; for anyone but the owner
+// the number is masked.
+async function fetchAppointments(filters: Record<string, string | number> = {}, maskPhones = false) {
   const rows: Record<string, unknown>[] = [];
   const fromDate = `${tashkentDate(-60)}T00:00:00+05:00`;
   const toDate = `${tashkentDate(180)}T00:00:00+05:00`;
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    let query = sb.from('appointments').select('*, client:clients(lifecycle_status)');
+    let query = sb.from('appointments').select('*, client:clients(lifecycle_status, known_before)');
     for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
     const { data, error } = await query
       .gte('starts_at', fromDate)
@@ -118,14 +121,33 @@ async function fetchAppointments(filters: Record<string, string | number> = {}) 
     if (error) throw error;
     rows.push(...(data ?? []).map((row) => {
       const client = Array.isArray(row.client) ? row.client[0] : row.client;
-      const { client: _privateClient, ...appointment } = row;
+      const {
+        client: _privateClient,
+        booking_token_hash: _token,
+        booking_ip_hash: _address,
+        booking_tg_user_id: _telegram,
+        ...appointment
+      } = row;
       return {
         ...appointment,
+        client_phone: maskPhones ? maskPhoneForStaff(appointment.client_phone as string | null) : appointment.client_phone,
         client_is_blocked: client?.lifecycle_status === 'blocked',
+        client_known_before: client?.known_before === true,
+        client_visit_count: 0,
       };
     }));
-    if (!data || data.length < PAGE_SIZE) return rows;
+    if (!data || data.length < PAGE_SIZE) break;
   }
+
+  const clientIds = [...new Set(rows.map((row) => row.client_id).filter(Boolean))];
+  if (clientIds.length) {
+    const { data: counts, error } = await sb.rpc('maestro_clients_visit_counts', { p_client_ids: clientIds });
+    if (!error) {
+      const byClient = new Map((counts ?? []).map((row: { client_id: string; visit_count: number }) => [row.client_id, Number(row.visit_count)]));
+      for (const row of rows) row.client_visit_count = byClient.get(row.client_id as string) ?? 0;
+    }
+  }
+  return rows;
 }
 
 async function hmac(keyData: Uint8Array, msg: string): Promise<Uint8Array> {
@@ -509,10 +531,25 @@ Deno.serve(async (req) => {
         userId: appUserResult.data.id,
         since: tashkentDate(-1),
       });
+      // And the bookings: every master's day, numbers masked.
+      const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses] = await Promise.all([
+        sb.from('masters').select('id, name, active').eq('active', true).order('id'),
+        fetchAppointments({}, true),
+        fetchAllRows('booking_services', 'id'),
+        fetchAllRows('master_schedule_rules', 'iso_weekday'),
+        fetchAllRows('master_day_statuses', 'work_date'),
+      ]);
+      if (deskMasters.error) return json({ error: deskMasters.error.message }, 500);
       return json({
         role: 'frontdesk',
         appRole: appUserResult.data.role,
         ...desk,
+        masters: deskMasters.data ?? [],
+        appointments,
+        booking_services: bookingServices,
+        master_schedule_rules: scheduleRules,
+        master_day_statuses: dayStatuses,
+        settings: [],
         sessionToken: issuedSessionToken,
       });
     }
@@ -540,10 +577,11 @@ Deno.serve(async (req) => {
           fetchAllRows('expenses', 'date', {}, byDate),
           isAdmin ? fetchAllRows('debts', 'id') : Promise.resolve([]),
           isAdmin ? fetchAllRows('debt_payments', 'date', {}, byDate) : Promise.resolve([]),
-          canManageCalendar ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
+          canManageCalendar || isPartner ? fetchAllRows('booking_services', 'id') : Promise.resolve([]),
           // A partner reads the attendance register, and a day off is part of it.
           canManageCalendar || isPartner ? fetchAllRows('master_day_statuses', 'work_date') : Promise.resolve([]),
-          canManageCalendar ? fetchAppointments() : Promise.resolve([]),
+          // The partner books too, and sees numbers masked like everyone but the owner.
+          canManageCalendar || isPartner ? fetchAppointments({}, isPartner) : Promise.resolve([]),
           // Everyone who sees attendance needs the schedule: a late arrival is
           // measured against the master's own shift, not only the salon cutoff.
           fetchAllRows('master_schedule_rules', 'iso_weekday'),
@@ -587,15 +625,10 @@ Deno.serve(async (req) => {
         fetchAllRows('attendance', 'id', { master: myMaster }, byDay),
         fetchAllRows('booking_services', 'id'),
         fetchAllRows('master_day_statuses', 'work_date', { master_id: myMasterId! }),
-        fetchAppointments({ master_id: myMasterId! }),
+        fetchAppointments({ master_id: myMasterId! }, true),
         fetchAllRows('master_schedule_rules', 'iso_weekday', { master_id: myMasterId! }),
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
-      // A master never receives a client's number whole.
-      const maskedAppointments = appointments.map((appointment: Record<string, unknown>) => ({
-        ...appointment,
-        client_phone: maskPhoneForStaff(appointment.client_phone as string | null),
-      }));
 
       return json({
         role: 'master',
@@ -608,7 +641,7 @@ Deno.serve(async (req) => {
         attendance,
         booking_services,
         master_day_statuses,
-        appointments: maskedAppointments,
+        appointments,
         master_schedule_rules,
         sessionToken: issuedSessionToken,
         windowSince: since,
@@ -619,7 +652,7 @@ Deno.serve(async (req) => {
     // or makes a card for him before recording a visit. Only the owner sees a
     // number whole and reads a card's history.
     const isOwnerCaller = appUserResult.data.role === 'owner';
-    if (['searchClients', 'addClient'].includes(action) && !(isOwnerCaller || myMaster)) {
+    if (['searchClients', 'addClient'].includes(action) && !(isOwnerCaller || myMaster || isFrontDesk || isPartner)) {
       return json({ error: 'forbidden' }, 403);
     }
 
@@ -656,6 +689,55 @@ Deno.serve(async (req) => {
         .eq('id', data.client_id).maybeSingle();
       if (created.error || !created.data) return json({ error: created.error?.message || 'client_not_found' }, 500);
       return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, isOwnerCaller) });
+    }
+
+    // Bookings taken by phone or Telegram: the owner, the administrator and
+    // the partner. A master books nobody; he records the clients who come.
+    if (['bookingSlots', 'addBooking'].includes(action) && !(isOwnerCaller || isFrontDesk || isPartner)) {
+      return json({ error: 'forbidden' }, 403);
+    }
+
+    if (action === 'bookingSlots') {
+      const masterId = Number(payload.master_id);
+      const date = String(payload.date ?? '');
+      const serviceIds = Array.isArray(payload.service_ids)
+        ? [...new Set(payload.service_ids.map((value: unknown) => String(value)))].slice(0, 10)
+        : [];
+      if (!Number.isInteger(masterId) || !isValidIsoDate(date) || !serviceIds.length) {
+        return json({ error: 'invalid_booking' }, 400);
+      }
+      if (date < tashkentDate() || date > tashkentDate(62)) return json({ error: 'invalid_booking' }, 400);
+      const { data: services, error: servicesError } = await sb.from('booking_services')
+        .select('id, duration_minutes').in('id', serviceIds).eq('active', true);
+      if (servicesError) return json({ error: servicesError.message }, 500);
+      if ((services ?? []).length !== serviceIds.length) return json({ error: 'service_not_found' }, 404);
+      const duration = (services ?? []).reduce((sum: number, service: { duration_minutes: number }) => sum + Number(service.duration_minutes), 0);
+      const { data, error } = await sb.rpc('maestro_booking_slots', {
+        p_duration_minutes: duration,
+        p_from: date,
+        p_to: date,
+        p_master_ids: [masterId],
+        p_not_before: new Date().toISOString(),
+      });
+      if (error) return json({ error: error.message }, 500);
+      return json({ duration, times: (data ?? []).map((row: { slot_start: string }) => row.slot_start) });
+    }
+
+    if (action === 'addBooking') {
+      const serviceIds = Array.isArray(payload.service_ids)
+        ? payload.service_ids.map((value: unknown) => String(value)).slice(0, 10)
+        : [];
+      const { data, error } = await sb.rpc('maestro_book_appointment', {
+        p_master_id: Number(payload.master_id),
+        p_service_ids: serviceIds,
+        p_starts_at: String(payload.starts_at ?? ''),
+        p_client_id: UUID_PATTERN.test(String(payload.client_id ?? '')) ? String(payload.client_id) : null,
+        p_notes: payload.notes ? String(payload.notes).slice(0, 300) : null,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) return json(data ?? { error: 'invalid_booking' }, data?.error === 'slot_unavailable' ? 409 : 400);
+      return json(data);
     }
 
     if (action === 'getClient') {
@@ -722,6 +804,21 @@ Deno.serve(async (req) => {
       const isNewClient = firstVisit && !knownBefore;
       const noPhone = !clientRecord.data.phone_e164;
 
+      // A visit recorded from a booking closes it.
+      const appointmentId = payload.appointment_id == null || payload.appointment_id === ''
+        ? null
+        : String(payload.appointment_id);
+      if (appointmentId !== null) {
+        if (!UUID_PATTERN.test(appointmentId)) return json({ error: 'appointment_not_found' }, 404);
+        const check = await sb.rpc('maestro_check_appointment_for_visit', {
+          p_appointment_id: appointmentId,
+          p_master_id: masterRecord.data.id,
+          p_client_id: clientId,
+        });
+        if (check.error) return json({ error: check.error.message }, 500);
+        if (!check.data?.ok) return json({ error: check.data?.error || 'appointment_closed' }, 409);
+      }
+
       const row: Record<string, unknown> = {
         master,
         d,
@@ -734,6 +831,7 @@ Deno.serve(async (req) => {
         client_id: clientId,
         client_name: clientRecord.data.full_name,
         client_no_phone: noPhone,
+        appointment_id: appointmentId,
         master_id: masterRecord.data.id,
         commission_pct: Number(masterRecord.data.pct),
         status: requiresOwnerApproval ? 'pending' : 'approved',
@@ -753,6 +851,7 @@ Deno.serve(async (req) => {
         if (error.code === '23505' && !String(error.message).includes('sales_appointment_key')) {
           return json({ ok: true, deduplicated: true });
         }
+        if (error.code === '23505') return json({ error: 'appointment_already_visited' }, 409);
         // Deployed ahead of the migration that adds the column: keep the sale
         // rather than losing it, and fall back to the client-side guard.
         if (error.code === '42703' || error.code === 'PGRST204') {
@@ -761,6 +860,20 @@ Deno.serve(async (req) => {
         }
       }
       if (error) return json({ error: error.message }, 500);
+
+      if (appointmentId !== null) {
+        const closed = await sb.rpc('maestro_complete_appointment_for_visit', {
+          p_appointment_id: appointmentId,
+          p_client_id: clientId,
+          p_actor_user_id: appUserResult.data.id,
+        });
+        if (closed.error || !closed.data?.ok) {
+          console.error('[maestro-api] visit written but booking not closed', {
+            appointmentId,
+            error: closed.error?.message || closed.data?.error,
+          });
+        }
+      }
 
       // A visit without a number reaches the owner at once, so he can ask
       // why it was not taken. His own entries he already knows about.
@@ -1143,6 +1256,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'setAppointmentOutcome') {
+      // «Пришёл» is not a button of its own: the booking closes when the
+      // master records the visit (addSale with appointment_id), so a client
+      // can never be marked as come without the money.
+      if (!['no_show', 'cancelled'].includes(String(payload.outcome))) {
+        return json({ error: 'outcome_needs_visit' }, 400);
+      }
       const { data: result, error } = await sb.rpc('maestro_set_appointment_outcome', {
         p_appointment_id: payload.id,
         p_outcome: String(payload.outcome || ''),

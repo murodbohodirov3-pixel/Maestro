@@ -1,26 +1,46 @@
 // Who may do what, kept apart from the api so it can be tested under Node.
 //
-// A partner (соучредитель) reads the salon's figures and changes nothing. The
-// server is what enforces that; the app only leaves the buttons out.
+// A partner (соучредитель) reads the salon's figures and changes none of them.
+// Since 2026-10-16 he also takes bookings that come by phone or Telegram, like
+// the owner and the administrator: finds or makes the client's card, books a
+// free time, marks a cancellation or a no-show. The server is what enforces
+// this; the app only leaves the other buttons out.
 
 export const PARTNER_ROLE = 'partner';
 
 // Everything a partner's session may ask the api for. Any other action is
 // refused before it reaches a table, including actions added later.
-const PARTNER_ACTIONS = new Set(['load']);
+const PARTNER_ACTIONS = new Set([
+  'load',
+  'bookingSlots',
+  'addBooking',
+  'setAppointmentOutcome',
+  'searchClients',
+  'addClient',
+]);
 
 export function partnerMayCall(action) {
   return PARTNER_ACTIONS.has(action);
 }
 
 // The administrator (role 'admin') works the front desk. As decided by the
-// owner on 2026-10-15, she sells goods from Склад and nothing else: deliveries
-// and write-offs are the owner's, every sale she enters waits for him, and she
-// sees no revenue, payouts, expenses or purchase prices. The calendar comes
-// back later and will join this list then.
+// owner on 2026-10-15 and 16, she sells goods from Склад and keeps the
+// bookings: books a client over the phone (finding or making his card), marks
+// a no-show or a cancellation. Deliveries, write-offs and every decision are
+// the owner's; she sees no revenue, payouts, expenses or purchase prices, and
+// client numbers only masked.
 export const ADMIN_ROLE = 'admin';
 
-const ADMIN_ACTIONS = new Set(['load', 'addProductSale', 'delStockEntry']);
+const ADMIN_ACTIONS = new Set([
+  'load',
+  'addProductSale',
+  'delStockEntry',
+  'bookingSlots',
+  'addBooking',
+  'setAppointmentOutcome',
+  'searchClients',
+  'addClient',
+]);
 
 export function adminMayCall(action) {
   return ADMIN_ACTIONS.has(action);

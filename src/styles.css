@@ -4817,3 +4817,295 @@ label {
 .client-missed span {
   color: var(--fine);
 }
+
+/* Команда → «Записи»: one day, masters side by side, time down the page. */
+.day-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.day-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.day-chips button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.day-chips button.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #FFFFFF;
+}
+
+.day-chips input[type="date"] {
+  flex: 0 0 auto;
+  width: 44px;
+  min-height: 36px;
+  padding: 0 6px;
+  border-radius: 18px;
+  color: transparent;
+}
+
+.day-grid-card {
+  padding: 8px 0 8px 8px;
+  overflow-x: auto;
+}
+
+.day-grid {
+  display: grid;
+  grid-template-columns: 38px repeat(var(--columns), minmax(104px, 1fr));
+  column-gap: 4px;
+  min-width: min-content;
+  padding-right: 8px;
+}
+
+.day-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 1px;
+  margin-bottom: 6px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.day-grid-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.day-grid-head.is-off {
+  color: var(--muted);
+}
+
+.day-grid-axis {
+  position: relative;
+}
+
+.day-grid-axis span {
+  position: absolute;
+  left: 0;
+  transform: translateY(-6px);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.day-grid-column {
+  position: relative;
+  border-left: 1px solid var(--line-soft);
+  cursor: pointer;
+}
+
+.day-grid-line {
+  position: absolute;
+  right: 0;
+  left: 0;
+  border-top: 1px dashed var(--line-soft);
+}
+
+.day-grid-off {
+  position: absolute;
+  right: 0;
+  left: 0;
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 6px, transparent 6px 12px);
+  cursor: default;
+}
+
+.day-grid-now {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  border-top: 2px solid var(--fine);
+  pointer-events: none;
+}
+
+.booking-block {
+  position: absolute;
+  right: 2px;
+  left: 2px;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.booking-block small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.booking-block.is-web {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--brass-soft);
+}
+
+.booking-block.is-pending {
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.booking-block.is-completed {
+  border-color: transparent;
+  background: var(--positive-soft);
+  color: var(--positive-ink);
+}
+
+.booking-block.is-no_show {
+  border-color: transparent;
+  background: var(--negative-soft);
+  color: var(--negative-ink);
+  text-decoration: line-through;
+}
+
+.booking-block.is-overdue {
+  border: 2px solid var(--fine);
+}
+
+.booking-sheet .booking-client {
+  display: block;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.booking-facts {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.booking-facts span {
+  display: grid;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.booking-facts strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.booking-outcome {
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  font-weight: 700;
+}
+
+.booking-outcome.is-completed {
+  background: var(--positive-soft);
+  color: var(--positive-ink);
+}
+
+.booking-outcome.is-no_show,
+.booking-outcome.is-cancelled {
+  background: var(--negative-soft);
+  color: var(--negative-ink);
+}
+
+.booking-sheet > .btn {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.outcome-actions,
+.outcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.outcome-actions .btn,
+.outcome-chips .btn {
+  flex: 1 1 auto;
+  min-height: 40px;
+}
+
+.btn.ghost.danger-ghost {
+  color: var(--fine);
+}
+
+.service-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.service-chip {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  background: var(--brass-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.time-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+}
+
+.time-chips button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.time-chips button.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #FFFFFF;
+}
+
+.my-booking.is-overdue {
+  border-left: 3px solid var(--fine);
+  border-radius: 0;
+  padding-left: 10px;
+}
+
+.visit-booking {
+  border-color: var(--positive-ink);
+  background: var(--positive-soft);
+}

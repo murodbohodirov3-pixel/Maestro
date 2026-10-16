@@ -56,6 +56,18 @@ import {
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
 import {
+  blockPosition,
+  canRecordVisit,
+  clientBadge,
+  dayFrame,
+  isOpenBooking,
+  isOverdueBooking,
+  masterHoursOn,
+  minutesLabel,
+  tashkentParts,
+  visibleBookings,
+} from './utils/bookings.js';
+import {
   goodsPaymentMix,
   normalizeProductSearch,
   pendingProductSales,
@@ -511,6 +523,8 @@ function normalizeData(data) {
     dayStatuses: data.master_day_statuses || [],
     scheduleRules: data.master_schedule_rules || [],
     expenses: data.expenses || [],
+    appointments: data.appointments || [],
+    bookingServices: data.booking_services || [],
     products: data.products || [],
     productReceipts: data.product_receipts || [],
     productSales: data.product_sales || [],
@@ -1325,13 +1339,13 @@ function clientVisitsLine(client) {
   return `${client.visit_count} ${pluralRu(client.visit_count, 'визит', 'визита', 'визитов')}${last}${master}`;
 }
 
-function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError }) {
+function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, askKnownBefore = true }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ full_name: '', phone: '', known_before: null });
   const [saving, setSaving] = useState(false);
   const { results, searching } = useClientSearch(query, setError);
-  const firstVisit = client && !client.visit_count && !client.known_before;
+  const firstVisit = askKnownBefore && client && !client.visit_count && !client.known_before;
 
   function pick(next) {
     onChange(next);
@@ -1561,6 +1575,433 @@ function ClientFinder({ setError }) {
   );
 }
 
+// ------------------------------------------------------------------ bookings
+
+const NO_SHOW_REASONS = [
+  ['no_show_no_notice', 'Не предупредил'],
+  ['no_show_late_arrival', 'Сильно опоздал'],
+  ['no_show_unreachable', 'Не дозвонились'],
+];
+const CANCEL_REASONS = [
+  ['client', 'client_changed_plans', 'Клиент отменил'],
+  ['salon', 'salon_master_unavailable', 'Мастер не может'],
+];
+const BOOKING_STATUS_TEXT = {
+  completed: 'Пришёл',
+  no_show: 'Не пришёл',
+  cancelled: 'Отменена',
+};
+
+// The client of a booking as the visit form takes him.
+function clientFromBooking(appointment) {
+  if (!appointment.client_id) return null;
+  return {
+    id: appointment.client_id,
+    full_name: appointment.client_name,
+    phone: appointment.client_phone,
+    visit_count: Number(appointment.client_visit_count) || 0,
+    known_before: appointment.client_known_before === true,
+  };
+}
+
+function bookingTimeLine(appointment) {
+  const start = tashkentParts(appointment.starts_at);
+  const end = tashkentParts(appointment.ends_at);
+  const day = start.date === TODAY ? 'сегодня' : start.date === shiftDate(TODAY, 1) ? 'завтра' : displayDate(start.date);
+  return `${day} · ${start.time}–${end.time}`;
+}
+
+// «Не пришёл» and «Отменить» take one more tap for the reason, no form.
+function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = null }) {
+  const [mode, setMode] = useState(initialMode);
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const started = new Date(appointment.starts_at).getTime() <= Date.now();
+
+  async function save(outcome, cancelledBy, reasonCode) {
+    const ok = await run(
+      () => callLegacyApi('setAppointmentOutcome', {
+        id: appointment.id,
+        outcome,
+        cancelled_by: cancelledBy,
+        reason_code: reasonCode,
+      }).then(reload),
+      outcome === 'no_show' ? 'Отмечено: не пришёл.' : 'Запись отменена.',
+    );
+    if (ok) onDone?.();
+  }
+
+  if (mode === 'no_show') {
+    return (
+      <div className="outcome-chips">
+        {NO_SHOW_REASONS.map(([code, label]) => (
+          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('no_show', null, code)}>{label}</button>
+        ))}
+        <button className="link-button" type="button" onClick={() => (initialMode ? onDone?.() : setMode(null))}>Назад</button>
+      </div>
+    );
+  }
+  if (mode === 'cancel') {
+    return (
+      <div className="outcome-chips">
+        {CANCEL_REASONS.map(([by, code, label]) => (
+          <button className="btn ghost" disabled={busy} key={code} type="button" onClick={() => save('cancelled', by, code)}>{label}</button>
+        ))}
+        <button className="link-button" type="button" onClick={() => (initialMode ? onDone?.() : setMode(null))}>Назад</button>
+      </div>
+    );
+  }
+  return (
+    <div className="outcome-actions">
+      {started ? <button className="btn ghost" type="button" onClick={() => setMode('no_show')}>Не пришёл</button> : null}
+      <button className="btn ghost danger-ghost" type="button" onClick={() => setMode('cancel')}>Отменить</button>
+      {message ? <span className="success">{message}</span> : null}
+    </div>
+  );
+}
+
+function BookingSheet({ data, appointment, reload, setError, onClose, onVisit }) {
+  const isOwner = data.appRole === 'owner';
+  const [clientOpen, setClientOpen] = useState(false);
+  const closeClient = useCallback(() => setClientOpen(false), []);
+  const master = data.masters.find((item) => String(item.id) === String(appointment.master_id));
+  const badge = clientBadge(appointment);
+  const open = isOpenBooking(appointment);
+
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+      <div aria-label="Запись" aria-modal="true" className="card master-sheet booking-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="master-sheet-head">
+          <div>
+            {isOwner && appointment.client_id ? (
+              <button className="master-name-button booking-client" type="button" onClick={() => setClientOpen(true)}>{appointment.client_name}</button>
+            ) : <strong>{appointment.client_name}</strong>}
+            <small>{appointment.client_phone || 'без номера'}{badge ? ` · ${badge}` : ''}</small>
+          </div>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+        </div>
+        {isOwner && appointment.client_phone ? (
+          <div className="settings-actions client-contact">
+            <a className="btn ghost" href={`tel:${appointment.client_phone}`}>Позвонить</a>
+          </div>
+        ) : null}
+        <div className="booking-facts">
+          <span>Время<strong>{bookingTimeLine(appointment)}</strong></span>
+          <span>Мастер<strong>{master?.name || '—'}</strong></span>
+          <span>Услуги<strong>{appointment.service_name}</strong></span>
+          <span>Сумма<strong>{money(appointment.price_uzs)} · {appointment.source === 'web' ? 'сайт' : 'салон'}</strong></span>
+          {appointment.notes ? <span>Комментарий<strong>{appointment.notes}</strong></span> : null}
+        </div>
+        {!open ? (
+          <p className={`booking-outcome is-${appointment.status}`}>
+            {appointment.status === 'pending' ? 'Ждёт подтверждения клиента в Telegram' : BOOKING_STATUS_TEXT[appointment.status] || appointment.status}
+          </p>
+        ) : (
+          <>
+            {isOwner && onVisit && canRecordVisit(appointment) ? (
+              <button className="btn" type="button" onClick={() => onVisit(appointment)}>Пришёл → визит</button>
+            ) : null}
+            <OutcomeChooser appointment={appointment} reload={reload} setError={setError} onDone={onClose} />
+          </>
+        )}
+        {clientOpen ? <ClientSheet clientId={appointment.client_id} onClose={closeClient} setError={setError} /> : null}
+      </div>
+    </div>
+  );
+}
+
+// Several services, found by typing, like goods on the shelf.
+function ServicesPicker({ services, value, onChange }) {
+  const [query, setQuery] = useState('');
+  const chosen = value.map((id) => services.find((service) => service.id === id)).filter(Boolean);
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = services
+    .filter((service) => service.active !== false && !value.includes(service.id))
+    .filter((service) => words.every((word) => String(service.name_ru).toLowerCase().includes(word)));
+
+  return (
+    <div className="picker">
+      {chosen.length ? (
+        <div className="service-chips">
+          {chosen.map((service) => (
+            <button className="service-chip" key={service.id} type="button" onClick={() => onChange(value.filter((id) => id !== service.id))}>
+              {service.name_ru} <span aria-hidden="true">×</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <input type="search" autoComplete="off" placeholder="Услуга" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="picker-list">
+        {matches.slice(0, query ? 8 : 5).map((service) => (
+          <button key={service.id} type="button" onClick={() => { onChange([...value, service.id]); setQuery(''); }}>
+            <span>{service.name_ru}</span>
+            <small>{money(service.price_uzs)} · {service.duration_minutes} мин</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NewBookingSheet({ data, draft, reload, setError, onClose }) {
+  const [masterId, setMasterId] = useState(draft.masterId);
+  const [serviceIds, setServiceIds] = useState([]);
+  const [times, setTimes] = useState(null);
+  const [startsAt, setStartsAt] = useState(null);
+  const [client, setClient] = useState(null);
+  const [notes, setNotes] = useState('');
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const services = data.bookingServices;
+  const total = serviceIds.reduce((sum, id) => sum + (Number(services.find((service) => service.id === id)?.price_uzs) || 0), 0);
+
+  useEffect(() => {
+    setStartsAt(null);
+    if (!serviceIds.length || !masterId) {
+      setTimes(null);
+      return undefined;
+    }
+    let alive = true;
+    callLegacyApi('bookingSlots', { master_id: Number(masterId), date: draft.date, service_ids: serviceIds })
+      .then((result) => {
+        if (!alive) return;
+        const list = result.times || [];
+        setTimes(list);
+        // The tapped time, if it is free for these services.
+        const wanted = list.find((time) => tashkentParts(time).minutes === draft.minutes);
+        if (wanted) setStartsAt(wanted);
+      })
+      .catch((error) => { if (alive) setError(actionErrorText(error)); });
+    return () => { alive = false; };
+  }, [masterId, serviceIds, draft.date, draft.minutes, setError]);
+
+  async function save() {
+    if (!serviceIds.length) return setError('Выберите услугу.');
+    if (!startsAt) return setError('Выберите время.');
+    if (!client) return setError('Выберите клиента или создайте карточку.');
+    const ok = await run(
+      () => callLegacyApi('addBooking', {
+        master_id: Number(masterId),
+        service_ids: serviceIds,
+        starts_at: startsAt,
+        client_id: client.id,
+        notes: notes.trim() || null,
+      }).then(reload),
+      'Записан.',
+    );
+    if (ok) {
+      haptic('success');
+      onClose();
+    }
+  }
+
+  return (
+    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+      <div aria-label="Новая запись" aria-modal="true" className="card master-sheet booking-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="master-sheet-head">
+          <div>
+            <strong>Новая запись</strong>
+            <small>{draft.date === TODAY ? 'сегодня' : displayDate(draft.date)}</small>
+          </div>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="stock-form">
+          <div className="seg">
+            {data.activeMasters.map((master) => (
+              <button className={String(master.id) === String(masterId) ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)}>{master.name}</button>
+            ))}
+          </div>
+          <ServicesPicker services={services} value={serviceIds} onChange={setServiceIds} />
+          {times ? (
+            times.length ? (
+              <div className="time-chips">
+                {times.map((time) => (
+                  <button className={time === startsAt ? 'on' : ''} key={time} type="button" onClick={() => setStartsAt(time)}>{tashkentParts(time).time}</button>
+                ))}
+              </div>
+            ) : <p className="hint">Свободного времени нет.</p>
+          ) : null}
+          <ClientPicker client={client} onChange={setClient} knownBefore={null} onKnownBefore={() => {}} askKnownBefore={false} setError={setError} />
+          <input maxLength={300} placeholder="Комментарий" value={notes} onChange={(event) => setNotes(event.target.value)} />
+          {total ? <div className="stock-preview"><span>Сумма</span><strong>{money(total)} сум</strong></div> : null}
+          <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняем…' : 'Записать'}</button>
+          {message ? <p className="success">{message}</p> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const MINUTE_PX = 1.1;
+
+// Команда → «Записи»: one day, masters side by side, time down the page.
+function BookingsView({ data, reload, setError, onVisit }) {
+  const [date, setDate] = useState(TODAY);
+  const [openId, setOpenId] = useState(null);
+  const [newDraft, setNewDraft] = useState(null);
+  const isOwner = data.appRole === 'owner';
+  const closeBooking = useCallback(() => setOpenId(null), []);
+  const closeNew = useCallback(() => setNewDraft(null), []);
+  const { run } = useAction(setError);
+
+  const masters = data.activeMasters;
+  const hours = masters.map((master) => masterHoursOn(master, date, data.scheduleRules, data.dayStatuses));
+  const frame = dayFrame(hours);
+  const height = (frame.end - frame.start) * MINUTE_PX;
+  const bookings = visibleBookings(data.appointments, date);
+  const openBooking = data.appointments.find((appointment) => appointment.id === openId) || null;
+  const nowMinutes = tashkentParts(new Date()).minutes;
+  const days = Array.from({ length: 7 }, (_, index) => shiftDate(TODAY, index));
+  const hourMarks = [];
+  for (let minute = frame.start; minute <= frame.end; minute += 60) hourMarks.push(minute);
+
+  function tapColumn(event, master, masterHours) {
+    if (masterHours.start == null) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const minute = frame.start + Math.floor(((event.clientY - rect.top) / MINUTE_PX) / 15) * 15;
+    setNewDraft({ masterId: master.id, date, minutes: minute });
+  }
+
+  async function toggleDayOff(master, masterHours) {
+    if (!isOwner) return;
+    const enable = !masterHours.dayOff;
+    if (!await confirmAction(enable ? `${master.name}: выходной ${displayDate(date)}?` : `${master.name}: отменить выходной ${displayDate(date)}?`)) return;
+    await run(() => callLegacyApi('setMasterDayOff', { master_id: master.id, work_date: date, enabled: enable }).then(reload));
+  }
+
+  return (
+    <section className="view-grid">
+      <div className="wide day-chips">
+        {days.map((day, index) => (
+          <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>
+            {index === 0 ? 'Сегодня' : index === 1 ? 'Завтра' : `${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7]} ${Number(day.slice(8))}`}
+          </button>
+        ))}
+        <input aria-label="Другая дата" type="date" value={date} min={TODAY} onChange={(event) => event.target.value && setDate(event.target.value)} />
+      </div>
+
+      <div className="card wide day-grid-card">
+        <div className="day-grid" style={{ '--columns': masters.length }}>
+          <div className="day-grid-corner" />
+          {masters.map((master, index) => (
+            <button
+              className={`day-grid-head${hours[index].dayOff ? ' is-off' : ''}`}
+              key={master.id}
+              type="button"
+              onClick={() => toggleDayOff(master, hours[index])}
+            >
+              {master.name}
+              <small>{hours[index].start != null ? `${minutesLabel(hours[index].start)}–${minutesLabel(hours[index].end)}` : 'выходной'}</small>
+            </button>
+          ))}
+          <div className="day-grid-axis" style={{ height }}>
+            {hourMarks.map((minute) => (
+              <span key={minute} style={{ top: (minute - frame.start) * MINUTE_PX }}>{minutesLabel(minute)}</span>
+            ))}
+          </div>
+          {masters.map((master, index) => {
+            const masterHours = hours[index];
+            const mine = bookings.filter((appointment) => String(appointment.master_id) === String(master.id));
+            return (
+              <div className="day-grid-column" key={master.id} style={{ height }} onClick={(event) => tapColumn(event, master, masterHours)}>
+                {hourMarks.map((minute) => <i className="day-grid-line" key={minute} style={{ top: (minute - frame.start) * MINUTE_PX }} />)}
+                {masterHours.start == null ? (
+                  <div className="day-grid-off" style={{ top: 0, height }} />
+                ) : (
+                  <>
+                    {masterHours.start > frame.start ? <div className="day-grid-off" style={{ top: 0, height: (masterHours.start - frame.start) * MINUTE_PX }} /> : null}
+                    {masterHours.end < frame.end ? <div className="day-grid-off" style={{ top: (masterHours.end - frame.start) * MINUTE_PX, height: (frame.end - masterHours.end) * MINUTE_PX }} /> : null}
+                  </>
+                )}
+                {mine.map((appointment) => {
+                  const position = blockPosition(appointment, frame.start, MINUTE_PX);
+                  const overdue = isOverdueBooking(appointment);
+                  return (
+                    <button
+                      className={`booking-block is-${appointment.status}${appointment.source === 'web' ? ' is-web' : ''}${overdue ? ' is-overdue' : ''}`}
+                      key={appointment.id}
+                      style={{ top: position.top, height: position.height }}
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); setOpenId(appointment.id); }}
+                    >
+                      <b>{tashkentParts(appointment.starts_at).time}</b> {appointment.client_name}
+                      <small>{appointment.service_name}</small>
+                    </button>
+                  );
+                })}
+                {date === TODAY && nowMinutes >= frame.start && nowMinutes <= frame.end ? (
+                  <i className="day-grid-now" style={{ top: (nowMinutes - frame.start) * MINUTE_PX }} />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {openBooking ? (
+        <BookingSheet
+          appointment={openBooking}
+          data={data}
+          reload={reload}
+          setError={setError}
+          onClose={closeBooking}
+          onVisit={onVisit ? (appointment) => { closeBooking(); onVisit(appointment); } : null}
+        />
+      ) : null}
+      {newDraft ? <NewBookingSheet data={data} draft={newDraft} reload={reload} setError={setError} onClose={closeNew} /> : null}
+    </section>
+  );
+}
+
+// «Мои записи» in a master's working day: today's and the coming week's,
+// with the overdue ones first and in red until he closes them.
+function MyBookings({ data, masterId, reload, setError, onVisit }) {
+  const [chooser, setChooser] = useState(null);
+  const mine = data.appointments
+    .filter((appointment) => String(appointment.master_id) === String(masterId) && isOpenBooking(appointment))
+    .filter((appointment) => tashkentParts(appointment.starts_at).date <= shiftDate(TODAY, 7))
+    .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
+  if (!mine.length) return null;
+
+  return (
+    <div className="card my-bookings">
+      <h2>Мои записи</h2>
+      <div className="rows">
+        {mine.map((appointment) => {
+          const overdue = isOverdueBooking(appointment);
+          const visitReady = canRecordVisit(appointment);
+          const started = new Date(appointment.starts_at).getTime() <= Date.now();
+          return (
+            <div className={`row my-booking${overdue ? ' is-overdue' : ''}`} key={appointment.id}>
+              <div>
+                <strong>{bookingTimeLine(appointment)} · {appointment.client_name}</strong>
+                <span>{appointment.service_name} · {appointment.client_phone || 'без номера'}</span>
+                {overdue ? <span className="approval rejected">Закройте запись</span> : null}
+                {chooser?.id === appointment.id ? (
+                  <OutcomeChooser appointment={appointment} initialMode={chooser.mode} reload={reload} setError={setError} onDone={() => setChooser(null)} />
+                ) : (
+                  <div className="outcome-actions">
+                    {visitReady ? <button className="btn" type="button" onClick={() => onVisit(appointment)}>Пришёл</button> : null}
+                    {started
+                      ? <button className="btn ghost" type="button" onClick={() => setChooser({ id: appointment.id, mode: 'no_show' })}>Не пришёл</button>
+                      : <button className="btn ghost" type="button" onClick={() => setChooser({ id: appointment.id, mode: 'cancel' })}>Отменить</button>}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // What a master reads under «Я пришёл»: when his shift starts by the schedule,
 // and from when an arrival counts as late.
 function shiftStartHint(start, lateAfter) {
@@ -1569,7 +2010,7 @@ function shiftStartHint(start, lateAfter) {
   return `Смена с ${start}, опоздание — после ${lateAfter}.`;
 }
 
-function MasterView({ data, reload, setError }) {
+function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const [selectedMaster, setSelectedMaster] = useState(data.me || data.activeMasters[0]?.name || '');
   const [payType, setPayType] = useState(null);
   const [amount, setAmount] = useState('');
@@ -1579,6 +2020,9 @@ function MasterView({ data, reload, setError }) {
   // with no visit recorded yet.
   const [visitClient, setVisitClient] = useState(null);
   const [knownBefore, setKnownBefore] = useState(null);
+  // The booking this visit closes, when it starts from «Пришёл».
+  const [visitBooking, setVisitBooking] = useState(null);
+  const formRef = useRef(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
   const [message, setMessage] = useState('');
   const [requestId, setRequestId] = useState(newRequestId);
@@ -1641,6 +2085,27 @@ function MasterView({ data, reload, setError }) {
     if (!masterName && data.activeMasters[0]?.name) setSelectedMaster(data.activeMasters[0].name);
   }, [data.activeMasters, masterName]);
 
+  // «Пришёл» fills the visit from the booking: the client, its master and
+  // the price of its services. The master only picks how it was paid.
+  function startVisit(appointment) {
+    const bookingMaster = data.masters.find((master) => String(master.id) === String(appointment.master_id));
+    if (bookingMaster && canPickMaster) setSelectedMaster(bookingMaster.name);
+    setVisitClient(clientFromBooking(appointment));
+    setKnownBefore(null);
+    setSplit(false);
+    setPayType(null);
+    setAmount(appointment.price_uzs ? String(appointment.price_uzs) : '');
+    setVisitBooking(appointment);
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  useEffect(() => {
+    if (!visitDraft) return;
+    startVisit(visitDraft);
+    onDraftUsed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visitDraft]);
+
   async function submitSale(event) {
     event.preventDefault();
     setError('');
@@ -1668,6 +2133,7 @@ function MasterView({ data, reload, setError }) {
       ...amounts,
       client_id: visitClient.id,
       client_known_before: needsKnownBefore ? knownBefore : undefined,
+      appointment_id: visitBooking ? visitBooking.id : undefined,
       // Held across retries of this same sale, so a reply lost on a bad
       // connection cannot turn one haircut into two rows.
       client_request_id: requestId,
@@ -1686,6 +2152,7 @@ function MasterView({ data, reload, setError }) {
     setSplitAmounts({ cash: '', card: '', qr: '' });
     setVisitClient(null);
     setKnownBefore(null);
+    setVisitBooking(null);
   }
 
   // Switching carries the amount already typed across, so opening the split
@@ -1816,8 +2283,19 @@ function MasterView({ data, reload, setError }) {
         )}
       </div>
 
-      <form className="card" onSubmit={submitSale}>
+      <MyBookings data={data} masterId={masterProfile?.id} reload={reload} setError={setError} onVisit={startVisit} />
+
+      <form className="card" onSubmit={submitSale} ref={formRef}>
         <h2>Визит</h2>
+        {visitBooking ? (
+          <div className="picker-selected visit-booking">
+            <span>
+              <strong>По записи · {tashkentParts(visitBooking.starts_at).time}</strong>
+              <small>{visitBooking.service_name}</small>
+            </span>
+            <button className="link-button" type="button" onClick={() => setVisitBooking(null)}>Без записи</button>
+          </div>
+        ) : null}
         <ClientPicker
           client={visitClient}
           onChange={setVisitClient}
@@ -3950,12 +4428,19 @@ const NAV_ITEMS = [
   { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
   { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
   { id: 'stock', label: 'Склад', views: ['stock'], icon: 'box' },
-  { id: 'team', label: 'Команда', views: ['attendance', 'master'], icon: 'team' },
+  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings'], icon: 'team' },
 ];
 
 const TEAM_TABS = [
   ['attendance', 'Посещаемость'],
   ['master', 'Рабочий день'],
+  ['bookings', 'Записи'],
+];
+
+// The administrator has no tab bar: two sections at the top of her screen.
+const DESK_TABS = [
+  ['bookings', 'Записи'],
+  ['stock', 'Склад'],
 ];
 
 const VIEW_TITLES = {
@@ -3965,16 +4450,18 @@ const VIEW_TITLES = {
   attendance: 'Команда',
   master: 'Команда',
   stock: 'Склад',
+  bookings: 'Команда',
   settings: 'Настройки',
 };
 
 function viewIdsForUser(data) {
   // The front-desk administrator: Склад, for selling. The calendar joins it
   // when it comes back.
-  if (data.role === 'frontdesk') return ['stock'];
+  if (data.role === 'frontdesk') return ['bookings', 'stock'];
   if (data.role === 'admin') {
     // No «Рабочий день» (entering sales for a master) and no settings.
-    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance'];
+    // The partner reads everything and takes bookings in «Записи».
+    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance', 'bookings'];
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
@@ -3983,6 +4470,7 @@ function viewIdsForUser(data) {
       'stock',
       'attendance',
       'master',
+      'bookings',
       'settings',
     ];
   }
@@ -4514,12 +5002,22 @@ export default function App() {
   // The badge is work for whoever approves; a read-only account has none.
   const pendingSalesCount = isReadOnly(data) ? 0 : approvalQueue(data).count;
 
+  // «Пришёл → визит» on a booking opens the owner's Рабочий день with the
+  // visit filled in.
+  const [visitDraft, setVisitDraft] = useState(null);
+  const clearVisitDraft = useCallback(() => setVisitDraft(null), []);
+
   function openView(next) {
     if (next === view) return;
     haptic('light');
     if (next === 'settings') setPreviousView(view);
     setView(next);
     window.scrollTo({ top: 0 });
+  }
+
+  function startVisitFromBooking(appointment) {
+    setVisitDraft(appointment);
+    openView('master');
   }
 
   if (loginRequired) return <LoginGate error={error} />;
@@ -4549,15 +5047,18 @@ export default function App() {
     attendance: AttendanceView,
     finance: FinanceView,
     stock: data.role === 'frontdesk' ? DeskStockView : StockView,
+    bookings: BookingsView,
     settings: SettingsView,
   }[view] || MasterView;
 
   const isMaster = data.role === 'master';
   const isFrontDesk = data.role === 'frontdesk';
   // A bar with one button is not navigation.
-  const showTabbar = !isMaster && navItems.length > 1;
+  const showTabbar = !isMaster && !isFrontDesk && navItems.length > 1;
   const masterProfile = isMaster ? data.byName[data.me] : null;
-  const title = isMaster ? (data.me || 'Maestro') : VIEW_TITLES[view] || 'Maestro';
+  const title = isMaster
+    ? (data.me || 'Maestro')
+    : isFrontDesk ? (view === 'stock' ? 'Склад' : 'Записи') : VIEW_TITLES[view] || 'Maestro';
   const subtitle = isMaster
     ? `${Number(masterProfile?.pct) || 40}% мастеру · ${todayHeading().split(' · ')[1]}`
     : isFrontDesk
@@ -4565,7 +5066,7 @@ export default function App() {
     : view === 'settings'
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
-  const inTeam = view === 'attendance' || view === 'master';
+  const inTeam = view === 'attendance' || view === 'master' || view === 'bookings';
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
@@ -4600,8 +5101,24 @@ export default function App() {
         </nav>
       ) : null}
 
+      {isFrontDesk ? (
+        <nav className="seg team-tabs" aria-label="Разделы">
+          {DESK_TABS.map(([id, label]) => (
+            <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => openView(id)}>{label}</button>
+          ))}
+        </nav>
+      ) : null}
+
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
-      <CurrentView data={data} reload={load} setError={setError} setView={openView} />
+      <CurrentView
+        data={data}
+        reload={load}
+        setError={setError}
+        setView={openView}
+        onVisit={data.appRole === 'owner' ? startVisitFromBooking : null}
+        visitDraft={visitDraft}
+        onDraftUsed={clearVisitDraft}
+      />
 
       {showTabbar ? (
         <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>

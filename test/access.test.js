@@ -26,13 +26,14 @@ test('the api source still names the actions this guard is checked against', () 
   }
 });
 
-test('a partner may load and nothing else, including actions added later', () => {
+test('a partner reads and takes bookings, nothing else, including actions added later', () => {
   assert.equal(PARTNER_ROLE, 'partner');
-  assert.equal(partnerMayCall('load'), true);
-  const refused = apiActions.filter((action) => action !== 'load' && action !== 'telegramOAuth');
+  const allowed = ['load', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient'];
+  for (const action of allowed) assert.equal(partnerMayCall(action), true, action);
+  const refused = apiActions.filter((action) => ![...allowed, 'telegramOAuth'].includes(action));
   assert.ok(refused.length >= 20);
   for (const action of refused) assert.equal(partnerMayCall(action), false, action);
-  for (const action of ['addPayment', 'deleteEverything', '', undefined, null]) {
+  for (const action of ['addPayment', 'deleteEverything', 'addSale', 'setSaleApproval', 'getClient', '', undefined, null]) {
     assert.equal(partnerMayCall(action), false, String(action));
   }
 });
@@ -71,13 +72,14 @@ test('every total a partner sees is the same sum the owner sees', () => {
   }
 });
 
-test('the administrator may sell goods and take back her own pending sale, nothing else', () => {
+test('the administrator sells goods and keeps the bookings, nothing else', () => {
   assert.equal(ADMIN_ROLE, 'admin');
-  for (const action of ['load', 'addProductSale', 'delStockEntry']) assert.equal(adminMayCall(action), true, action);
-  const refused = apiActions.filter((action) => !['load', 'addProductSale', 'delStockEntry', 'telegramOAuth'].includes(action));
+  const allowed = ['load', 'addProductSale', 'delStockEntry', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient'];
+  for (const action of allowed) assert.equal(adminMayCall(action), true, action);
+  const refused = apiActions.filter((action) => ![...allowed, 'telegramOAuth'].includes(action));
   assert.ok(refused.length >= 25);
   for (const action of refused) assert.equal(adminMayCall(action), false, action);
-  for (const action of ['addProductReceipt', 'addProductWriteoff', 'setProductSaleApproval', 'setSaleApproval', 'addExpense', 'setSettings', 'listAuditEvents']) {
+  for (const action of ['addProductReceipt', 'addProductWriteoff', 'setProductSaleApproval', 'setSaleApproval', 'addSale', 'getClient', 'addExpense', 'setSettings', 'listAuditEvents']) {
     assert.equal(adminMayCall(action), false, action);
   }
 });
