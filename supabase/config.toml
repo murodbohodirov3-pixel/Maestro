@@ -18,3 +18,20 @@ verify_jwt = false
 
 [functions.marketing-digest]
 verify_jwt = false
+
+# Online booking (Maestro-Booking page and its Telegram bot). Public by design:
+# each function checks its own input, origin, rate limit or shared secret.
+[functions.booking-catalog]
+verify_jwt = false
+
+[functions.booking-hold]
+verify_jwt = false
+
+[functions.booking-status]
+verify_jwt = false
+
+[functions.booking-release]
+verify_jwt = false
+
+[functions.booking-bot]
+verify_jwt = false
