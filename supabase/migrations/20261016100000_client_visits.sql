@@ -45,14 +45,21 @@ as $$
   select btrim(coalesce(p_status, '')) = 'rejected' or coalesce(p_comment, '') = 'owner_approval_rejected'
 $$;
 
+-- Every visit the salon knows of: the counted sales, and the bookings the old
+-- calendar closed as completed (July to September) that no sale stands for.
 create or replace function public.maestro_client_visit_count(p_client_id uuid)
 returns integer
 language sql
 stable
 set search_path = ''
 as $$
-  select count(*)::integer from public.sales as sale
-  where sale.client_id = p_client_id and not public.maestro_sale_is_rejected(sale.status, sale.comment)
+  select (
+    (select count(*) from public.sales as sale
+      where sale.client_id = p_client_id and not public.maestro_sale_is_rejected(sale.status, sale.comment))
+    + (select count(*) from public.appointments as appointment
+      where appointment.client_id = p_client_id and appointment.status = 'completed'
+        and not exists (select 1 from public.sales as sale where sale.appointment_id = appointment.id))
+  )::integer
 $$;
 
 -- A card made in the salon. A number already in the base is not duplicated:
@@ -143,11 +150,10 @@ as $$
     end
   )
   select matched.id, matched.full_name, matched.phone_e164, matched.known_before, matched.lifecycle_status,
-    coalesce(visits.visit_count, 0), visits.last_visit, visits.last_master
+    public.maestro_client_visit_count(matched.id), visits.last_visit, visits.last_master
   from matched
   left join lateral (
-    select count(*)::integer as visit_count,
-      max(sale.d) as last_visit,
+    select max(sale.d) as last_visit,
       (array_agg(sale.master order by sale.d desc, sale.created_at desc))[1] as last_master
     from public.sales as sale
     where sale.client_id = matched.id and not public.maestro_sale_is_rejected(sale.status, sale.comment)

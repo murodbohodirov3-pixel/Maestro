@@ -4767,6 +4767,34 @@ label {
   gap: 10px;
 }
 
+/* The number typed on a new card is already someone's: his card instead. */
+.client-exists {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--brass-soft);
+}
+
+.client-exists span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.client-exists small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.client-exists .btn {
+  flex: none;
+}
+
 .client-known {
   display: flex;
   align-items: center;

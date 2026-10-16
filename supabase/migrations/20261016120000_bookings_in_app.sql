@@ -14,11 +14,22 @@ language sql
 stable
 set search_path = ''
 as $$
-  select sale.client_id, count(*)::integer, max(sale.d)
-  from public.sales as sale
-  where sale.client_id = any (p_client_ids)
-    and not public.maestro_sale_is_rejected(sale.status, sale.comment)
-  group by sale.client_id
+  -- The same visits as maestro_client_visit_count: counted sales, and the old
+  -- calendar's completed bookings that no sale stands for.
+  select visit.client_id, count(*)::integer, max(visit.d)
+  from (
+    select sale.client_id, sale.d
+    from public.sales as sale
+    where sale.client_id = any (p_client_ids)
+      and not public.maestro_sale_is_rejected(sale.status, sale.comment)
+    union all
+    select appointment.client_id, (appointment.starts_at at time zone 'Asia/Tashkent')::date
+    from public.appointments as appointment
+    where appointment.client_id = any (p_client_ids)
+      and appointment.status = 'completed'
+      and not exists (select 1 from public.sales as sale where sale.appointment_id = appointment.id)
+  ) as visit
+  group by visit.client_id
 $$;
 
 -- A booking taken in the salon or over the phone: a client card, services

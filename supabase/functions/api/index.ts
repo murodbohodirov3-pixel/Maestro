@@ -901,17 +901,12 @@ Deno.serve(async (req) => {
       if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
       const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
       if (visits.error) return json({ error: visits.error.message }, 500);
+      // New or returning is the base's to say, never the master's: «Был у нас
+      // раньше?» is answered only when a card is made (owner's decision of
+      // 2026-10-16), so a regular picked from the base cannot be passed off as
+      // a first visit.
       const firstVisit = Number(visits.data) === 0;
-      let knownBefore = clientRecord.data.known_before === true;
-      // «Был у нас раньше?» is answered once, before the first recorded visit.
-      if (firstVisit && typeof payload.client_known_before === 'boolean' && payload.client_known_before !== knownBefore) {
-        const updated = await sb.from('clients')
-          .update({ known_before: payload.client_known_before, updated_at: new Date().toISOString() })
-          .eq('id', clientId);
-        if (updated.error) return json({ error: updated.error.message }, 500);
-        knownBefore = payload.client_known_before;
-      }
-      const isNewClient = firstVisit && !knownBefore;
+      const isNewClient = firstVisit && clientRecord.data.known_before !== true;
       const noPhone = !clientRecord.data.phone_e164;
 
       // A visit recorded from a booking closes it.

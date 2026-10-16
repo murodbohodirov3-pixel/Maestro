@@ -1364,13 +1364,20 @@ function clientVisitsLine(client) {
   return `${client.visit_count} ${pluralRu(client.visit_count, 'визит', 'визита', 'визитов')}${last}${master}`;
 }
 
-function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, askKnownBefore = true }) {
+// One number, one card (owner's decision of 2026-10-16). A number typed on a
+// new card is looked up as soon as it is whole, and the card already in the
+// base is offered instead. «Был у нас раньше?» is asked only on a new card: a
+// client picked from the base is new or returning by his history.
+function ClientPicker({ client, onChange, setError }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ full_name: '', phone: '', known_before: null });
   const [saving, setSaving] = useState(false);
   const { results, searching } = useClientSearch(query, setError);
-  const firstVisit = askKnownBefore && client && !client.visit_count && !client.known_before;
+  const phoneDigits = draft.phone.replace(/\D/g, '');
+  const wholeNumber = creating && phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
+  const { results: sameNumber } = useClientSearch(wholeNumber, setError);
+  const existing = wholeNumber ? sameNumber.find((found) => found.has_phone !== false) || null : null;
 
   function pick(next) {
     onChange(next);
@@ -1398,8 +1405,6 @@ function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, 
       });
       haptic('success');
       pick(result.client);
-      // The answer given on the new card stands; it is not asked twice.
-      onKnownBefore(draft.known_before);
     } catch (error) {
       if (error.details?.error === 'client_exists' && error.details.client) {
         setError(`Этот номер уже есть: ${error.details.client.full_name}. Выбран он.`);
@@ -1420,17 +1425,8 @@ function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, 
             <strong>{client.full_name}</strong>
             <small>{client.phone || 'без номера'} · {clientVisitsLine(client)}</small>
           </span>
-          <button className="link-button" type="button" onClick={() => { onChange(null); onKnownBefore(null); }}>Изменить</button>
+          <button className="link-button" type="button" onClick={() => onChange(null)}>Изменить</button>
         </div>
-        {firstVisit ? (
-          <div className="client-known">
-            <span>Был у нас раньше?</span>
-            <div className="seg">
-              <button className={knownBefore === true ? 'on' : ''} type="button" onClick={() => onKnownBefore(true)}>Да</button>
-              <button className={knownBefore === false ? 'on' : ''} type="button" onClick={() => onKnownBefore(false)}>Нет</button>
-            </div>
-          </div>
-        ) : null}
       </div>
     );
   }
@@ -1441,6 +1437,21 @@ function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, 
         <input maxLength={120} placeholder="Имя" value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} />
         <input inputMode="tel" maxLength={20} placeholder="Телефон, например 90 123 45 67" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
         {!draft.phone.trim() ? <span className="client-no-phone">Без номера — владелец получит уведомление</span> : null}
+        {existing ? (
+          <div className="client-exists">
+            <span>
+              <strong>Этот номер уже есть</strong>
+              <small>{existing.full_name} · {existing.phone} · {clientVisitsLine(existing)}</small>
+            </span>
+            <button className="btn" type="button" onClick={() => pick(existing)}>Выбрать</button>
+          </div>
+        ) : null}
+        {existing ? (
+          <div className="settings-actions">
+            <button className="btn ghost" type="button" onClick={() => setCreating(false)}>Назад</button>
+          </div>
+        ) : (
+        <>
         <div className="client-known">
           <span>Был у нас раньше?</span>
           <div className="seg">
@@ -1452,6 +1463,8 @@ function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError, 
           <button className="btn" type="button" disabled={saving} onClick={createCard}>{saving ? 'Сохраняем…' : 'Создать карточку'}</button>
           <button className="btn ghost" type="button" disabled={saving} onClick={() => setCreating(false)}>Назад</button>
         </div>
+        </>
+        )}
       </div>
     );
   }
@@ -1925,7 +1938,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
               </div>
             ) : <p className="hint">Свободного времени нет.</p>
           ) : null}
-          <ClientPicker client={client} onChange={setClient} knownBefore={null} onKnownBefore={() => {}} askKnownBefore={false} setError={setError} />
+          <ClientPicker client={client} onChange={setClient} setError={setError} />
           <input maxLength={300} placeholder="Комментарий" value={notes} onChange={(event) => setNotes(event.target.value)} />
           {total ? <div className="stock-preview"><span>Сумма</span><strong>{money(total)} сум</strong></div> : null}
           <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняем…' : 'Записать'}</button>
@@ -2137,10 +2150,8 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const [amount, setAmount] = useState('');
   const [split, setSplit] = useState(false);
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '', qr: '' });
-  // The visit's client, and the answer to «Был у нас раньше?» for a client
-  // with no visit recorded yet.
+  // The visit's client.
   const [visitClient, setVisitClient] = useState(null);
-  const [knownBefore, setKnownBefore] = useState(null);
   // The booking this visit closes, when it starts from «Пришёл».
   const [visitBooking, setVisitBooking] = useState(null);
   const formRef = useRef(null);
@@ -2212,7 +2223,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     const bookingMaster = data.masters.find((master) => String(master.id) === String(appointment.master_id));
     if (bookingMaster && canPickMaster) setSelectedMaster(bookingMaster.name);
     setVisitClient(clientFromBooking(appointment));
-    setKnownBefore(null);
     setSplit(false);
     setPayType(null);
     setAmount(appointment.price_uzs ? String(appointment.price_uzs) : '');
@@ -2245,8 +2255,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     }
     if (!masterName) return setError('Сначала выберите мастера.');
     if (!visitClient) return setError('Выберите клиента или создайте карточку.');
-    const needsKnownBefore = !visitClient.visit_count && !visitClient.known_before;
-    if (needsKnownBefore && knownBefore === null) return setError('Отметьте, был ли клиент у нас раньше.');
     if (data.role === 'master' && !visitBooking) {
       const waiting = data.appointments
         .filter((appointment) => String(appointment.master_id) === String(masterProfile?.id))
@@ -2260,7 +2268,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
       d: TODAY,
       ...amounts,
       client_id: visitClient.id,
-      client_known_before: needsKnownBefore ? knownBefore : undefined,
       appointment_id: visitBooking ? visitBooking.id : undefined,
       // Held across retries of this same sale, so a reply lost on a bad
       // connection cannot turn one haircut into two rows.
@@ -2279,7 +2286,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     setSplit(false);
     setSplitAmounts({ cash: '', card: '', qr: '' });
     setVisitClient(null);
-    setKnownBefore(null);
     setVisitBooking(null);
   }
 
@@ -2428,13 +2434,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
             <button className="link-button" type="button" onClick={() => setVisitBooking(null)}>Без записи</button>
           </div>
         ) : null}
-        <ClientPicker
-          client={visitClient}
-          onChange={setVisitClient}
-          knownBefore={knownBefore}
-          onKnownBefore={setKnownBefore}
-          setError={setError}
-        />
+        <ClientPicker client={visitClient} onChange={setVisitClient} setError={setError} />
         {split ? (
           <div className="split-amounts">
             {PAYMENT_METHODS.map(([key, label]) => (
