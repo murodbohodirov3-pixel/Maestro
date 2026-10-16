@@ -828,6 +828,13 @@ small {
   font-weight: 750;
 }
 
+/* A pressed button that is still working looks pressed: a disabled button
+   used to look exactly like an idle one, and got tapped again. */
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .fine-button:disabled,
 .fine-row .del:disabled {
   cursor: not-allowed;

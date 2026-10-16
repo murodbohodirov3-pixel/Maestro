@@ -3729,10 +3729,12 @@ function StockView({ data, reload, setError }) {
         amount: saleAmount,
         payment_method: saleForm.payment_method,
         client_request_id: saleRequestId,
-      }).then(reload),
+      }),
       isOwner ? 'Продажа сохранена.' : 'Отправлено на подтверждение.',
     );
     if (!ok) return;
+    // Saved is saved: the list catches up behind the message.
+    reload();
     haptic('success');
     setSaleRequestId(newRequestId());
     setSaleForm(emptySale);
@@ -3757,10 +3759,11 @@ function StockView({ data, reload, setError }) {
         unit_cost: receiptUnitCost,
         paid_by: receiptForm.paid_by,
         usd_rate: Number(storedUsdRate()) || null,
-      }).then(reload),
+      }),
       'Приход сохранён.',
     );
     if (!ok) return;
+    reload();
     haptic('success');
     setReceiptForm((current) => ({ ...current, product_id: '', product_name: '', qty: '', unit_cost: '' }));
   }
@@ -3778,10 +3781,11 @@ function StockView({ data, reload, setError }) {
         qty,
         reason: writeoffForm.reason,
         note: writeoffForm.note.trim() || null,
-      }).then(reload),
+      }),
       'Списано.',
     );
     if (!ok) return;
+    reload();
     setWriteoffForm({ product_id: '', qty: '1', reason: 'used', note: '' });
   }
 
@@ -3832,7 +3836,7 @@ function StockView({ data, reload, setError }) {
         <span className="revenue-hero-note">Товар на складе: {compactMoney(stockValue)} сум</span>
       </div>
 
-      {message ? <div className="notice success wide">{message}</div> : null}
+      {message && !form ? <div className="notice success wide">{message}</div> : null}
 
       {canWrite ? (
         <div className="wide stock-actions">
@@ -3879,7 +3883,8 @@ function StockView({ data, reload, setError }) {
               <strong>Маржа {signedMoney(saleAmount - saleCost)}</strong>
             </div>
           ) : null}
-          <button className="btn" type="submit" disabled={busy}>{isOwner ? 'Сохранить' : 'Отправить на подтверждение'}</button>
+          <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : isOwner ? 'Сохранить' : 'Отправить на подтверждение'}</button>
+          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -3920,7 +3925,8 @@ function StockView({ data, reload, setError }) {
               <button key={value} type="button" role="radio" aria-checked={receiptForm.paid_by === value} className={receiptForm.paid_by === value ? 'on' : ''} onClick={() => setReceiptForm({ ...receiptForm, paid_by: value })}>{label}</button>
             ))}
           </div>
-          <button className="btn" type="submit" disabled={busy}>Сохранить</button>
+          <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
+          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -3942,7 +3948,8 @@ function StockView({ data, reload, setError }) {
             ))}
           </div>
           <input maxLength={300} placeholder="Комментарий" value={writeoffForm.note} onChange={(event) => setWriteoffForm({ ...writeoffForm, note: event.target.value })} />
-          <button className="btn" type="submit" disabled={busy}>Списать</button>
+          <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : 'Списать'}</button>
+          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -4062,10 +4069,11 @@ function DeskStockView({ data, reload, setError }) {
         amount: saleAmount,
         payment_method: saleForm.payment_method,
         client_request_id: saleRequestId,
-      }).then(reload),
+      }),
       'Отправлено на подтверждение.',
     );
     if (!ok) return;
+    reload();
     haptic('success');
     setSaleRequestId(newRequestId());
     setSaleForm(emptySale);
@@ -4110,7 +4118,7 @@ function DeskStockView({ data, reload, setError }) {
             </button>
           ))}
         </div>
-        <button className="btn" type="submit" disabled={busy}>Отправить на подтверждение</button>
+        <button className="btn" type="submit" disabled={busy}>{busy ? 'Отправляю…' : 'Отправить на подтверждение'}</button>
       </form>
 
       <div className="card wide">
@@ -4988,6 +4996,16 @@ export default function App() {
     return pending;
   }
 
+  // What a screen calls after its own write. It used to be a full load — every
+  // sale since February, three pages of them — so each saved drink waited
+  // seconds for history it did not change. The 15s poll's window is enough: a
+  // write lands in it, and the full load still runs when the app comes back
+  // into view.
+  // A caller that knows its own window (an approval of an older sale) passes it.
+  function reload(options = {}) {
+    return load({ preserveView: true, since: pollWindowStart(), ...options });
+  }
+
   async function loadOnce({ preserveView = true, since = null } = {}) {
     setError('');
     // Background polls stay silent: a toast every 15 seconds said nothing the
@@ -5193,7 +5211,7 @@ export default function App() {
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
       <CurrentView
         data={data}
-        reload={load}
+        reload={reload}
         setError={setError}
         setView={openView}
         onVisit={data.appRole === 'owner' ? startVisitFromBooking : null}
