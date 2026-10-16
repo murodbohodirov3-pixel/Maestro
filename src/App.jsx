@@ -318,7 +318,6 @@ const ACTION_ERROR_TEXT = {
   advance_not_found: 'Аванс уже удалён — обновите экран.',
   payout_not_found: 'Выплата уже удалена — обновите экран.',
   payout_delete_window_expired: 'Выплату старше трёх дней удалить нельзя.',
-  fine_is_automatic: 'Автоматический штраф не переводится в аванс.',
 };
 
 function actionErrorText(error) {
@@ -3114,13 +3113,6 @@ function AttendanceView({ data, reload, setError }) {
     }
   }
 
-  // An old «штраф-аванс» becomes the advance it was (owner's decision of
-  // 2026-10-16): same master, amount and day, and it leaves the fines.
-  async function fineToAdvance(fine) {
-    if (!await confirmAction(`Это аванс, а не штраф: ${fine.master}, ${money(fine.amount)} сум?`)) return;
-    await run(() => callLegacyApi('fineToAdvance', { id: fine.id }).then(reload), 'Переведено в авансы.');
-  }
-
   async function deleteFine(fine) {
     if (!recentFineCanBeDeleted(rowDate(fine))) {
       setError('Можно удалять только штрафы не старше 7 дней.');
@@ -3334,9 +3326,6 @@ function AttendanceView({ data, reload, setError }) {
                   <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
                   <span>{fineReasonLabel(fine.reason)}{fine.auto ? ' · авто' : ''}</span>
                 </div>
-                {data.appRole === 'owner' && !fine.auto && rowDate(fine) >= shiftDate(TODAY, -14) ? (
-                  <button className="link-button" type="button" onClick={() => fineToAdvance(fine)}>Это аванс</button>
-                ) : null}
                 <button
                   className="del"
                   disabled={!canDelete}

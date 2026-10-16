@@ -244,8 +244,6 @@ export const PHRASES = {
   'Пропусков и опозданий за период нет — все дни отмечены.': 'Davrda qoldirish va kechikish yoʻq — barcha kunlar belgilangan.',
   'За выбранный период мастеров нет.': 'Tanlangan davrda barberlar yoʻq.',
   '«Нет отметки» — прошедший день без прихода и без выходного.': '«Belgi yoʻq» — kelish ham, dam olish ham belgilanmagan oʻtgan kun.',
-  'Это аванс': 'Bu avans',
-  'Переведено в авансы.': 'Avanslarga oʻtkazildi.',
   'Пришёл в': 'Keldi:',
 
   // Payouts
@@ -461,7 +459,6 @@ export const PHRASES = {
   'Выплата уже удалена — обновите экран.': 'Toʻlov allaqachon oʻchirilgan — ekranni yangilang.',
   'Выплату старше трёх дней удалить нельзя.': 'Uch kundan eski toʻlovni oʻchirib boʻlmaydi.',
   'Эта неделя уже выплачена — аванс не изменить.': 'Bu hafta toʻlangan — avansni oʻzgartirib boʻlmaydi.',
-  'Автоматический штраф не переводится в аванс.': 'Avtomatik jarima avansga oʻtkazilmaydi.',
   'Допуск — целое число минут от 0 до 120.': 'Ruxsat — 0 dan 120 gacha butun daqiqa.',
   'Проверьте график: у каждого рабочего дня конец позже начала.': 'Jadvalni tekshiring: har bir ish kunining oxiri boshidan keyin boʻlsin.',
   'Отметьте хотя бы один рабочий день. Отпуск ставьте выходными в «Команде».': 'Kamida bitta ish kunini belgilang. Taʼtilni «Jamoa»da dam olish sifatida qoʻying.',
@@ -548,7 +545,6 @@ export const TEMPLATES = {
   'Аванс {0} сум: {1}.': 'Avans {0} soʻm: {1}.',
   'Выплачено: {0}, {1} сум.': 'Toʻlandi: {0}, {1} soʻm.',
   '{0}: выплачено {1} сум за {2}?': '{0}: {2} uchun {1} soʻm toʻlandimi?',
-  'Это аванс, а не штраф: {0}, {1} сум?': 'Bu jarima emas, avans: {0}, {1} soʻm?',
   'Удалить {0}?': '{0} — oʻchirilsinmi?',
   'аванс {0} {1} сум': 'avans {0} {1} soʻm',
   'выплату {0} {1} сум': 'toʻlov {0} {1} soʻm',

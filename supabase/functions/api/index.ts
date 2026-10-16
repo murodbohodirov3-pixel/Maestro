@@ -1514,7 +1514,7 @@ Deno.serve(async (req) => {
     // Advances and weekly payouts (owner's decisions of 2026-10-16): the
     // owner's alone. An advance is the master's money paid early; it lowers
     // what is owed for its week and is neither a fine nor salon income.
-    if (['addAdvance', 'delAdvance', 'markPayout', 'delPayout', 'fineToAdvance'].includes(action)) {
+    if (['addAdvance', 'delAdvance', 'markPayout', 'delPayout'].includes(action)) {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
     }
 
@@ -1573,15 +1573,13 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
-    if (['delAdvance', 'delPayout', 'fineToAdvance'].includes(action)) {
+    if (['delAdvance', 'delPayout'].includes(action)) {
       const id = Number(payload.id);
       if (!Number.isInteger(id)) return json({ error: 'invalid_request' }, 400);
-      const rpc = action === 'delAdvance' ? 'maestro_delete_advance'
-        : action === 'delPayout' ? 'maestro_delete_payout'
-          : 'maestro_convert_fine_to_advance';
-      const { data: result, error } = await sb.rpc(rpc, action === 'fineToAdvance'
-        ? { p_fine_id: id, p_actor_user_id: appUserResult.data.id }
-        : { p_id: id, p_actor_user_id: appUserResult.data.id });
+      const { data: result, error } = await sb.rpc(
+        action === 'delAdvance' ? 'maestro_delete_advance' : 'maestro_delete_payout',
+        { p_id: id, p_actor_user_id: appUserResult.data.id },
+      );
       if (error) return json({ error: error.message }, 500);
       if (!result?.ok) {
         const code = String(result?.error || 'invalid_request');

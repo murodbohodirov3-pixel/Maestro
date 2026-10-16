@@ -5,8 +5,8 @@
 -- fines, less the advances he took that week, less what was already paid for
 -- it. An advance is part of his own earnings paid early: not a fine, not salon
 -- income, it only lowers «к выплате». Until now the owner booked an advance as
--- a fine and deleted it after paying; such a fine can be turned into an
--- advance with maestro_convert_fine_to_advance.
+-- a fine and deleted it after paying; the one such fine still standing at the
+-- release is moved here by docs/release-2026-10/salim_advance.sql.
 --
 -- The figures are the app's (the same commission rule as everywhere); a
 -- payout row keeps what the owner saw and paid, so a sale approved later shows
@@ -112,49 +112,6 @@ begin
 end;
 $$;
 
--- An old «штраф-аванс» becomes what it was: an advance of the same master,
--- amount and day. The fine's deletion is journalled; the advance remembers
--- where it came from. Only while its week is unpaid.
-create or replace function public.maestro_convert_fine_to_advance(
-  p_fine_id bigint,
-  p_actor_user_id bigint,
-  p_correlation_id uuid default gen_random_uuid()
-)
-returns jsonb
-language plpgsql
-set search_path = ''
-as $$
-declare
-  fine public.fines;
-  day date;
-  target_master bigint;
-  new_id bigint;
-begin
-  select * into fine from public.fines where id = p_fine_id for update;
-  if not found then return jsonb_build_object('ok', false, 'error', 'fine_not_found'); end if;
-  if fine.auto is not null then return jsonb_build_object('ok', false, 'error', 'fine_is_automatic'); end if;
-  day := coalesce(fine.fine_date, fine.d);
-  if day < (now() at time zone 'Asia/Tashkent')::date - 14 then
-    return jsonb_build_object('ok', false, 'error', 'fine_delete_window_expired');
-  end if;
-  target_master := coalesce(fine.master_id, (select id from public.masters where name = fine.master));
-  if target_master is null then return jsonb_build_object('ok', false, 'error', 'master_not_found'); end if;
-  if exists (
-    select 1 from public.master_payouts
-    where master_payouts.master_id = target_master and week_start = public.maestro_week_start(day)
-  ) then
-    return jsonb_build_object('ok', false, 'error', 'advance_week_paid');
-  end if;
-
-  insert into public.master_advances (master_id, master, amount, given_on, note, converted_from_fine_id, created_by_user_id)
-  values (target_master, fine.master, fine.amount, day, 'из штрафа', fine.id, p_actor_user_id)
-  returning id into new_id;
-  perform public.maestro_prepare_delete_audit(p_actor_user_id, 'fine_to_advance', p_correlation_id);
-  delete from public.fines where id = p_fine_id;
-  return jsonb_build_object('ok', true, 'advance_id', new_id);
-end;
-$$;
-
 do $$
 declare
   fn text;
@@ -162,8 +119,7 @@ begin
   foreach fn in array array[
     'public.maestro_week_start(date)',
     'public.maestro_delete_advance(bigint, bigint, uuid)',
-    'public.maestro_delete_payout(bigint, bigint, uuid)',
-    'public.maestro_convert_fine_to_advance(bigint, bigint, uuid)'
+    'public.maestro_delete_payout(bigint, bigint, uuid)'
   ] loop
     execute format('revoke execute on function %s from public, anon, authenticated', fn);
     execute format('grant execute on function %s to service_role', fn);

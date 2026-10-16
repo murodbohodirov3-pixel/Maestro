@@ -14,6 +14,6 @@ select jsonb_build_object(
   'nothing_for_anon', not exists (
     select 1 from pg_proc as p join pg_namespace as n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname like 'maestro_%' and has_function_privilege('anon', p.oid, 'execute')
-      and p.proname in ('maestro_hold_booking', 'maestro_book_appointment', 'maestro_move_appointment', 'maestro_settle_late_fine', 'maestro_delete_advance', 'maestro_convert_fine_to_advance')
+      and p.proname in ('maestro_hold_booking', 'maestro_book_appointment', 'maestro_move_appointment', 'maestro_settle_late_fine', 'maestro_delete_advance', 'maestro_delete_payout')
   )
 ) as checks;
