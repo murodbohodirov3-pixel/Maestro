@@ -5393,8 +5393,26 @@ function LoginGate({ error }) {
   );
 }
 
+// Someone whose Telegram is not on the staff list (a client who tapped the
+// bot's menu, anyone at all) sees this and nothing of the app behind it. His
+// own Telegram ID is shown so that a new hire can send it to the owner.
+function AccessDenied() {
+  const telegramId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+  return (
+    <main className="login-gate">
+      <div className="login-card">
+        <img src="/icons/icon-192.png" alt="Maestro" />
+        <h1>Maestro</h1>
+        <p>Это приложение для сотрудников салона. Вашего Telegram нет в списке.</p>
+        {telegramId ? <p className="hint">Ваш Telegram ID: {telegramId}</p> : null}
+      </div>
+    </main>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(emptyState);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [view, setView] = useState('overview');
   const [previousView, setPreviousView] = useState('overview');
   const [isLoading, setIsLoading] = useState(true);
@@ -5495,7 +5513,12 @@ export default function App() {
         return allowed.includes(currentView) ? currentView : allowed[0];
       });
     } catch (loadError) {
-      setError(loadError.message || 'Не удалось загрузить данные.');
+      // Not on the staff list: no app at all, not an empty one.
+      if (loadError.details?.error === 'not_in_list' || loadError.message === 'not_in_list') {
+        setAccessDenied(true);
+        return;
+      }
+      setError(actionErrorText(loadError) || 'Не удалось загрузить данные.');
       if (String(loadError.message).includes('unauthorized')) setLoginRequired(true);
     } finally {
       setIsLoading(false);
@@ -5508,7 +5531,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (loginRequired) return undefined;
+    // Nobody to refresh for: signed out, or not on the staff list.
+    if (loginRequired || accessDenied) return undefined;
 
     let intervalId;
 
@@ -5544,7 +5568,7 @@ export default function App() {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [loginRequired]);
+  }, [loginRequired, accessDenied]);
 
   const availableViews = useMemo(() => viewIdsForUser(data), [data.appRole, data.role]);
   // An item is only offered if the role can reach something inside it.
@@ -5574,6 +5598,7 @@ export default function App() {
     openView('master');
   }
 
+  if (accessDenied) return <AccessDenied />;
   if (loginRequired) return <LoginGate error={error} />;
   if (isLoading) {
     return (
