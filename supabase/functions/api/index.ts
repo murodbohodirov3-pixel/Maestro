@@ -3,7 +3,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
-import { expenseForPartner, partnerMayCall, PARTNER_ROLE } from '../_shared/access.js';
+import {
+  ADMIN_ROLE,
+  adminMayCall,
+  expenseForPartner,
+  partnerMayCall,
+  PARTNER_ROLE,
+  stockForDesk,
+} from '../_shared/access.js';
 
 const BOT_TOKEN = Deno.env.get('BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -378,18 +385,24 @@ Deno.serve(async (req) => {
 
     console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
 
-    const isAdmin = ['owner', 'admin', 'finance'].includes(appUserResult.data.role);
-    const canManageCalendar = ['owner', 'admin'].includes(appUserResult.data.role);
-    const canManageClients = ['owner', 'admin'].includes(appUserResult.data.role);
-    // isAdmin is the read gate. Approving a master's sale and rewriting salon
-    // settings are owner decisions, and a bookkeeper should not inherit them
-    // just because he needs to see the numbers.
-    const canApproveSales = ['owner', 'admin'].includes(appUserResult.data.role);
-    const canEditSettings = ['owner', 'admin'].includes(appUserResult.data.role);
-    // A partner reads and never writes. What he may ask for is listed in
-    // _shared/access.js, and every other action stops here.
+    // isAdmin is the read gate for the salon's figures: the owner and a
+    // bookkeeper. The role named 'admin' is the front-desk administrator and is
+    // deliberately not in it (see isFrontDesk below).
+    const isAdmin = ['owner', 'finance'].includes(appUserResult.data.role);
+    const canManageCalendar = appUserResult.data.role === 'owner';
+    const canManageClients = appUserResult.data.role === 'owner';
+    // Approving a master's sale and rewriting salon settings are owner
+    // decisions, and a bookkeeper should not inherit them just because he needs
+    // to see the numbers.
+    const canApproveSales = appUserResult.data.role === 'owner';
+    const canEditSettings = appUserResult.data.role === 'owner';
+    // A partner reads and never writes; the administrator sells goods and
+    // nothing more. What each may ask for is listed in _shared/access.js, and
+    // every other action stops here.
     const isPartner = appUserResult.data.role === PARTNER_ROLE;
     if (isPartner && !partnerMayCall(action)) return json({ error: 'forbidden' }, 403);
+    const isFrontDesk = appUserResult.data.role === ADMIN_ROLE;
+    if (isFrontDesk && !adminMayCall(action)) return json({ error: 'forbidden' }, 403);
     let myMaster: string | null = null;
     let myMasterId: number | null = null;
     let myMasterPct: number | null = null;
@@ -407,7 +420,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (!isAdmin && !isPartner && !myMaster) return json({ error: 'not_in_list' }, 403);
+    if (!isAdmin && !isPartner && !isFrontDesk && !myMaster) return json({ error: 'not_in_list' }, 403);
 
     if (action === 'listAuditEvents') {
       if (appUserResult.data.role !== 'owner') return json({ error: 'forbidden' }, 403);
@@ -430,6 +443,31 @@ Deno.serve(async (req) => {
       return json({
         events,
         nextCursor: hasMore && events.length ? String(events[events.length - 1].id) : null,
+      });
+    }
+
+    if (action === 'load' && isFrontDesk) {
+      // The administrator's Склад: names and quantities, her own recent sales,
+      // nothing about prices, revenue or the masters.
+      const [products, receipts, productSales, writeoffs] = await Promise.all([
+        fetchStockRows('products', 'id'),
+        fetchStockRows('product_receipts', 'receipt_date'),
+        fetchStockRows('product_sales', 'sale_date'),
+        fetchStockRows('product_writeoffs', 'writeoff_date'),
+      ]);
+      const desk = stockForDesk({
+        products,
+        receipts,
+        sales: productSales,
+        writeoffs,
+        userId: appUserResult.data.id,
+        since: tashkentDate(-1),
+      });
+      return json({
+        role: 'frontdesk',
+        appRole: appUserResult.data.role,
+        ...desk,
+        sessionToken: issuedSessionToken,
       });
     }
 
@@ -775,8 +813,10 @@ Deno.serve(async (req) => {
     const STOCK_ACTIONS = ['addProductReceipt', 'addProductSale', 'setProductSaleApproval', 'addProductWriteoff', 'delStockEntry', 'setProductActive'];
     if (STOCK_ACTIONS.includes(action)) {
       const role = appUserResult.data.role;
-      if (!['owner', 'admin'].includes(role)) return json({ error: 'forbidden' }, 403);
-      if (action === 'setProductSaleApproval' && role !== 'owner') return json({ error: 'forbidden' }, 403);
+      // Deliveries, write-offs and decisions are the owner's. The administrator
+      // records a sale and may take back her own while it still waits.
+      const deskMay = ['addProductSale', 'delStockEntry'].includes(action);
+      if (!(role === 'owner' || (role === ADMIN_ROLE && deskMay))) return json({ error: 'forbidden' }, 403);
     }
     const isOwner = appUserResult.data.role === 'owner';
     const stockResult = (result: Record<string, unknown> | null, error: { message: string } | null) => {

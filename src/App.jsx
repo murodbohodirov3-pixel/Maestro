@@ -2823,7 +2823,7 @@ function ProductPicker({ options, value, onChange, onCreate, newName, placeholde
 // purchase price of the units sold (src/utils/stock.js).
 function StockView({ data, reload, setError }) {
   const isOwner = data.appRole === 'owner';
-  const canWrite = !isReadOnly(data) && ['owner', 'admin'].includes(data.appRole);
+  const canWrite = !isReadOnly(data) && data.appRole === 'owner';
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('stock', 'month');
   const [form, setForm] = useState(null);
   const [message, setMessage] = useState('');
@@ -3188,6 +3188,150 @@ function StockView({ data, reload, setError }) {
   );
 }
 
+// The administrator's Склад: sell, see what is left, see her own sales of
+// today and yesterday and what the owner decided. The server sends names and
+// quantities only (stockForDesk in supabase/functions/_shared/access.js).
+function DeskStockView({ data, reload, setError }) {
+  const [message, setMessage] = useState('');
+  const { run, busy } = useAction(setError, setMessage);
+  const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
+  const [saleForm, setSaleForm] = useState(emptySale);
+  const [saleRequestId, setSaleRequestId] = useState(newRequestId);
+
+  const products = data.products;
+  const qtyOf = (product) => Number(product?.stock_qty) || 0;
+  const nameOf = (id) => products.find((product) => String(product.id) === String(id))?.name || 'Товар';
+  const inStockOptions = productsByRecentUse(products, [], data.productSales)
+    .filter((product) => qtyOf(product) > 0)
+    .map((product) => ({ product, hint: `осталось ${qtyOf(product)}` }));
+  const selected = products.find((product) => String(product.id) === String(saleForm.product_id)) || null;
+  const saleQty = Number(saleForm.qty) || 0;
+  const saleAmount = Number(saleForm.amount) || 0;
+  const mySales = [...data.productSales]
+    .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')));
+  const shelf = [...products].sort((left, right) => (
+    Number(qtyOf(right) > 0) - Number(qtyOf(left) > 0)
+    || String(left.name).localeCompare(String(right.name), 'ru')
+  ));
+
+  async function submitSale(event) {
+    event.preventDefault();
+    if (!selected) return setError('Выберите товар.');
+    if (!Number.isInteger(saleQty) || saleQty < 1) return setError('Количество — целое число от 1.');
+    if (saleQty > qtyOf(selected)) return setError(`На складе только ${qtyOf(selected)} шт. «${selected.name}».`);
+    if (!saleAmount) return setError('Введите сумму.');
+    if (!saleForm.payment_method) return setError('Выберите способ оплаты.');
+    const ok = await run(
+      () => callLegacyApi('addProductSale', {
+        product_id: selected.id,
+        qty: saleQty,
+        amount: saleAmount,
+        payment_method: saleForm.payment_method,
+        client_request_id: saleRequestId,
+      }).then(reload),
+      'Отправлено на подтверждение.',
+    );
+    if (!ok) return;
+    haptic('success');
+    setSaleRequestId(newRequestId());
+    setSaleForm(emptySale);
+  }
+
+  async function takeBack(sale) {
+    if (!await confirmAction(`Удалить продажу «${nameOf(sale.product_id)}» на ${money(sale.amount)} сум?`)) return;
+    await run(() => callLegacyApi('delStockEntry', { kind: 'sale', id: sale.id }).then(reload), 'Удалено.');
+  }
+
+  return (
+    <section className="view-grid">
+      {message ? <div className="notice success wide">{message}</div> : null}
+
+      <form className="card wide stock-form" onSubmit={submitSale}>
+        <h2>Продажа</h2>
+        <ProductPicker
+          options={inStockOptions}
+          value={saleForm.product_id}
+          onChange={(id) => setSaleForm({ ...saleForm, product_id: id })}
+        />
+        <div className="settings-pair">
+          <label>
+            Количество
+            <input type="number" inputMode="numeric" min="1" step="1" value={saleForm.qty} onChange={(event) => setSaleForm({ ...saleForm, qty: event.target.value })} />
+          </label>
+          <label>
+            Сумма
+            <MoneyInput placeholder="сум" value={saleForm.amount} onChange={(value) => setSaleForm({ ...saleForm, amount: value })} />
+          </label>
+        </div>
+        <div className="pay-types">
+          {PAYMENT_METHODS.map(([value, label]) => (
+            <button
+              aria-pressed={saleForm.payment_method === value}
+              className={`pay-type ${value} ${saleForm.payment_method === value ? 'on' : ''}`}
+              key={value}
+              type="button"
+              onClick={() => setSaleForm({ ...saleForm, payment_method: value })}
+            >
+              <span className="payment-dot" />{label}
+            </button>
+          ))}
+        </div>
+        <button className="btn" type="submit" disabled={busy}>Отправить на подтверждение</button>
+      </form>
+
+      <div className="card wide">
+        <div className="section-heading">
+          <h2>Мои продажи</h2>
+          <span className="date-badge">сегодня и вчера</span>
+        </div>
+        <Rows
+          rows={mySales}
+          empty="Продаж пока нет."
+          render={(sale) => (
+            <div className={`row stock-move${sale.status === 'rejected' ? ' is-rejected' : ''}`} key={sale.id}>
+              <div>
+                <strong>{nameOf(sale.product_id)} × {sale.qty}</strong>
+                <span>{displayDateTime(sale.created_at)} · {PAYMENT_LABELS[sale.payment_method] || '—'}</span>
+                {sale.status === 'pending' ? <span className="approval pending">Ждёт подтверждения</span> : null}
+                {sale.status === 'approved' ? <span className="approval approved">Подтверждено</span> : null}
+                {sale.status === 'rejected' ? <span className="approval rejected">Отклонено</span> : null}
+              </div>
+              <div>
+                <strong>{money(sale.amount)}</strong>
+                {sale.status === 'pending'
+                  ? <button className="del" type="button" aria-label="Удалить" disabled={busy} onClick={() => takeBack(sale)}>×</button>
+                  : null}
+              </div>
+            </div>
+          )}
+        />
+      </div>
+
+      <div className="card wide">
+        <div className="section-heading">
+          <h2>Остатки</h2>
+          <span className="date-badge">сейчас</span>
+        </div>
+        <Rows
+          rows={shelf}
+          empty="Товаров пока нет."
+          render={(product) => (
+            <div className={`row stock-row${qtyOf(product) <= 0 ? ' is-empty' : qtyOf(product) <= 2 ? ' is-low' : ''}`} key={product.id}>
+              <div>
+                <strong>{product.name}</strong>
+                <span>{PRODUCT_CATEGORY_LABELS[product.category] || 'Товар'}</span>
+              </div>
+              <div className="stock-qty">
+                <strong>{qtyOf(product)} шт.</strong>
+              </div>
+            </div>
+          )}
+        />
+      </div>
+    </section>
+  );
+}
+
 const AUDIT_ENTITY_LABELS = {
   fine: 'Штраф',
   expense: 'Расход',
@@ -3533,6 +3677,9 @@ const VIEW_TITLES = {
 };
 
 function viewIdsForUser(data) {
+  // The front-desk administrator: Склад, for selling. The calendar joins it
+  // when it comes back.
+  if (data.role === 'frontdesk') return ['stock'];
   if (data.role === 'admin') {
     // No «Рабочий день» (entering sales for a master) and no settings.
     if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance'];
@@ -4007,7 +4154,10 @@ export default function App() {
       setLoginRequired(false);
       setView((currentView) => {
         const allowed = viewIdsForUser(normalized);
-        if (!preserveView) return allowed.includes('overview') ? 'overview' : normalized.role === 'admin' ? 'admin' : 'master';
+        if (!preserveView) {
+          if (allowed.includes('overview')) return 'overview';
+          return normalized.role === 'admin' ? 'admin' : allowed[0] || 'master';
+        }
         return allowed.includes(currentView) ? currentView : allowed[0];
       });
     } catch (loadError) {
@@ -4106,15 +4256,20 @@ export default function App() {
     admin: AdminView,
     attendance: AttendanceView,
     finance: FinanceView,
-    stock: StockView,
+    stock: data.role === 'frontdesk' ? DeskStockView : StockView,
     settings: SettingsView,
   }[view] || MasterView;
 
   const isMaster = data.role === 'master';
+  const isFrontDesk = data.role === 'frontdesk';
+  // A bar with one button is not navigation.
+  const showTabbar = !isMaster && navItems.length > 1;
   const masterProfile = isMaster ? data.byName[data.me] : null;
   const title = isMaster ? (data.me || 'Maestro') : VIEW_TITLES[view] || 'Maestro';
   const subtitle = isMaster
     ? `${Number(masterProfile?.pct) || 40}% мастеру · ${todayHeading().split(' · ')[1]}`
+    : isFrontDesk
+      ? `Администратор · ${todayHeading().split(' · ')[1]}`
     : view === 'settings'
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
@@ -4122,7 +4277,7 @@ export default function App() {
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
-    <main className={`app ${isMaster ? 'is-master' : 'has-tabbar'}`}>
+    <main className={`app ${isMaster ? 'is-master' : showTabbar ? 'has-tabbar' : ''}`}>
       <header className="app-header">
         {view === 'settings' ? (
           <button className="back-button" type="button" onClick={() => openView(previousView)}>
@@ -4156,7 +4311,7 @@ export default function App() {
       {error && !loginRequired ? <div className="notice error">{error}</div> : null}
       <CurrentView data={data} reload={load} setError={setError} setView={openView} />
 
-      {!isMaster && navItems.length ? (
+      {showTabbar ? (
         <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>
           {navItems.map((item) => {
             const active = item.views.includes(view);

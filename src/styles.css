@@ -676,6 +676,11 @@ small {
   color: var(--brass);
 }
 
+.approval.approved {
+  background: var(--positive-soft);
+  color: var(--positive-ink);
+}
+
 .approval.rejected {
   background: color-mix(in srgb, var(--fine) 14%, transparent);
   color: var(--fine);

@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { expenseForPartner, partnerMayCall, PARTNER_ROLE } from '../supabase/functions/_shared/access.js';
+import {
+  ADMIN_ROLE,
+  adminMayCall,
+  expenseForPartner,
+  partnerMayCall,
+  PARTNER_ROLE,
+  stockForDesk,
+} from '../supabase/functions/_shared/access.js';
 import {
   investmentSummary,
   operatingExpenses,
@@ -61,4 +68,55 @@ test('every total a partner sees is the same sum the owner sees', () => {
   for (const owner of ['murod', 'jamshid']) {
     assert.deepEqual(investmentSummary(partner, owner), investmentSummary(EXPENSES, owner));
   }
+});
+
+test('the administrator may sell goods and take back her own pending sale, nothing else', () => {
+  assert.equal(ADMIN_ROLE, 'admin');
+  for (const action of ['load', 'addProductSale', 'delStockEntry']) assert.equal(adminMayCall(action), true, action);
+  const refused = apiActions.filter((action) => !['load', 'addProductSale', 'delStockEntry', 'telegramOAuth'].includes(action));
+  assert.ok(refused.length >= 25);
+  for (const action of refused) assert.equal(adminMayCall(action), false, action);
+  for (const action of ['addProductReceipt', 'addProductWriteoff', 'setProductSaleApproval', 'setSaleApproval', 'addExpense', 'setSettings', 'listAuditEvents']) {
+    assert.equal(adminMayCall(action), false, action);
+  }
+});
+
+test('the administrator guard runs before any action, next to the partner one', () => {
+  const guard = apiSource.indexOf("if (isFrontDesk && !adminMayCall(action)) return json({ error: 'forbidden' }, 403);");
+  assert.ok(guard > 0, 'guard missing from the api');
+  assert.ok(guard < apiSource.indexOf("if (action === 'listAuditEvents')"));
+  assert.ok(guard < apiSource.indexOf("if (action === 'load' && isFrontDesk)"));
+  // The role named admin no longer reads the salon's figures or decides.
+  assert.match(apiSource, /const isAdmin = \['owner', 'finance'\]\.includes/);
+  assert.match(apiSource, /const canApproveSales = appUserResult\.data\.role === 'owner';/);
+});
+
+test("the administrator's Склад has quantities and her own sales, never a price", () => {
+  const desk = stockForDesk({
+    products: [
+      { id: 1, name: 'Шампунь', category: 'care', active: true },
+      { id: 2, name: 'Воск', category: 'care', active: false },
+      { id: 3, name: 'Кола', category: 'drinks', active: true },
+    ],
+    receipts: [
+      { product_id: 1, qty: 10, unit_cost: 50_000, total_cost: 500_000 },
+      { product_id: 2, qty: 2, unit_cost: 40_000, total_cost: 80_000 },
+      { product_id: 3, qty: 24, unit_cost: 7_000, total_cost: 168_000 },
+    ],
+    sales: [
+      { id: 1, product_id: 1, qty: 2, amount: 150_000, unit_cost: 50_000, status: 'approved', sale_date: '2026-10-15', created_by_user_id: 20, payment_method: 'cash', created_at: 'x' },
+      { id: 2, product_id: 1, qty: 1, amount: 75_000, unit_cost: 50_000, status: 'pending', sale_date: '2026-10-15', created_by_user_id: 7, payment_method: 'card', created_at: 'y' },
+      { id: 3, product_id: 1, qty: 1, amount: 70_000, unit_cost: 50_000, status: 'rejected', sale_date: '2026-10-14', created_by_user_id: 20, payment_method: 'qr', created_at: 'z' },
+      { id: 4, product_id: 3, qty: 1, amount: 12_000, unit_cost: 7_000, status: 'approved', sale_date: '2026-10-10', created_by_user_id: 20, payment_method: 'cash', created_at: 'w' },
+      { id: 5, product_id: 2, qty: 2, amount: 90_000, unit_cost: 40_000, status: 'approved', sale_date: '2026-10-11', created_by_user_id: 7, payment_method: 'cash', created_at: 'v' },
+    ],
+    writeoffs: [{ product_id: 3, qty: 3 }],
+    userId: 20,
+    since: '2026-10-14',
+  });
+  // A hidden product with nothing left is not listed; pending sales hold stock.
+  assert.deepEqual(desk.products.map((row) => [row.name, row.stock_qty]), [['Шампунь', 7], ['Кола', 20]]);
+  // Only her own sales from the window, without what the goods cost.
+  assert.deepEqual(desk.product_sales.map((sale) => sale.id), [1, 3]);
+  assert.doesNotMatch(JSON.stringify(desk), /unit_cost|total_cost|:50000[,}]|:500000[,}]/);
 });
