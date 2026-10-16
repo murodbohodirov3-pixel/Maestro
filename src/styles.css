@@ -4752,3 +4752,68 @@ label {
 .picker-selected .link-button {
   flex: none;
 }
+
+/* A visit's client: search, the chosen card, a new card. */
+.client-chosen,
+.client-new {
+  display: grid;
+  gap: 10px;
+}
+
+.client-known {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.client-known .seg {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.client-no-phone {
+  color: var(--fine);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.client-new-button {
+  min-height: 40px;
+}
+
+.picker-list .client-line {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.picker-list button:disabled {
+  opacity: 0.5;
+}
+
+.client-finder {
+  display: grid;
+  gap: 8px;
+}
+
+.client-contact {
+  margin-bottom: 12px;
+}
+
+.client-contact .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-decoration: none;
+}
+
+.client-missed strong,
+.client-missed span {
+  color: var(--fine);
+}

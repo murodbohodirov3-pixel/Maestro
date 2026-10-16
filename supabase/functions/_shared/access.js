@@ -55,6 +55,19 @@ export function stockForDesk({ products = [], receipts = [], sales = [], writeof
   return { products: stock, product_sales: ownSales };
 }
 
+// A client's number as anyone but the owner sees it: the operator code and the
+// last two digits, «+998 90 *** ** 22». Enough to tell two Азизs apart, not
+// enough to take the base along.
+export function maskPhoneForStaff(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('998') && digits.length === 12) {
+    return `+998 ${digits.slice(3, 5)} *** ** ${digits.slice(-2)}`;
+  }
+  if (digits.length < 4) return '***';
+  return `+${digits.slice(0, Math.min(3, digits.length - 2))} *** ** ${digits.slice(-2)}`;
+}
+
 // A partner sees how much was spent and when, never on what: an expense reaches
 // him without its name, note, quantity or who entered it. The fields kept are
 // exactly the ones the totals, the comparisons and the investment balances are

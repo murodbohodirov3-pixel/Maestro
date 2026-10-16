@@ -5,6 +5,7 @@ import {
   ADMIN_ROLE,
   adminMayCall,
   expenseForPartner,
+  maskPhoneForStaff,
   partnerMayCall,
   PARTNER_ROLE,
   stockForDesk,
@@ -119,4 +120,13 @@ test("the administrator's Склад has quantities and her own sales, never a p
   // Only her own sales from the window, without what the goods cost.
   assert.deepEqual(desk.product_sales.map((sale) => sale.id), [1, 3]);
   assert.doesNotMatch(JSON.stringify(desk), /unit_cost|total_cost|:50000[,}]|:500000[,}]/);
+});
+
+test('masters see a client number as its operator code and last two digits', () => {
+  assert.equal(maskPhoneForStaff('+998901234522'), '+998 90 *** ** 22');
+  assert.equal(maskPhoneForStaff('998 93 555 11 05'), '+998 93 *** ** 05');
+  assert.equal(maskPhoneForStaff('+79161234567'), '+791 *** ** 67');
+  assert.equal(maskPhoneForStaff(null), null);
+  assert.equal(maskPhoneForStaff(''), null);
+  assert.doesNotMatch(maskPhoneForStaff('+998901234522'), /1234/);
 });

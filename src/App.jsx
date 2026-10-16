@@ -1284,6 +1284,283 @@ function saleStatusClass(sale) {
   return '';
 }
 
+// Finding the client of a visit: a few letters of the name or the last digits
+// of the number, most recent visitors first, or a new card. The server masks
+// numbers for masters (maskPhoneForStaff in _shared/access.js).
+function useClientSearch(query, setError) {
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const latest = useRef(0);
+
+  useEffect(() => {
+    const text = query.trim();
+    if (text.length < 2) {
+      setResults([]);
+      setSearching(false);
+      return undefined;
+    }
+    const ticket = latest.current + 1;
+    latest.current = ticket;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await callLegacyApi('searchClients', { query: text });
+        if (latest.current === ticket) setResults(result.clients || []);
+      } catch (error) {
+        if (latest.current === ticket) setError(actionErrorText(error));
+      } finally {
+        if (latest.current === ticket) setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, setError]);
+
+  return { results, searching };
+}
+
+function clientVisitsLine(client) {
+  if (!client.visit_count) return client.known_before ? 'бывал раньше' : 'ещё не был';
+  const last = client.last_visit ? ` · ${displayDate(client.last_visit)}` : '';
+  const master = client.last_master ? ` · ${client.last_master}` : '';
+  return `${client.visit_count} ${pluralRu(client.visit_count, 'визит', 'визита', 'визитов')}${last}${master}`;
+}
+
+function ClientPicker({ client, onChange, knownBefore, onKnownBefore, setError }) {
+  const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({ full_name: '', phone: '', known_before: null });
+  const [saving, setSaving] = useState(false);
+  const { results, searching } = useClientSearch(query, setError);
+  const firstVisit = client && !client.visit_count && !client.known_before;
+
+  function pick(next) {
+    onChange(next);
+    setQuery('');
+    setCreating(false);
+  }
+
+  function startNew() {
+    const typed = query.trim();
+    const looksLikePhone = /^[0-9 +()-]+$/.test(typed);
+    setDraft({ full_name: looksLikePhone ? '' : typed, phone: looksLikePhone ? typed : '', known_before: null });
+    setCreating(true);
+  }
+
+  async function createCard() {
+    if (!draft.full_name.trim()) return setError('Введите имя клиента.');
+    if (draft.known_before === null) return setError('Отметьте, был ли клиент у нас раньше.');
+    setSaving(true);
+    setError('');
+    try {
+      const result = await callLegacyApi('addClient', {
+        full_name: draft.full_name.trim(),
+        phone: draft.phone.trim() || null,
+        known_before: draft.known_before,
+      });
+      haptic('success');
+      pick(result.client);
+      // The answer given on the new card stands; it is not asked twice.
+      onKnownBefore(draft.known_before);
+    } catch (error) {
+      if (error.details?.error === 'client_exists' && error.details.client) {
+        setError(`Этот номер уже есть: ${error.details.client.full_name}. Выбран он.`);
+        pick(error.details.client);
+      } else {
+        setError(actionErrorText(error));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (client) {
+    return (
+      <div className="client-chosen">
+        <div className="picker-selected">
+          <span>
+            <strong>{client.full_name}</strong>
+            <small>{client.phone || 'без номера'} · {clientVisitsLine(client)}</small>
+          </span>
+          <button className="link-button" type="button" onClick={() => { onChange(null); onKnownBefore(null); }}>Изменить</button>
+        </div>
+        {firstVisit ? (
+          <div className="client-known">
+            <span>Был у нас раньше?</span>
+            <div className="seg">
+              <button className={knownBefore === true ? 'on' : ''} type="button" onClick={() => onKnownBefore(true)}>Да</button>
+              <button className={knownBefore === false ? 'on' : ''} type="button" onClick={() => onKnownBefore(false)}>Нет</button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (creating) {
+    return (
+      <div className="client-new">
+        <input maxLength={120} placeholder="Имя" value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} />
+        <input inputMode="tel" maxLength={20} placeholder="Телефон, например 90 123 45 67" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
+        {!draft.phone.trim() ? <span className="client-no-phone">Без номера — владелец получит уведомление</span> : null}
+        <div className="client-known">
+          <span>Был у нас раньше?</span>
+          <div className="seg">
+            <button className={draft.known_before === true ? 'on' : ''} type="button" onClick={() => setDraft({ ...draft, known_before: true })}>Да</button>
+            <button className={draft.known_before === false ? 'on' : ''} type="button" onClick={() => setDraft({ ...draft, known_before: false })}>Нет</button>
+          </div>
+        </div>
+        <div className="settings-actions">
+          <button className="btn" type="button" disabled={saving} onClick={createCard}>{saving ? 'Сохраняем…' : 'Создать карточку'}</button>
+          <button className="btn ghost" type="button" disabled={saving} onClick={() => setCreating(false)}>Назад</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="picker">
+      <input
+        type="search"
+        enterKeyHint="search"
+        autoComplete="off"
+        placeholder="Клиент: имя или последние цифры номера"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {query.trim().length >= 2 ? (
+        <div className="picker-list" role="listbox">
+          {results.map((found) => (
+            <button key={found.id} role="option" aria-selected="false" type="button" disabled={found.blocked} onClick={() => pick(found)}>
+              <span>
+                {found.full_name}
+                <small className="client-line">{found.phone || 'без номера'} · {clientVisitsLine(found)}</small>
+              </span>
+              {found.blocked ? <small>заблокирован</small> : null}
+            </button>
+          ))}
+          {!searching && !results.length ? <p className="hint">Не найден</p> : null}
+        </div>
+      ) : null}
+      <button className="btn ghost client-new-button" type="button" onClick={startNew}>+ Новый клиент</button>
+    </div>
+  );
+}
+
+// The owner's view of one client: the whole number, how to reach him, and
+// every visit — when, at what time, to which master, for how much.
+function ClientSheet({ clientId, onClose, setError }) {
+  const [card, setCard] = useState(null);
+
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    let alive = true;
+    callLegacyApi('getClient', { client_id: clientId })
+      .then((result) => { if (alive) setCard(result); })
+      .catch((error) => { if (alive) { setError(actionErrorText(error)); onClose(); } });
+    return () => { alive = false; };
+  }, [clientId, onClose, setError]);
+
+  const client = card?.client;
+  const visits = (card?.visits || []).filter((visit) => !visit.rejected);
+  const missed = card?.missed || [];
+  // One timeline, newest first: a no-show belongs between the visits around it.
+  const timeline = [
+    ...visits.map((visit) => ({ kind: 'visit', at: visit.starts_at || visit.created_at, visit })),
+    ...missed.map((item) => ({ kind: 'missed', at: item.starts_at, item })),
+  ].sort((left, right) => String(right.at).localeCompare(String(left.at)));
+  const telegramLink = client?.telegram_username
+    ? `https://t.me/${client.telegram_username}`
+    : client?.telegram_user_id ? `tg://user?id=${client.telegram_user_id}` : null;
+
+  return (
+    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+      <div aria-label="Клиент" aria-modal="true" className="card master-sheet client-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="master-sheet-head">
+          <div>
+            <strong>{client?.full_name || 'Клиент'}</strong>
+            <small>
+              {client ? `${client.phone || 'без номера'} · ${visits.length} ${pluralRu(visits.length, 'визит', 'визита', 'визитов')}${missed.length ? ` · неявок и отмен ${missed.length}` : ''}` : 'Загружаем…'}
+            </small>
+          </div>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+        </div>
+        {client ? (
+          <>
+            <div className="settings-actions client-contact">
+              {client.phone ? <a className="btn ghost" href={`tel:${client.phone}`}>Позвонить</a> : null}
+              {telegramLink ? <a className="btn ghost" href={telegramLink} rel="noreferrer" target="_blank">Написать</a> : null}
+            </div>
+            <div className="rows">
+              {timeline.map((entry) => (entry.kind === 'visit' ? (
+                <div className="row" key={`v-${entry.visit.id}`}>
+                  <div>
+                    <strong>{entry.at ? displayDateTime(entry.at) : displayDate(entry.visit.d)}</strong>
+                    <span>{entry.visit.master}{entry.visit.status === 'pending' ? ' · ждёт подтверждения' : ''}{entry.visit.is_new_client ? ' · первый визит' : ''}</span>
+                  </div>
+                  <div><strong>{money(entry.visit.amount)}</strong></div>
+                </div>
+              ) : (
+                <div className="row client-missed" key={`m-${entry.at}`}>
+                  <div>
+                    <strong>{displayDateTime(entry.at)}</strong>
+                    <span>{entry.item.status === 'no_show' ? 'не пришёл' : 'отменил запись'}</span>
+                  </div>
+                </div>
+              )))}
+              {!timeline.length ? <p className="hint">Визитов пока нет.</p> : null}
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Продажи: the owner looks a client up by name or number and opens his card.
+function ClientFinder({ setError }) {
+  const [query, setQuery] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const { results, searching } = useClientSearch(query, setError);
+  const close = useCallback(() => setOpenId(null), []);
+
+  return (
+    <div className="card wide client-finder">
+      <input
+        type="search"
+        enterKeyHint="search"
+        autoComplete="off"
+        placeholder="Найти клиента: имя или номер"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      {query.trim().length >= 2 ? (
+        <div className="picker-list" role="listbox">
+          {results.map((found) => (
+            <button key={found.id} role="option" aria-selected="false" type="button" onClick={() => setOpenId(found.id)}>
+              <span>
+                {found.full_name}
+                <small className="client-line">{found.phone || 'без номера'} · {clientVisitsLine(found)}</small>
+              </span>
+            </button>
+          ))}
+          {!searching && !results.length ? <p className="hint">Не найден</p> : null}
+        </div>
+      ) : null}
+      {openId ? <ClientSheet clientId={openId} onClose={close} setError={setError} /> : null}
+    </div>
+  );
+}
+
 // What a master reads under «Я пришёл»: when his shift starts by the schedule,
 // and from when an arrival counts as late.
 function shiftStartHint(start, lateAfter) {
@@ -1298,8 +1575,10 @@ function MasterView({ data, reload, setError }) {
   const [amount, setAmount] = useState('');
   const [split, setSplit] = useState(false);
   const [splitAmounts, setSplitAmounts] = useState({ cash: '', card: '', qr: '' });
-  const [clientCount, setClientCount] = useState(1);
-  const [isNewClient, setIsNewClient] = useState(null);
+  // The visit's client, and the answer to «Был у нас раньше?» for a client
+  // with no visit recorded yet.
+  const [visitClient, setVisitClient] = useState(null);
+  const [knownBefore, setKnownBefore] = useState(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
   const [message, setMessage] = useState('');
   const [requestId, setRequestId] = useState(newRequestId);
@@ -1379,15 +1658,16 @@ function MasterView({ data, reload, setError }) {
       return setError(split ? 'Введите сумму хотя бы для одного способа оплаты.' : 'Введите сумму продажи.');
     }
     if (!masterName) return setError('Сначала выберите мастера.');
-    if (clientCount > 0 && isNewClient == null) return setError('Отметьте, клиент новый или постоянный.');
+    if (!visitClient) return setError('Выберите клиента или создайте карточку.');
+    const needsKnownBefore = !visitClient.visit_count && !visitClient.known_before;
+    if (needsKnownBefore && knownBefore === null) return setError('Отметьте, был ли клиент у нас раньше.');
 
     const payload = {
       master: masterName,
       d: TODAY,
       ...amounts,
-      cl: clientCount,
-      clients_count: clientCount,
-      is_new_client: clientCount === 0 ? null : isNewClient,
+      client_id: visitClient.id,
+      client_known_before: needsKnownBefore ? knownBefore : undefined,
       // Held across retries of this same sale, so a reply lost on a bad
       // connection cannot turn one haircut into two rows.
       client_request_id: requestId,
@@ -1395,7 +1675,7 @@ function MasterView({ data, reload, setError }) {
 
     const ok = await run(
       () => callLegacyApi('addSale', payload).then(reload),
-      data.role === 'master' ? 'Оплата отправлена owner на подтверждение.' : 'Продажа сохранена.',
+      data.role === 'master' ? 'Визит отправлен на подтверждение.' : 'Визит сохранён.',
     );
     if (!ok) return;
 
@@ -1404,8 +1684,8 @@ function MasterView({ data, reload, setError }) {
     setAmount('');
     setSplit(false);
     setSplitAmounts({ cash: '', card: '', qr: '' });
-    setClientCount(1);
-    setIsNewClient(null);
+    setVisitClient(null);
+    setKnownBefore(null);
   }
 
   // Switching carries the amount already typed across, so opening the split
@@ -1537,7 +1817,14 @@ function MasterView({ data, reload, setError }) {
       </div>
 
       <form className="card" onSubmit={submitSale}>
-        <h2>Новая продажа</h2>
+        <h2>Визит</h2>
+        <ClientPicker
+          client={visitClient}
+          onChange={setVisitClient}
+          knownBefore={knownBefore}
+          onKnownBefore={setKnownBefore}
+          setError={setError}
+        />
         {split ? (
           <div className="split-amounts">
             {PAYMENT_METHODS.map(([key, label]) => (
@@ -1578,16 +1865,6 @@ function MasterView({ data, reload, setError }) {
         <button className="split-toggle" type="button" onClick={toggleSplit}>
           {split ? 'Одним способом' : 'Разделить оплату'}
         </button>
-        <div className="counter">
-          <button type="button" onClick={() => setClientCount(Math.max(0, clientCount - 1))}>-</button>
-          <strong>{clientCount}</strong>
-          <button type="button" onClick={() => setClientCount(clientCount + 1)}>+</button>
-        </div>
-        <div className="seg">
-          <button className={isNewClient === true ? 'on' : ''} type="button" onClick={() => setIsNewClient(true)}>Новый</button>
-          <button className={isNewClient === false ? 'on' : ''} type="button" onClick={() => setIsNewClient(false)}>Постоянный</button>
-        </div>
-        {clientCount === 0 ? <p className="hint">Продажа сохранится в выручке, но не увеличит число клиентов.</p> : null}
         <button className="btn" type="submit" disabled={busy}>
           {busy ? 'Сохраняем…' : 'Добавить'}
         </button>
@@ -1603,7 +1880,7 @@ function MasterView({ data, reload, setError }) {
             <div className={`row ${saleStatusClass(sale)}`} key={sale.id}>
               <div>
                 <strong className="sale-amount">{money(saleTotal(sale))} сум</strong>
-                <span>{paymentLabel(sale)} · клиентов {clients(sale)} · {clientType(sale)}</span>
+                <span>{sale.client_name ? `${sale.client_name} · ` : ''}{paymentLabel(sale)} · {clientType(sale)}</span>
                 <span>Внесено: {displayDateTime(sale.created_at)}</span>
                 {isPendingOwnerApproval(sale) ? <span className="approval pending">Ждёт подтверждения</span> : null}
                 {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено владельцем — не засчитано</span> : null}
@@ -1663,6 +1940,9 @@ function AdminView({ data, reload, setError }) {
   const [salesListOpen, setSalesListOpen] = useState(false);
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
+  const [openClient, setOpenClient] = useState(null);
+  const closeClient = useCallback(() => setOpenClient(null), []);
+  const isOwner = data.appRole === 'owner';
   const { run, busy } = useAction(setError, setMessage);
   // Which approval button is working, so it can say so while the rest wait.
   const [deciding, setDeciding] = useState(null);
@@ -1875,8 +2155,12 @@ function AdminView({ data, reload, setError }) {
                 <strong>{sale.master} · {money(saleTotal(sale))} сум</strong>
                 <PaymentChips sale={sale} />
                 <span>
-                  {rowDate(sale)} · клиентов {clients(sale)} · {clientType(sale)}
+                  {sale.client_id && isOwner ? (
+                    <button className="master-name-button" type="button" onClick={() => setOpenClient(sale.client_id)}>{sale.client_name}</button>
+                  ) : sale.client_name || `клиентов ${clients(sale)}`}
+                  {' · '}{clientType(sale)}
                 </span>
+                {sale.client_no_phone ? <span className="approval rejected">без номера</span> : null}
                 <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
               <div className="approval-actions">
@@ -1893,6 +2177,9 @@ function AdminView({ data, reload, setError }) {
         {message ? <p className="success">{message}</p> : null}
       </div>
       ) : null}
+
+      {isOwner ? <ClientFinder setError={setError} /> : null}
+      {openClient ? <ClientSheet clientId={openClient} onClose={closeClient} setError={setError} /> : null}
 
       <div className="wide period-block">
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
@@ -2023,7 +2310,12 @@ function AdminView({ data, reload, setError }) {
                 <div>
                   <strong>{sale.master}</strong>
                   <span>{displayDateTime(sale.created_at)} · {payment}</span>
-                  <span>{clientType(sale)} · клиентов: {clients(sale)}</span>
+                  <span>
+                    {sale.client_id && isOwner ? (
+                      <button className="master-name-button" type="button" onClick={() => setOpenClient(sale.client_id)}>{sale.client_name}</button>
+                    ) : sale.client_name || `клиентов: ${clients(sale)}`}
+                    {' · '}{clientType(sale)}
+                  </span>
                 </div>
                 <div className="detailed-sale-amounts">
                   <strong>{money(amount)} сум</strong>

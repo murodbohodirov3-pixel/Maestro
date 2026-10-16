@@ -7,6 +7,7 @@ import {
   ADMIN_ROLE,
   adminMayCall,
   expenseForPartner,
+  maskPhoneForStaff,
   partnerMayCall,
   PARTNER_ROLE,
   stockForDesk,
@@ -297,6 +298,51 @@ async function verifyWidget(auth: Record<string, unknown>): Promise<{ id: number
   }
 }
 
+// Work that must not hold up the answer (a Telegram message): the runtime
+// keeps the worker alive for it after the response has gone.
+function inBackground(work: Promise<unknown>) {
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } }).EdgeRuntime;
+  const guarded = work.catch((error) => console.warn('[maestro-api] background work failed', String(error)));
+  if (runtime?.waitUntil) runtime.waitUntil(guarded);
+}
+
+function escapeHtml(text: unknown) {
+  return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Messages to the owner through the same bot the app signs in with.
+async function messageOwners(text: string) {
+  const { data } = await sb.from('app_users').select('telegram_id').eq('role', 'owner').eq('active', true);
+  await Promise.all((data ?? [])
+    .filter((owner: { telegram_id: number | null }) => owner.telegram_id)
+    .map((owner: { telegram_id: number }) => fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: owner.telegram_id, text, parse_mode: 'HTML' }),
+    })));
+}
+
+function formatSum(value: number) {
+  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+type ClientRow = { id: string; full_name: string; phone_e164: string | null; known_before: boolean; lifecycle_status?: string };
+
+// A client as a master sees him: the number masked. The owner sees it whole.
+function clientForCaller(client: ClientRow & { visit_count?: number; last_visit?: string | null; last_master?: string | null }, isOwnerCaller: boolean) {
+  return {
+    id: client.id,
+    full_name: client.full_name,
+    phone: isOwnerCaller ? client.phone_e164 : maskPhoneForStaff(client.phone_e164),
+    has_phone: Boolean(client.phone_e164),
+    known_before: client.known_before === true,
+    blocked: client.lifecycle_status === 'blocked',
+    visit_count: Number(client.visit_count ?? 0),
+    last_visit: client.last_visit ?? null,
+    last_master: client.last_master ?? null,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
@@ -545,6 +591,11 @@ Deno.serve(async (req) => {
         fetchAllRows('master_schedule_rules', 'iso_weekday', { master_id: myMasterId! }),
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
+      // A master never receives a client's number whole.
+      const maskedAppointments = appointments.map((appointment: Record<string, unknown>) => ({
+        ...appointment,
+        client_phone: maskPhoneForStaff(appointment.client_phone as string | null),
+      }));
 
       return json({
         role: 'master',
@@ -557,11 +608,64 @@ Deno.serve(async (req) => {
         attendance,
         booking_services,
         master_day_statuses,
-        appointments,
+        appointments: maskedAppointments,
         master_schedule_rules,
         sessionToken: issuedSessionToken,
         windowSince: since,
       });
+    }
+
+    // Client cards (owner's decision of 2026-10-16): a master finds the client
+    // or makes a card for him before recording a visit. Only the owner sees a
+    // number whole and reads a card's history.
+    const isOwnerCaller = appUserResult.data.role === 'owner';
+    if (['searchClients', 'addClient'].includes(action) && !(isOwnerCaller || myMaster)) {
+      return json({ error: 'forbidden' }, 403);
+    }
+
+    if (action === 'searchClients') {
+      const query = String(payload.query ?? '').trim().slice(0, 60);
+      if (query.length < 2) return json({ clients: [] });
+      const { data, error } = await sb.rpc('maestro_search_clients', { p_query: query, p_limit: 10 });
+      if (error) return json({ error: error.message }, 500);
+      return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, isOwnerCaller)) });
+    }
+
+    if (action === 'addClient') {
+      const { data, error } = await sb.rpc('maestro_add_client_card', {
+        p_full_name: String(payload.full_name ?? ''),
+        p_phone: payload.phone ? String(payload.phone) : null,
+        p_known_before: payload.known_before === true,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) {
+        if (data?.error === 'client_exists' && data.client_id) {
+          // The number is already in the base: offer that card instead.
+          const existing = await sb.from('clients').select('id, full_name, phone_e164, known_before, lifecycle_status')
+            .eq('id', data.client_id).maybeSingle();
+          const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: data.client_id });
+          return json({
+            error: 'client_exists',
+            client: existing.data ? clientForCaller({ ...existing.data, visit_count: visits.data ?? 0 }, isOwnerCaller) : null,
+          }, 409);
+        }
+        return json({ error: data?.error || 'invalid_client' }, 400);
+      }
+      const created = await sb.from('clients').select('id, full_name, phone_e164, known_before, lifecycle_status')
+        .eq('id', data.client_id).maybeSingle();
+      if (created.error || !created.data) return json({ error: created.error?.message || 'client_not_found' }, 500);
+      return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, isOwnerCaller) });
+    }
+
+    if (action === 'getClient') {
+      if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
+      const clientId = String(payload.client_id ?? '');
+      if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
+      const { data, error } = await sb.rpc('maestro_client_card', { p_client_id: clientId });
+      if (error) return json({ error: error.message }, 500);
+      if (!data) return json({ error: 'client_not_found' }, 404);
+      return json(data);
     }
 
     if (action === 'addSale') {
@@ -570,15 +674,6 @@ Deno.serve(async (req) => {
       const cash = Math.max(0, Math.round(Number(payload.cash) || 0));
       const card = Math.max(0, Math.round(Number(payload.card) || 0));
       const qr = Math.max(0, Math.round(Number(payload.qr) || 0));
-      const clientsCount = Math.max(0, Math.trunc(Number(payload.clients_count ?? payload.cl) || 0));
-      const isNewClient = clientsCount === 0
-        ? null
-        : payload.is_new_client === true
-          ? true
-          : payload.is_new_client === false
-            ? false
-            : null;
-
       const d = String(payload.d ?? '');
       if (!master || !isValidIsoDate(d) || cash + card + qr <= 0) {
         return json({ error: 'invalid_sale' }, 400);
@@ -600,15 +695,45 @@ Deno.serve(async (req) => {
         return json({ error: 'master_not_active' }, 409);
       }
 
+      // Every visit names its client. New or returning is decided here from
+      // the client's history, not by a button: a client with no counted visit
+      // is new unless the master said he had been coming before the cards.
+      const clientId = String(payload.client_id ?? '');
+      if (!UUID_PATTERN.test(clientId)) return json({ error: 'client_required' }, 400);
+      const clientRecord = await sb.from('clients')
+        .select('id, full_name, phone_e164, known_before, lifecycle_status')
+        .eq('id', clientId)
+        .maybeSingle();
+      if (clientRecord.error) return json({ error: clientRecord.error.message }, 500);
+      if (!clientRecord.data) return json({ error: 'client_not_found' }, 404);
+      if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
+      const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
+      if (visits.error) return json({ error: visits.error.message }, 500);
+      const firstVisit = Number(visits.data) === 0;
+      let knownBefore = clientRecord.data.known_before === true;
+      // «Был у нас раньше?» is answered once, before the first recorded visit.
+      if (firstVisit && typeof payload.client_known_before === 'boolean' && payload.client_known_before !== knownBefore) {
+        const updated = await sb.from('clients')
+          .update({ known_before: payload.client_known_before, updated_at: new Date().toISOString() })
+          .eq('id', clientId);
+        if (updated.error) return json({ error: updated.error.message }, 500);
+        knownBefore = payload.client_known_before;
+      }
+      const isNewClient = firstVisit && !knownBefore;
+      const noPhone = !clientRecord.data.phone_e164;
+
       const row: Record<string, unknown> = {
         master,
         d,
         cash,
         card,
         qr,
-        cl: clientsCount,
-        clients_count: clientsCount,
+        cl: 1,
+        clients_count: 1,
         is_new_client: isNewClient,
+        client_id: clientId,
+        client_name: clientRecord.data.full_name,
+        client_no_phone: noPhone,
         master_id: masterRecord.data.id,
         commission_pct: Number(masterRecord.data.pct),
         status: requiresOwnerApproval ? 'pending' : 'approved',
@@ -625,7 +750,9 @@ Deno.serve(async (req) => {
 
       let { error } = await sb.from('sales').insert(row);
       if (error && hasRequestId) {
-        if (error.code === '23505') return json({ ok: true, deduplicated: true });
+        if (error.code === '23505' && !String(error.message).includes('sales_appointment_key')) {
+          return json({ ok: true, deduplicated: true });
+        }
         // Deployed ahead of the migration that adds the column: keep the sale
         // rather than losing it, and fall back to the client-side guard.
         if (error.code === '42703' || error.code === 'PGRST204') {
@@ -634,7 +761,19 @@ Deno.serve(async (req) => {
         }
       }
       if (error) return json({ error: error.message }, 500);
-      return json({ ok: true });
+
+      // A visit without a number reaches the owner at once, so he can ask
+      // why it was not taken. His own entries he already knows about.
+      if (noPhone && appUserResult.data.role !== 'owner') {
+        const time = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(11, 16);
+        inBackground(messageOwners([
+          '⚠️ <b>Визит без номера</b>',
+          `💈 ${escapeHtml(master)} · ${d === tashkentDate() ? time : d}`,
+          `👤 ${escapeHtml(clientRecord.data.full_name)}`,
+          `💵 ${formatSum(cash + card + qr)} сум`,
+        ].join('\n')));
+      }
+      return json({ ok: true, is_new_client: isNewClient });
     }
 
     if (action === 'setSaleApproval') {
