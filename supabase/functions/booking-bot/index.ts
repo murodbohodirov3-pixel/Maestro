@@ -162,6 +162,7 @@ async function confirm(appointmentId: string, tgUserId: string, phone: string | 
     if (code === 'forbidden') return send(chatId, text.notYours);
     if (code === 'not_found') return send(chatId, text.notFound(SITE));
     if (code === 'invalid_phone') return send(chatId, text.foreignContact);
+    if (code === 'staff_account') return send(chatId, text.staffAccount, { reply_markup: { remove_keyboard: true } });
     return send(chatId, text.error);
   }
   if (data.already_confirmed) return send(chatId, text.already);
@@ -172,6 +173,15 @@ async function confirm(appointmentId: string, tgUserId: string, phone: string | 
     reply_markup: cancelKeyboard(String(data.appointment_id), lang),
   });
   await notifyStaff('created', data);
+}
+
+// Staff do not book clients on the site from their own phone: the card would
+// take the staff member's number and Telegram (Жамолиддин, 2026-10-18). The
+// administrator books them (owner's decision of 2026-10-19).
+async function isStaff(tgUserId: string) {
+  const { data, error } = await db.from('app_users').select('id').eq('telegram_id', tgUserId).eq('active', true).limit(1);
+  if (error) throw error;
+  return (data ?? []).length > 0;
 }
 
 async function handleStart(chatId: number, tgUserId: string, token: string, fallbackLang: string) {
@@ -194,6 +204,10 @@ async function handleStart(chatId: number, tgUserId: string, token: string, fall
       reply_markup: cancelKeyboard(String(data.appointment_id), lang),
     });
   }
+
+  // Said at once rather than after the number is shared; the confirmation
+  // itself refuses a staff account and gives the time back to the site.
+  if (await isStaff(tgUserId)) return confirm(String(data.appointment_id), tgUserId, null, null, chatId, lang);
 
   const head = `<b>${text.title}</b>\n\n${linesOf(data, lang)}`;
   if (data.known_phone) {

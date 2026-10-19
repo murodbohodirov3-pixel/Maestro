@@ -4,6 +4,7 @@ import {
   addDays,
   bookingForPage,
   bookingLines,
+  botText,
   corsHeaders,
   formatWhen,
   groupDayTimes,
@@ -172,4 +173,11 @@ test('a master hears when his booking is cancelled, moved, or handed to another'
   assert.match(moved, /стало: <b>.*17:00<\/b>/);
   assert.match(masterBookingNotice({ ...base, kind: 'away' }), /передана другому мастеру/);
   assert.match(masterBookingNotice(base), /Новая запись/);
+});
+
+test('a staff account booking on the site is sent to the administrator, in both languages', () => {
+  assert.match(botText('ru').staffAccount, /администратор/);
+  assert.match(botText('uz').staffAccount, /administrator/);
+  // Every message the bot can send exists in Uzbek too.
+  assert.deepEqual(Object.keys(botText('uz')).sort(), Object.keys(botText('ru')).sort());
 });
