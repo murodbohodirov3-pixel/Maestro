@@ -17,6 +17,7 @@ import {
   masterBookingNotice,
   masterOffers,
   masterReminder,
+  mastersByRating,
   nearestByMaster,
   parseOrigins,
   secretsMatch,
@@ -210,4 +211,16 @@ test("the clients' bot describes itself in both languages, within Telegram's lim
     assert.ok(CLIENT_BOT_PROFILE[lang].short.length <= 120);
     assert.match(CLIENT_BOT_PROFILE[lang].description, /Maestro Barberia/);
   }
+});
+
+test('the best rated master stands first; a tie goes to more ratings; the unrated keep their order after', () => {
+  const masters = [
+    { id: 1, rating: null, ratings: 2 },
+    { id: 2, rating: 4.6, ratings: 10 },
+    { id: 3, rating: 4.9, ratings: 4 },
+    { id: 4, rating: null, ratings: 0 },
+    { id: 6, rating: 4.9, ratings: 12 },
+  ];
+  assert.deepEqual(mastersByRating(masters).map((master) => master.id), [6, 3, 2, 1, 4]);
+  assert.deepEqual(mastersByRating([]), []);
 });

@@ -321,6 +321,24 @@ export function bookingBotOf(value) {
   return value === 'client' ? 'client' : 'staff';
 }
 
+// The best rated master first on the booking page (owner's decision of
+// 2026-10-21: the masters compete for the top). A tie goes to the one rated
+// more often; masters without a rating yet keep their order after them.
+export function mastersByRating(masters) {
+  const rated = (master) => master.rating != null;
+  return masters
+    .map((master, index) => ({ master, index }))
+    .sort((left, right) => {
+      if (rated(left.master) !== rated(right.master)) return rated(left.master) ? -1 : 1;
+      if (rated(left.master)) {
+        if (right.master.rating !== left.master.rating) return right.master.rating - left.master.rating;
+        if (right.master.ratings !== left.master.ratings) return right.master.ratings - left.master.ratings;
+      }
+      return left.index - right.index;
+    })
+    .map(({ master }) => master);
+}
+
 // A master's QR opens @MaestroBarberia_bot with «/start m_<code>», the code
 // being masters.mirror_code (owner's decision of 2026-10-21).
 export function mirrorStartUrl(botUsername, code) {

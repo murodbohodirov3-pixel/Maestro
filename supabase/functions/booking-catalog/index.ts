@@ -1,6 +1,7 @@
 // GET /booking-catalog — the salon, its services and the masters a client can
 // book online (Maestro-Booking/docs/API_CONTRACT.md §1). No personal data.
 import { allowRead, answer, bookingSettings, callerHash, db, fail, preflight } from '../_shared/bookingHttp.ts';
+import { mastersByRating } from '../_shared/bookingCore.js';
 
 /** masters.work_photos → only well-formed entries, in their order. */
 function workPhotos(value: unknown) {
@@ -84,7 +85,7 @@ Deno.serve(async (request) => {
         photo_url: service.photo_url,
         sort_order: Number(service.sort_order),
       })),
-      masters: (masters.data ?? []).map((master) => ({
+      masters: mastersByRating((masters.data ?? []).map((master) => ({
         id: Number(master.id),
         name_ru: master.name,
         name_uz: master.name_uz || master.name,
@@ -98,7 +99,7 @@ Deno.serve(async (request) => {
         specialties_uz: Array.isArray(master.specialties_uz) ? master.specialties_uz : [],
         works: workPhotos(master.work_photos),
         ...publicRating(ratingOf.get(Number(master.id))),
-      })),
+      }))),
     }, 200, { 'Cache-Control': 'public, max-age=60' });
   } catch (error) {
     console.error('[booking-catalog]', error instanceof Error ? error.message : String(error));
