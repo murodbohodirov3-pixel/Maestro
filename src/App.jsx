@@ -2111,7 +2111,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
           </p>
         ) : (
           <>
-            {isOwner && onVisit && canRecordVisit(appointment) && !moving ? (
+            {(isOwner || data.role === 'master') && onVisit && canRecordVisit(appointment) && !moving ? (
               <button className="btn" type="button" onClick={() => onVisit(appointment)}>Пришёл → визит</button>
             ) : null}
             {canMove ? (
@@ -2390,6 +2390,116 @@ function BookingsView({ data, reload, setError, onVisit }) {
         />
       ) : null}
       {newDraft ? <NewBookingSheet data={data} draft={newDraft} reload={reload} setError={setError} onClose={closeNew} /> : null}
+    </section>
+  );
+}
+
+// A master's own calendar (owner's request of 2026-10-21): two weeks ahead at
+// a glance, how many bookings each day, and the chosen day as a column with
+// his shift's hours left light. A booking opens its sheet: «Пришёл → визит»,
+// «Не пришёл», a cancellation; booking anyone himself stays the desk's.
+function MasterCalendarView({ data, reload, setError, onVisit }) {
+  const [date, setDate] = useState(TODAY);
+  const [openId, setOpenId] = useState(null);
+  const closeBooking = useCallback(() => setOpenId(null), []);
+  const master = data.byName[data.me];
+  if (!master) return null;
+
+  const mine = data.appointments.filter((appointment) => String(appointment.master_id) === String(master.id));
+  const days = Array.from({ length: 14 }, (_, index) => shiftDate(TODAY, index));
+  const hours = masterHoursOn(master, date, data.scheduleRules, data.dayStatuses);
+  const bookings = visibleBookings(mine, date);
+  // The day reaches from the shift's start to its end, and further if a
+  // booking lies outside it, so none is cut off.
+  const spans = bookings.map((appointment) => {
+    const start = tashkentParts(appointment.starts_at).minutes;
+    return { start, end: tashkentParts(appointment.ends_at).minutes || start + 30 };
+  });
+  const frame = dayFrame([hours, ...spans]);
+  const height = (frame.end - frame.start) * MINUTE_PX;
+  const controlSince = data.settings.booking_control_since || null;
+  const openBooking = mine.find((appointment) => appointment.id === openId) || null;
+  const nowMinutes = tashkentParts(new Date()).minutes;
+  const hourMarks = [];
+  for (let minute = frame.start; minute <= frame.end; minute += 60) hourMarks.push(minute);
+
+  return (
+    <section className="view-grid">
+      <div className="wide day-chips my-calendar-days">
+        {days.map((day, index) => {
+          const count = visibleBookings(mine, day).length;
+          return (
+            <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>
+              {dayChipLabel(day, index)}
+              {count ? <b className="day-chip-count">{count}</b> : null}
+            </button>
+          );
+        })}
+        <input
+          aria-label="Другая дата"
+          type="date"
+          value={date}
+          min={shiftDate(TODAY, -60)}
+          max={shiftDate(TODAY, 180)}
+          onChange={(event) => event.target.value && setDate(event.target.value)}
+        />
+      </div>
+
+      <div className="card wide day-grid-card my-calendar">
+        <div className="my-calendar-head">
+          <strong>{displayDate(date)}</strong>
+          <span>{hours.start != null ? `${minutesLabel(hours.start)}–${minutesLabel(hours.end)}` : 'выходной'}</span>
+        </div>
+        <div className="day-grid" style={{ '--columns': 1 }}>
+          <div className="day-grid-axis" style={{ height }}>
+            {hourMarks.map((minute) => (
+              <span key={minute} style={{ top: (minute - frame.start) * MINUTE_PX }}>{minutesLabel(minute)}</span>
+            ))}
+          </div>
+          <div className="day-grid-column" style={{ height }}>
+            {hourMarks.map((minute) => <i className="day-grid-line" key={minute} style={{ top: (minute - frame.start) * MINUTE_PX }} />)}
+            {hours.start == null ? (
+              <div className="day-grid-off" style={{ top: 0, height }} />
+            ) : (
+              <>
+                {hours.start > frame.start ? <div className="day-grid-off" style={{ top: 0, height: (hours.start - frame.start) * MINUTE_PX }} /> : null}
+                {hours.end < frame.end ? <div className="day-grid-off" style={{ top: (hours.end - frame.start) * MINUTE_PX, height: (frame.end - hours.end) * MINUTE_PX }} /> : null}
+              </>
+            )}
+            {bookings.map((appointment) => {
+              const position = blockPosition(appointment, frame.start, MINUTE_PX);
+              const overdue = isOverdueBooking(appointment, new Date(), controlSince);
+              return (
+                <button
+                  className={`booking-block is-${appointment.status}${appointment.source === 'web' ? ' is-web' : ''}${overdue ? ' is-overdue' : ''}`}
+                  key={appointment.id}
+                  style={{ top: position.top, height: position.height }}
+                  type="button"
+                  onClick={() => setOpenId(appointment.id)}
+                >
+                  <b>{tashkentParts(appointment.starts_at).time}</b> {appointment.client_name}
+                  <small>{appointment.service_name}</small>
+                </button>
+              );
+            })}
+            {date === TODAY && nowMinutes >= frame.start && nowMinutes <= frame.end ? (
+              <i className="day-grid-now" style={{ top: (nowMinutes - frame.start) * MINUTE_PX }} />
+            ) : null}
+          </div>
+        </div>
+        {!bookings.length ? <p className="hint">В этот день записей нет.</p> : null}
+      </div>
+
+      {openBooking ? (
+        <BookingSheet
+          appointment={openBooking}
+          data={data}
+          reload={reload}
+          setError={setError}
+          onClose={closeBooking}
+          onVisit={onVisit ? (appointment) => { closeBooking(); onVisit(appointment); } : null}
+        />
+      ) : null}
     </section>
   );
 }
@@ -2848,7 +2958,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
       </div>
 
       {data.role === 'master' ? <MyWeek data={data} master={masterProfile} /> : null}
-      {data.role === 'master' ? <MyRatings setError={setError} /> : null}
 
       <div className="card wide hero-card master-earnings">
         <SectionHeading label="Мой заработок" range={range} />
@@ -3464,7 +3573,7 @@ function AttendanceView({ data, reload, setError }) {
                 <div className="attendance-total" key={total.master.id ?? total.master.name}>
                   <div className="attendance-total-head">
                     <strong>{total.master.name}</strong>
-                    {fineSum && !readOnly ? <span className="danger">штрафы −{money(fineSum)}</span> : null}
+                    {fineSum ? <span className="danger">штрафы −{money(fineSum)}</span> : null}
                   </div>
                   <div className="attendance-total-counts">
                     <span className={`on-time ${total.onTime ? '' : 'is-zero'}`}>вовремя {total.onTime}</span>
@@ -3540,11 +3649,22 @@ function AttendanceView({ data, reload, setError }) {
                   </span>
                 </div>
                 {readOnly ? (
-                  // The partner sets days off (decision of 2026-10-16), and
-                  // nothing else on this sheet.
+                  // The partner sets days off (decision of 2026-10-16) and
+                  // fines (2026-10-21), and nothing else on this sheet.
                   <div className="attendance-actions">
                     {arrived ? <span className="attendance-time">{arrived}</span> : null}
                     {row.record ? null : dayOffButton}
+                    {row.status === 'late' ? (
+                      <button
+                        className="fine-button"
+                        disabled={quickFineExists || savingFineKey === fineKey}
+                        title={`Штраф ${money(lateFineAmount(data.settings))} сум`}
+                        type="button"
+                        onClick={() => addLateFine({ master: masterName, d: row.d })}
+                      >
+                        {quickFineExists ? 'Штраф выставлен' : savingFineKey === fineKey ? 'Сохраняю…' : 'Штраф'}
+                      </button>
+                    ) : null}
                   </div>
                 ) : (
                 <div className="attendance-actions">
@@ -3581,7 +3701,8 @@ function AttendanceView({ data, reload, setError }) {
         </div>
       </div>
 
-      {readOnly ? null : (
+      {/* The partner fines too (owner's request of 2026-10-21); taking a
+          fine back stays the owner's. */}
       <div className="card wide fines-card">
         <div className="section-heading">
           <span className="fines-heading">
@@ -3637,15 +3758,17 @@ function AttendanceView({ data, reload, setError }) {
                   <span>{displayDate(rowDate(fine))} · −{money(fine.amount)} сум</span>
                   <span>{fineReasonLabel(fine.reason)}{fine.auto ? ' · авто' : ''}</span>
                 </div>
-                <button
-                  className="del"
-                  disabled={!canDelete}
-                  title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
-                  type="button"
-                  onClick={() => deleteFine(fine)}
-                >
-                  ×
-                </button>
+                {readOnly ? null : (
+                  <button
+                    className="del"
+                    disabled={!canDelete}
+                    title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
+                    type="button"
+                    onClick={() => deleteFine(fine)}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             );
           }} />
@@ -3653,7 +3776,6 @@ function AttendanceView({ data, reload, setError }) {
         ) : null}
         {message ? <p className="success">{message}</p> : null}
       </div>
-      )}
     </section>
   );
 }
@@ -4751,29 +4873,36 @@ function ReviewsView({ data, setError }) {
   );
 }
 
-// A master's own rating, below his week: no comfort of the salon, which is
-// not his, and every word about him with no sign of which reached the site
-// (owner's decision of 2026-10-21: he is to expect them all there).
-function MyRatings({ setError }) {
+// A master's own «Отзывы» tab (owner's request of 2026-10-21): his rating, each
+// question's mean, and every rating with its words. No comfort of the salon,
+// which is not his, and no sign of which words reached the site (owner's
+// decision of 2026-10-21: he is to expect them all there).
+function MasterReviewsView({ setError }) {
   const { loading, reviews, ratings } = useReviews(setError);
   const mine = ratings[0];
   const parts = REVIEW_PARTS.slice(0, 3);
-  if (loading) return null;
   return (
-    <div className="card wide my-ratings">
-      <h2>Мои оценки</h2>
-      {mine ? (
-        <>
-          <p className="big-line">★ {ratingText(mine.rating)} <small><span>{mine.ratings}</span> <span>{pluralRu(mine.ratings, 'оценка', 'оценки', 'оценок')}</span></small></p>
-          <span className="review-scores">
-            {parts.map(([key, label]) => <span key={key}>{`${label} ${ratingText(mine[key])}`}</span>)}
-          </span>
-          <Rows rows={reviews.slice(0, 8)} empty="" render={(review) => (
+    <section className="view-grid">
+      <div className="card wide my-ratings">
+        <h2>Мой рейтинг</h2>
+        {loading ? <p className="hint">Загружаем…</p> : mine ? (
+          <>
+            <p className="big-line">★ {ratingText(mine.rating)} <small><span>{mine.ratings}</span> <span>{pluralRu(mine.ratings, 'оценка', 'оценки', 'оценок')}</span></small></p>
+            <span className="review-scores">
+              {parts.map(([key, label]) => <span key={key}>{`${label} ${ratingText(mine[key])}`}</span>)}
+            </span>
+          </>
+        ) : <p className="hint">Пока нет оценок.</p>}
+      </div>
+      {reviews.length ? (
+        <div className="card wide">
+          <h2>Отзывы клиентов</h2>
+          <Rows rows={reviews} empty="" render={(review) => (
             <ReviewRow key={review.id} review={review} parts={parts} />
           )} />
-        </>
-      ) : <p className="hint">Пока нет оценок.</p>}
-    </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -5281,6 +5410,14 @@ const NAV_ITEMS = [
   { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings', 'payouts', 'reviews'], icon: 'team' },
 ];
 
+// A master's own bar (owner's request of 2026-10-21): his working day, his
+// calendar, and how clients rate him.
+const MASTER_NAV_ITEMS = [
+  { id: 'work', label: 'Работа', views: ['master'], icon: 'scissors' },
+  { id: 'calendar', label: 'Календарь', views: ['mycalendar'], icon: 'calendar' },
+  { id: 'myreviews', label: 'Отзывы', views: ['myreviews'], icon: 'star' },
+];
+
 const TEAM_TABS = [
   ['attendance', 'Посещаемость'],
   ['master', 'Рабочий день'],
@@ -5329,7 +5466,7 @@ function viewIdsForUser(data) {
       'settings',
     ];
   }
-  if (data.role === 'master') return ['master'];
+  if (data.role === 'master') return ['master', 'mycalendar', 'myreviews'];
   return [];
 }
 
@@ -5378,6 +5515,9 @@ function NavIcon({ name }) {
   if (name === 'receipt') return <svg {...common}><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6M9 12h6" /></svg>;
   if (name === 'wallet') return <svg {...common}><rect x="3" y="6" width="18" height="14" rx="3" /><path d="M3 10h18M16 15h2" /></svg>;
   if (name === 'box') return <svg {...common}><path d="M21 8l-9-5-9 5 9 5 9-5z" /><path d="M3 8v8l9 5 9-5V8" /><path d="M12 13v8" /></svg>;
+  if (name === 'scissors') return <svg {...common}><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M8.1 15.9 20 4M15.9 15.9 4 4" /></svg>;
+  if (name === 'calendar') return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>;
+  if (name === 'star') return <svg {...common}><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" /></svg>;
   return <svg {...common}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2.2.6 3.5 2.6 3.5 6" /></svg>;
 }
 
@@ -5933,10 +6073,10 @@ export default function App() {
   const availableViews = useMemo(() => viewIdsForUser(data), [data.appRole, data.role]);
   // An item is only offered if the role can reach something inside it.
   const navItems = useMemo(() => (
-    NAV_ITEMS
+    (data.role === 'master' ? MASTER_NAV_ITEMS : NAV_ITEMS)
       .map((item) => ({ ...item, views: item.views.filter((id) => availableViews.includes(id)) }))
       .filter((item) => item.views.length)
-  ), [availableViews]);
+  ), [availableViews, data.role]);
   // The badge is work for whoever approves; a read-only account has none.
   const pendingSalesCount = isReadOnly(data) ? 0 : approvalQueue(data).count;
 
@@ -5989,13 +6129,15 @@ export default function App() {
     bookings: BookingsView,
     payouts: PayoutsView,
     reviews: ReviewsView,
+    mycalendar: MasterCalendarView,
+    myreviews: MasterReviewsView,
     settings: SettingsView,
   }[view] || MasterView;
 
   const isMaster = data.role === 'master';
   const isFrontDesk = data.role === 'frontdesk';
   // A bar with one button is not navigation.
-  const showTabbar = !isMaster && !isFrontDesk && navItems.length > 1;
+  const showTabbar = !isFrontDesk && navItems.length > 1;
   const masterProfile = isMaster ? data.byName[data.me] : null;
   const title = isMaster
     ? (data.me || 'Maestro')
@@ -6011,7 +6153,7 @@ export default function App() {
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
-    <main className={`app ${isMaster ? 'is-master' : showTabbar ? 'has-tabbar' : ''}`}>
+    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''}`}>
       <header className="app-header">
         {view === 'settings' ? (
           <button className="back-button" type="button" onClick={() => openView(previousView)}>
@@ -6068,7 +6210,7 @@ export default function App() {
         reload={reload}
         setError={setError}
         setView={openView}
-        onVisit={data.appRole === 'owner' ? startVisitFromBooking : null}
+        onVisit={data.appRole === 'owner' || isMaster ? startVisitFromBooking : null}
         visitDraft={visitDraft}
         onDraftUsed={clearVisitDraft}
       />

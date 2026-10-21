@@ -1694,7 +1694,9 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'addFine') {
-      if (!isAdmin) return json({ error: 'forbidden' }, 403);
+      // The partner fines too (owner's request of 2026-10-21); only the owner
+      // takes a fine back.
+      if (!isAdmin && !isPartner) return json({ error: 'forbidden' }, 403);
       const amount = Math.round(Number(payload.amount) || 0);
       const d = String(payload.d ?? '');
       if (!payload.master || !isValidIsoDate(d) || amount <= 0) return json({ error: 'invalid_fine' }, 400);

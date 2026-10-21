@@ -4847,6 +4847,44 @@ label {
   flex: 0 0 auto;
 }
 
+/* A master's calendar: how many bookings a day, then the day's column. */
+.day-chip-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--brass-soft);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.day-chips button.on .day-chip-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #FFFFFF;
+}
+
+.my-calendar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 12px 10px 4px;
+}
+
+.my-calendar-head span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.my-calendar .hint {
+  padding: 8px 12px 0 4px;
+}
+
 /* The booking page on «Главная»: three rows, three windows. */
 .site-table {
   display: grid;
