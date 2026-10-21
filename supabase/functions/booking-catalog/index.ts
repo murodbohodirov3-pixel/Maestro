@@ -2,6 +2,19 @@
 // book online (Maestro-Booking/docs/API_CONTRACT.md §1). No personal data.
 import { allowRead, answer, bookingSettings, db, fail, preflight } from '../_shared/bookingHttp.ts';
 
+/** masters.work_photos → only well-formed entries, in their order. */
+function workPhotos(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((photo) => photo && typeof photo.url === 'string' && typeof photo.thumb_url === 'string')
+    .map((photo) => ({
+      url: photo.url as string,
+      thumb_url: photo.thumb_url as string,
+      width: Number(photo.width) || null,
+      height: Number(photo.height) || null,
+    }));
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return preflight(request);
   if (request.method !== 'GET') return fail(request, 'invalid_request');
@@ -18,7 +31,7 @@ Deno.serve(async (request) => {
         .order('sort_order')
         .order('id'),
       db.from('masters')
-        .select('id,name,name_uz,level,photo_url,online_service_ids')
+        .select('id,name,name_uz,level,photo_url,online_service_ids,experience_years,bio_ru,bio_uz,specialties_ru,specialties_uz,work_photos')
         .eq('active', true)
         .eq('show_online', true)
         .order('id'),
@@ -59,6 +72,12 @@ Deno.serve(async (request) => {
         level: master.level || 'barber',
         photo_url: master.photo_url,
         service_ids: Array.isArray(master.online_service_ids) ? master.online_service_ids : null,
+        experience_years: master.experience_years == null ? null : Number(master.experience_years),
+        bio_ru: master.bio_ru || null,
+        bio_uz: master.bio_uz || null,
+        specialties_ru: Array.isArray(master.specialties_ru) ? master.specialties_ru : [],
+        specialties_uz: Array.isArray(master.specialties_uz) ? master.specialties_uz : [],
+        works: workPhotos(master.work_photos),
       })),
     }, 200, { 'Cache-Control': 'public, max-age=60' });
   } catch (error) {
