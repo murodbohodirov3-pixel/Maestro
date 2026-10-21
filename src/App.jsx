@@ -314,6 +314,9 @@ const ACTION_ERROR_TEXT = {
   invalid_first_name: 'Введите имя клиента буквами.',
   invalid_last_name: 'Введите фамилию клиента буквами.',
   client_surname_required: 'Допишите фамилию клиента.',
+  client_phone_required: 'Введите номер клиента.',
+  guest_known_before_required: 'Отметьте, был ли клиент у нас раньше.',
+  guest_with_booking: 'У визита по записи есть клиент — выберите его.',
   invalid_phone: 'Проверьте номер: например, 90 123 45 67.',
   invalid_merge: 'Эти карточки нельзя объединить.',
   client_not_found: 'Карточка не найдена — обновите экран.',
@@ -1440,15 +1443,17 @@ function SurnameField({ client, onDone, setError }) {
 // new card is looked up as soon as it is whole, and the card already in the
 // base is offered instead. «Был у нас раньше?» is asked only on a new card: a
 // client picked from the base is new or returning by his history. A new card
-// takes a name and a surname, both (owner's decision of 2026-10-21).
-function ClientPicker({ client, onChange, setError }) {
+// takes a name, a surname and a number (owner's decisions of 2026-10-21). A
+// client who gives neither is a guest without a name: no card, only «Был у
+// нас раньше?», and only for a visit (allowGuest), never for a booking.
+function ClientPicker({ client, onChange, setError, allowGuest = false }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '', known_before: null });
+  const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '', known_before: null, guest: false });
   const [saving, setSaving] = useState(false);
   const { results, searching } = useClientSearch(query, setError);
   const phoneDigits = draft.phone.replace(/\D/g, '');
-  const wholeNumber = creating && phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
+  const wholeNumber = creating && !draft.guest && phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
   const { results: sameNumber } = useClientSearch(wholeNumber, setError);
   const existing = wholeNumber ? sameNumber.find((found) => found.has_phone !== false) || null : null;
 
@@ -1463,13 +1468,22 @@ function ClientPicker({ client, onChange, setError }) {
     const looksLikePhone = /^[0-9 +()-]+$/.test(typed);
     // What was typed in the search: the first word is the name, the rest the surname.
     const [firstWord = '', ...rest] = looksLikePhone ? [] : typed.split(/\s+/);
-    setDraft({ first_name: firstWord, last_name: rest.join(' '), phone: looksLikePhone ? typed : '', known_before: null });
+    setDraft({ first_name: firstWord, last_name: rest.join(' '), phone: looksLikePhone ? typed : '', known_before: null, guest: false });
     setCreating(true);
+  }
+
+  function pickGuest() {
+    if (draft.known_before === null) return setError('Отметьте, был ли клиент у нас раньше.');
+    setError('');
+    pick({ guest: true, known_before: draft.known_before });
   }
 
   async function createCard() {
     const name = checkClientName(draft.first_name, draft.last_name);
     if (!name.ok) return setError(ACTION_ERROR_TEXT[name.error]);
+    if (!draft.phone.trim()) {
+      return setError(allowGuest ? 'Введите номер. Не даёт номер — «Гость без имени».' : ACTION_ERROR_TEXT.client_phone_required);
+    }
     if (draft.known_before === null) return setError('Отметьте, был ли клиент у нас раньше.');
     setSaving(true);
     setError('');
@@ -1477,7 +1491,7 @@ function ClientPicker({ client, onChange, setError }) {
       const result = await callLegacyApi('addClient', {
         first_name: name.first_name,
         last_name: name.last_name,
-        phone: draft.phone.trim() || null,
+        phone: draft.phone.trim(),
         known_before: draft.known_before,
       });
       haptic('success');
@@ -1492,6 +1506,18 @@ function ClientPicker({ client, onChange, setError }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (client?.guest) {
+    return (
+      <div className="picker-selected">
+        <span>
+          <strong>Гость без имени</strong>
+          <small>{client.known_before ? 'постоянный' : 'новый'}</small>
+        </span>
+        <button className="link-button" type="button" onClick={() => onChange(null)}>Изменить</button>
+      </div>
+    );
   }
 
   if (client) {
@@ -1512,10 +1538,23 @@ function ClientPicker({ client, onChange, setError }) {
   if (creating) {
     return (
       <div className="client-new">
-        <input aria-label="Имя" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Имя" value={draft.first_name} onChange={(event) => setDraft({ ...draft, first_name: event.target.value })} />
-        <input aria-label="Фамилия" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Фамилия" value={draft.last_name} onChange={(event) => setDraft({ ...draft, last_name: event.target.value })} />
-        <input inputMode="tel" maxLength={20} placeholder="Телефон, например 90 123 45 67" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
-        {!draft.phone.trim() ? <span className="client-no-phone">Без номера — владелец получит уведомление</span> : null}
+        {draft.guest ? null : (
+          <>
+            <input aria-label="Имя" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Имя" value={draft.first_name} onChange={(event) => setDraft({ ...draft, first_name: event.target.value })} />
+            <input aria-label="Фамилия" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Фамилия" value={draft.last_name} onChange={(event) => setDraft({ ...draft, last_name: event.target.value })} />
+            <input inputMode="tel" maxLength={20} placeholder="Телефон, например 90 123 45 67" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
+          </>
+        )}
+        {allowGuest && !existing ? (
+          <button
+            aria-pressed={draft.guest}
+            className={`client-guest${draft.guest ? ' on' : ''}`}
+            type="button"
+            onClick={() => setDraft({ ...draft, guest: !draft.guest })}
+          >
+            Гость без имени
+          </button>
+        ) : null}
         {existing ? (
           <div className="client-exists">
             <span>
@@ -1539,7 +1578,11 @@ function ClientPicker({ client, onChange, setError }) {
           </div>
         </div>
         <div className="settings-actions">
-          <button className="btn" type="button" disabled={saving} onClick={createCard}>{saving ? 'Сохраняем…' : 'Создать карточку'}</button>
+          {draft.guest ? (
+            <button className="btn" type="button" onClick={pickGuest}>Готово</button>
+          ) : (
+            <button className="btn" type="button" disabled={saving} onClick={createCard}>{saving ? 'Сохраняем…' : 'Создать карточку'}</button>
+          )}
           <button className="btn ghost" type="button" disabled={saving} onClick={() => setCreating(false)}>Назад</button>
         </div>
         </>
@@ -2456,7 +2499,9 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
       master: masterName,
       d: TODAY,
       ...amounts,
-      client_id: visitClient.id,
+      ...(visitClient.guest
+        ? { guest: true, known_before: visitClient.known_before }
+        : { client_id: visitClient.id }),
       appointment_id: visitBooking ? visitBooking.id : undefined,
       // Held across retries of this same sale, so a reply lost on a bad
       // connection cannot turn one haircut into two rows.
@@ -2651,7 +2696,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
             <button className="link-button" type="button" onClick={() => setVisitBooking(null)}>Без записи</button>
           </div>
         ) : null}
-        <ClientPicker client={visitClient} onChange={setVisitClient} setError={setError} />
+        <ClientPicker client={visitClient} onChange={setVisitClient} setError={setError} allowGuest={!visitBooking} />
         {split ? (
           <div className="split-amounts">
             {PAYMENT_METHODS.map(([key, label]) => (
@@ -2707,7 +2752,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
             <div className={`row ${saleStatusClass(sale)}`} key={sale.id}>
               <div>
                 <strong className="sale-amount">{money(saleTotal(sale))} сум</strong>
-                <span>{sale.client_name ? `${sale.client_name} · ` : ''}{paymentLabel(sale)} · {clientType(sale)}</span>
+                <span>{sale.client_name ? <>{sale.client_name}{' · '}</> : ''}{paymentLabel(sale)} · {clientType(sale)}</span>
                 <span>Внесено: {displayDateTime(sale.created_at)}</span>
                 {isPendingOwnerApproval(sale) ? <span className="approval pending">Ждёт подтверждения</span> : null}
                 {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено владельцем — не засчитано</span> : null}
@@ -2989,7 +3034,7 @@ function AdminView({ data, reload, setError }) {
                   ) : sale.client_name || `клиентов ${clients(sale)}`}
                   {' · '}{clientType(sale)}
                 </span>
-                {sale.client_no_phone ? <span className="approval rejected">без номера</span> : null}
+                {sale.client_no_phone && !sale.is_guest ? <span className="approval rejected">без номера</span> : null}
                 <span>Внесено мастером: {displayDateTime(sale.created_at)}</span>
               </div>
               <div className="approval-actions">

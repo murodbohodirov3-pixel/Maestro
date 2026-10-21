@@ -4847,10 +4847,22 @@ label {
   flex: 0 0 auto;
 }
 
-.client-no-phone {
-  color: var(--fine);
-  font-size: 12px;
-  font-weight: 600;
+/* A client who gives neither his name nor his number: a guest, no card. */
+.client-guest {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.client-guest.on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--brass-soft);
 }
 
 .client-new-button {

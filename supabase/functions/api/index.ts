@@ -420,6 +420,8 @@ type ClientRow = {
   lifecycle_status?: string;
 };
 const CLIENT_COLUMNS = 'id, full_name, first_name, last_name, phone_e164, known_before, lifecycle_status';
+// What a visit of a guest without a name shows where a client's name stands.
+const GUEST_NAME = 'Гость без имени';
 
 // A client as the caller may see him: the number whole for the owner, the
 // administrator and the partner, masked for a master.
@@ -772,10 +774,14 @@ Deno.serve(async (req) => {
       // owner tells everyone to reopen it.
       const name = checkClientName(payload.first_name, payload.last_name);
       if (!name.ok) return json({ error: name.error }, 400);
+      // A card always has a number: a client who will not give it is a guest
+      // without a name (owner's decision of 2026-10-21).
+      const phone = String(payload.phone ?? '').trim();
+      if (!phone) return json({ error: 'client_phone_required' }, 400);
       const { data, error } = await sb.rpc('maestro_add_client_card', {
         p_first_name: name.first_name,
         p_last_name: name.last_name,
-        p_phone: payload.phone ? String(payload.phone) : null,
+        p_phone: phone,
         p_known_before: payload.known_before === true,
         p_actor_user_id: appUserResult.data.id,
       });
@@ -992,33 +998,47 @@ Deno.serve(async (req) => {
         return json({ error: 'master_not_active' }, 409);
       }
 
-      // Every visit names its client. New or returning is decided here from
-      // the client's history, not by a button: a client with no counted visit
-      // is new unless the master said he had been coming before the cards.
-      const clientId = String(payload.client_id ?? '');
-      if (!UUID_PATTERN.test(clientId)) return json({ error: 'client_required' }, 400);
-      const clientRecord = await sb.from('clients')
-        .select(CLIENT_COLUMNS)
-        .eq('id', clientId)
-        .maybeSingle();
-      if (clientRecord.error) return json({ error: clientRecord.error.message }, 500);
-      if (!clientRecord.data) return json({ error: 'client_not_found' }, 404);
-      if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
-      if (!clientRecord.data.last_name) return json({ error: 'client_surname_required' }, 409);
-      const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
-      if (visits.error) return json({ error: visits.error.message }, 500);
-      // New or returning is the base's to say, never the master's: «Был у нас
-      // раньше?» is answered only when a card is made (owner's decision of
-      // 2026-10-16), so a regular picked from the base cannot be passed off as
-      // a first visit.
-      const firstVisit = Number(visits.data) === 0;
-      const isNewClient = firstVisit && clientRecord.data.known_before !== true;
-      const noPhone = !clientRecord.data.phone_e164;
+      // Every visit names its client, or is a guest without a name: one who
+      // gives neither his name nor his number (owner's decision of
+      // 2026-10-21). A guest has no card, each one a visit of his own, and
+      // the master says whether he is new or has been coming.
+      const isGuest = payload.guest === true;
+      let clientId: string | null = null;
+      let clientName = GUEST_NAME;
+      let isNewClient: boolean;
+      let noPhone = true;
+      if (isGuest) {
+        if (typeof payload.known_before !== 'boolean') return json({ error: 'guest_known_before_required' }, 400);
+        isNewClient = !payload.known_before;
+      } else {
+        clientId = String(payload.client_id ?? '');
+        if (!UUID_PATTERN.test(clientId)) return json({ error: 'client_required' }, 400);
+        const clientRecord = await sb.from('clients')
+          .select(CLIENT_COLUMNS)
+          .eq('id', clientId)
+          .maybeSingle();
+        if (clientRecord.error) return json({ error: clientRecord.error.message }, 500);
+        if (!clientRecord.data) return json({ error: 'client_not_found' }, 404);
+        if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
+        if (!clientRecord.data.last_name) return json({ error: 'client_surname_required' }, 409);
+        const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
+        if (visits.error) return json({ error: visits.error.message }, 500);
+        // New or returning is the base's to say, never the master's: «Был у
+        // нас раньше?» is answered only when a card is made (owner's decision
+        // of 2026-10-16), so a regular picked from the base cannot be passed
+        // off as a first visit.
+        const firstVisit = Number(visits.data) === 0;
+        isNewClient = firstVisit && clientRecord.data.known_before !== true;
+        noPhone = !clientRecord.data.phone_e164;
+        clientName = clientRecord.data.full_name;
+      }
 
-      // A visit recorded from a booking closes it.
+      // A visit recorded from a booking closes it. A booking always has its
+      // client's card, so it is never a guest's.
       const appointmentId = payload.appointment_id == null || payload.appointment_id === ''
         ? null
         : String(payload.appointment_id);
+      if (appointmentId !== null && isGuest) return json({ error: 'guest_with_booking' }, 400);
       if (appointmentId !== null) {
         if (!UUID_PATTERN.test(appointmentId)) return json({ error: 'appointment_not_found' }, 404);
         const check = await sb.rpc('maestro_check_appointment_for_visit', {
@@ -1052,8 +1072,9 @@ Deno.serve(async (req) => {
         clients_count: 1,
         is_new_client: isNewClient,
         client_id: clientId,
-        client_name: clientRecord.data.full_name,
+        client_name: clientName,
         client_no_phone: noPhone,
+        is_guest: isGuest,
         appointment_id: appointmentId,
         master_id: masterRecord.data.id,
         commission_pct: Number(masterRecord.data.pct),
@@ -1098,14 +1119,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      // A visit without a number reaches the owner at once, so he can ask
-      // why it was not taken. His own entries he already knows about.
+      // A guest, and a visit without a number, reach the owner at once, so he
+      // can ask why they were not taken. His own entries he already knows about.
       if (noPhone && appUserResult.data.role !== 'owner') {
         const time = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(11, 16);
         inBackground(messageOwners([
-          '⚠️ <b>Визит без номера</b>',
+          isGuest ? `⚠️ <b>${GUEST_NAME}</b>` : '⚠️ <b>Визит без номера</b>',
           `💈 ${escapeHtml(master)} · ${d === tashkentDate() ? time : d}`,
-          `👤 ${escapeHtml(clientRecord.data.full_name)}`,
+          isGuest ? (isNewClient ? '🆕 новый клиент' : '🔁 был раньше') : `👤 ${escapeHtml(clientName)}`,
           `💵 ${formatSum(cash + card + qr)} сум`,
         ].join('\n')));
       }
