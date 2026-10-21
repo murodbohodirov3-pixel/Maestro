@@ -991,6 +991,60 @@ Deno.serve(async (req) => {
       return json(data);
     }
 
+    // How clients rated their visits (owner's decisions of 2026-10-21). The
+    // owner reads every score and decides which words the site shows; a master
+    // reads his own, every word included, without the comfort of the salon and
+    // without knowing which words reached the site: he is to expect them all.
+    if (action === 'reviews') {
+      if (!isOwnerCaller && !myMasterId) return json({ error: 'forbidden' }, 403);
+      const since = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+      let query = sb.from('visit_reviews')
+        .select('id, master_id, quality, service, cleanliness, comfort, comment, comment_status, asked_at, sale:sales(d, client_id, client_name, status, comment)')
+        .not('quality', 'is', null)
+        .gte('asked_at', since)
+        .order('asked_at', { ascending: false })
+        .limit(300);
+      if (!isOwnerCaller) query = query.eq('master_id', myMasterId!);
+      const [rows, ratings] = await Promise.all([query, sb.rpc('maestro_master_ratings')]);
+      if (rows.error) return json({ error: rows.error.message }, 500);
+      if (ratings.error) return json({ error: ratings.error.message }, 500);
+      const rejected = (sale: { status?: string | null; comment?: string | null }) =>
+        String(sale.status ?? '').trim() === 'rejected' || sale.comment === 'owner_approval_rejected';
+      const reviews = (rows.data ?? [])
+        .filter((row: any) => row.sale && !rejected(row.sale))
+        .map((row: any) => ({
+          id: row.id,
+          master_id: row.master_id,
+          d: row.sale.d,
+          client_id: isOwnerCaller ? row.sale.client_id : null,
+          client_name: row.sale.client_name,
+          quality: row.quality,
+          service: row.service,
+          cleanliness: row.cleanliness,
+          comfort: isOwnerCaller ? row.comfort : null,
+          comment: row.comment,
+          comment_status: isOwnerCaller ? row.comment_status : null,
+        }));
+      const own = (ratings.data ?? [])
+        .filter((row: any) => isOwnerCaller || Number(row.master_id) === myMasterId)
+        .map((row: any) => (isOwnerCaller ? row : { ...row, comfort: null }));
+      return json({ reviews, ratings: own });
+    }
+
+    if (action === 'decideReview') {
+      if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
+      const reviewId = Number(payload.review_id);
+      if (!Number.isInteger(reviewId) || reviewId <= 0) return json({ error: 'review_not_found' }, 404);
+      const { data, error } = await sb.rpc('maestro_decide_review_words', {
+        p_review_id: reviewId,
+        p_status: String(payload.status ?? ''),
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) return json({ error: data?.error === 'not_found' ? 'review_not_found' : 'invalid_review_status' }, 400);
+      return json(data);
+    }
+
     if (action === 'getClient') {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
       const clientId = String(payload.client_id ?? '');

@@ -195,7 +195,7 @@ const TEXT = {
     error: 'Что-то пошло не так. Попробуйте ещё раз через минуту.',
     // The QR at a master's mirror.
     mirrorPickLang: 'Выберите язык · Tilni tanlang',
-    mirrorAskContact: (master) => `Вы у зеркала мастера ${master}. Нажмите «Поделиться номером» внизу — и мастеру не придётся записывать вас вручную.`,
+    mirrorAskContact: (master) => `Ваш мастер сегодня — ${master}. Нажмите «Поделиться номером» внизу, а после стрижки, пожалуйста, оцените работу мастера.`,
     mirrorShareNumber: 'Нажмите «Поделиться номером» внизу.',
     mirrorAskFirst: 'Как вас зовут? Напишите имя.',
     mirrorAskLast: 'Теперь напишите фамилию.',
@@ -208,9 +208,24 @@ const TEXT = {
     mirrorDone: (name, master) => `Спасибо, ${name}! ${master} уже видит вас в приложении. Хорошей стрижки!`,
     mirrorWelcomeBack: (name, master) => `С возвращением, ${name}! ${master} уже видит вас в приложении. Хорошей стрижки!`,
     mirrorUnknownCode: 'Этот QR-код больше не действует. Скажите мастеру — он запишет вас сам.',
-    mirrorExpired: 'Время вышло. Отсканируйте QR-код у зеркала ещё раз.',
-    mirrorStaff: 'Это аккаунт сотрудника салона. QR у зеркала — для клиентов.',
+    mirrorExpired: 'Время вышло. Отсканируйте QR-код мастера ещё раз.',
+    mirrorStaff: 'Это аккаунт сотрудника салона. QR-код мастера — для клиентов.',
     mirrorBlocked: 'Спасибо! Мастер сам внесёт ваш визит.',
+    // The four questions after a visit.
+    reviewIntro: (master) => `Спасибо, что выбрали Maestro Barberia! Оцените, пожалуйста, визит к мастеру ${master} — 4 коротких вопроса, около 15 секунд.`,
+    reviewStep: (step) => `Вопрос ${step} из 4`,
+    reviewLast: 'Последний вопрос',
+    reviewQuestions: [
+      'Как вам результат стрижки?',
+      'Мастер выслушал ваши пожелания и был внимателен?',
+      'Чисто ли было на рабочем месте, свежие ли инструменты и накидка?',
+      'Удобно ли вам было в салоне: кресло, атмосфера?',
+    ],
+    reviewLabels: ['Качество работы', 'Сервис и общение', 'Чистота и гигиена', 'Комфорт в салоне'],
+    reviewThanks: 'Спасибо! Ваши оценки:',
+    reviewAskWords: 'Напишите, пожалуйста, пару слов о визите: что понравилось, что можно сделать лучше.',
+    reviewWordsThanks: 'Спасибо за отзыв! Он поможет мастеру и другим клиентам.',
+    reviewTooShort: 'Напишите, пожалуйста, хотя бы пару слов.',
   },
   uz: {
     title: 'Maestro Barberia\'ga yozilish',
@@ -240,7 +255,7 @@ const TEXT = {
     reminder2: '2 soatdan keyin sizni Maestro Barberia\'da kutamiz.',
     error: 'Xatolik yuz berdi. Bir daqiqadan so\'ng qayta urinib ko\'ring.',
     mirrorPickLang: 'Выберите язык · Tilni tanlang',
-    mirrorAskContact: (master) => `Siz ${master} ustaning oynasi oldidasiz. Pastdagi «Raqamni yuborish» tugmasini bosing — usta sizni qo'lda yozib o'tirmaydi.`,
+    mirrorAskContact: (master) => `Bugungi ustangiz — ${master}. Pastdagi «Raqamni yuborish» tugmasini bosing, soch olingandan keyin esa, iltimos, ustaning ishini baholang.`,
     mirrorShareNumber: 'Pastdagi «Raqamni yuborish» tugmasini bosing.',
     mirrorAskFirst: 'Ismingiz nima? Ismingizni yozing.',
     mirrorAskLast: 'Endi familiyangizni yozing.',
@@ -253,9 +268,23 @@ const TEXT = {
     mirrorDone: (name, master) => `Rahmat, ${name}! ${master} sizni ilovada ko'rib turibdi. Soch olish yoqimli o'tsin!`,
     mirrorWelcomeBack: (name, master) => `Qaytganingizdan xursandmiz, ${name}! ${master} sizni ilovada ko'rib turibdi. Soch olish yoqimli o'tsin!`,
     mirrorUnknownCode: 'Bu QR-kod endi ishlamaydi. Ustaga ayting — u sizni o\'zi yozadi.',
-    mirrorExpired: 'Vaqt tugadi. Oyna yonidagi QR-kodni qaytadan skanerlang.',
-    mirrorStaff: 'Bu salon xodimining akkaunti. Oyna yonidagi QR — mijozlar uchun.',
+    mirrorExpired: 'Vaqt tugadi. Usta QR-kodini qaytadan skanerlang.',
+    mirrorStaff: 'Bu salon xodimining akkaunti. Usta QR-kodi — mijozlar uchun.',
     mirrorBlocked: 'Rahmat! Usta tashrifingizni o\'zi kiritadi.',
+    reviewIntro: (master) => `Maestro Barberia'ni tanlaganingiz uchun rahmat! Iltimos, ${master} ustaga tashrifingizni baholang — 4 ta qisqa savol, taxminan 15 soniya.`,
+    reviewStep: (step) => `Savol ${step} / 4`,
+    reviewLast: 'Oxirgi savol',
+    reviewQuestions: [
+      'Soch olish natijasi sizga yoqdimi?',
+      'Usta istaklaringizni tingladimi, e\'tiborli bo\'ldimi?',
+      'Ish joyi toza, asboblar va peshband yangi edimi?',
+      'Salonda qulay bo\'ldimi: kreslo, muhit?',
+    ],
+    reviewLabels: ['Ish sifati', 'Xizmat va muomala', 'Tozalik va gigiena', 'Salondagi qulaylik'],
+    reviewThanks: 'Rahmat! Baholaringiz:',
+    reviewAskWords: 'Iltimos, tashrif haqida bir-ikki so\'z yozing: nima yoqdi, nimani yaxshilash mumkin.',
+    reviewWordsThanks: 'Fikringiz uchun rahmat! U ustaga va boshqa mijozlarga yordam beradi.',
+    reviewTooShort: 'Iltimos, kamida bir-ikki so\'z yozing.',
   },
 };
 
@@ -294,6 +323,49 @@ export function mirrorStartUrl(botUsername, code) {
   return `https://t.me/${botUsername}?start=m_${code}`;
 }
 
+// The rating of a visit is one message, rewritten after every tap, so the
+// client always sees how far he is: «Вопрос 2 из 4 ●●○○», «Последний вопрос».
+export const REVIEW_QUESTIONS = 4;
+
+export function reviewDots(step) {
+  return '●'.repeat(step) + '○'.repeat(REVIEW_QUESTIONS - step);
+}
+
+export function reviewQuestion({ lang, master, step }) {
+  const text = botText(lang);
+  const head = step === REVIEW_QUESTIONS ? text.reviewLast : text.reviewStep(step);
+  return `${text.reviewIntro(escapeHtml(master))}\n\n<b>${head}</b> ${reviewDots(step)}\n${text.reviewQuestions[step - 1]}`;
+}
+
+export function reviewKeyboard(reviewId, step) {
+  return {
+    inline_keyboard: [[1, 2, 3, 4, 5].map((score) => ({ text: `${score} ⭐`, callback_data: `v:${reviewId}:${step}:${score}` }))],
+  };
+}
+
+export function reviewSummary({ lang, quality, service, cleanliness, comfort }) {
+  const text = botText(lang);
+  const lines = [quality, service, cleanliness, comfort].map((score, index) => `${text.reviewLabels[index]} — ${score} ⭐`);
+  return `${text.reviewThanks}\n\n${lines.join('\n')}`;
+}
+
+// What the owner reads: a score of 3 or less at once, and words waiting for
+// his approval. In Russian, like every staff notice.
+export function reviewOwnerNotice(kind, facts) {
+  const labels = ['Качество', 'Сервис', 'Чистота', 'Комфорт'];
+  const scores = [facts.quality, facts.service, facts.cleanliness, facts.comfort]
+    .map((score, index) => `${labels[index]} ${score ?? '—'}`)
+    .join(' · ');
+  const lines = [
+    kind === 'low' ? '⚠️ <b>Низкая оценка</b>' : '💬 <b>Новый отзыв</b> — ждёт одобрения в приложении',
+    `💈 ${escapeHtml(facts.master_name)} · визит ${String(facts.visit_date ?? '').slice(8, 10)}.${String(facts.visit_date ?? '').slice(5, 7)}`,
+    `👤 ${escapeHtml(facts.client_name || '—')}${facts.client_phone ? ` · ${escapeHtml(facts.client_phone)}` : ''}`,
+    scores,
+  ];
+  if (kind === 'words') lines.push(`«${escapeHtml(facts.comment)}»`);
+  return lines.join('\n');
+}
+
 export function mirrorStartCode(text) {
   const match = String(text ?? '').match(/^\/start(?:@\w+)?\s+m_([a-f0-9]{10})\s*$/);
   return match ? match[1] : null;
@@ -303,12 +375,12 @@ export function mirrorStartCode(text) {
 // its profile.
 export const CLIENT_BOT_PROFILE = {
   ru: {
-    description: 'Maestro Barberia.\n\nЗдесь вы подтверждаете запись с сайта, получаете напоминание о визите и при необходимости отменяете запись одной кнопкой. А у зеркала мастера достаточно отсканировать QR-код — и мастеру не придётся записывать вас вручную.',
-    short: 'Maestro Barberia: запись, напоминания и QR у зеркала мастера.',
+    description: 'Maestro Barberia.\n\nЗдесь вы подтверждаете запись с сайта, получаете напоминание о визите и при необходимости отменяете запись одной кнопкой. Отсканируйте QR-код мастера — и ему не придётся записывать вас вручную, а после стрижки вы сможете оценить его работу.',
+    short: 'Maestro Barberia: запись, напоминания, QR-код мастера и оценка визита.',
   },
   uz: {
-    description: 'Maestro Barberia.\n\nBu yerda saytdagi yozilishingizni tasdiqlaysiz, tashrif haqida eslatma olasiz va kerak bo\'lsa yozilishni bitta tugma bilan bekor qilasiz. Usta oynasi yonidagi QR-kodni skanerlasangiz kifoya — usta sizni qo\'lda yozib o\'tirmaydi.',
-    short: 'Maestro Barberia: yozilish, eslatmalar va usta oynasidagi QR.',
+    description: 'Maestro Barberia.\n\nBu yerda saytdagi yozilishingizni tasdiqlaysiz, tashrif haqida eslatma olasiz va kerak bo\'lsa yozilishni bitta tugma bilan bekor qilasiz. Usta QR-kodini skanerlang — u sizni qo\'lda yozib o\'tirmaydi, soch olingandan keyin esa uning ishini baholashingiz mumkin.',
+    short: 'Maestro Barberia: yozilish, eslatmalar, usta QR-kodi va baholash.',
   },
 };
 

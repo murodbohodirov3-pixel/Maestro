@@ -15,6 +15,18 @@ function workPhotos(value: unknown) {
     }));
 }
 
+/** maestro_public_reviews → rating (null below three), its count and the approved words. */
+function publicRating(row: { rating?: number | string | null; ratings?: number; reviews?: unknown } | undefined) {
+  const reviews = Array.isArray(row?.reviews) ? row.reviews : [];
+  return {
+    rating: row?.rating == null ? null : Number(row.rating),
+    ratings: Number(row?.ratings) || 0,
+    reviews: reviews
+      .filter((review) => review && typeof review.text === 'string')
+      .map((review) => ({ text: String(review.text), author: String(review.author ?? ''), date: String(review.date ?? '') })),
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return preflight(request);
   if (request.method !== 'GET') return fail(request, 'invalid_request');
@@ -22,7 +34,7 @@ Deno.serve(async (request) => {
   try {
     if (!await allowRead(request)) return fail(request, 'rate_limited');
 
-    const [settings, categories, services, masters] = await Promise.all([
+    const [settings, categories, services, masters, rated] = await Promise.all([
       bookingSettings(),
       db.from('booking_categories').select('id,name_ru,name_uz,sort_order').eq('active', true).order('sort_order'),
       db.from('booking_services')
@@ -35,8 +47,12 @@ Deno.serve(async (request) => {
         .eq('active', true)
         .eq('show_online', true)
         .order('id'),
+      // Clients' ratings (owner's decisions of 2026-10-21): the rating once
+      // three visits are rated, and the words the owner approved.
+      db.rpc('maestro_public_reviews'),
     ]);
-    for (const result of [categories, services, masters]) if (result.error) throw result.error;
+    for (const result of [categories, services, masters, rated]) if (result.error) throw result.error;
+    const ratingOf = new Map((rated.data ?? []).map((row: { master_id: number }) => [Number(row.master_id), row]));
 
     return answer(request, {
       ok: true,
@@ -78,6 +94,7 @@ Deno.serve(async (request) => {
         specialties_ru: Array.isArray(master.specialties_ru) ? master.specialties_ru : [],
         specialties_uz: Array.isArray(master.specialties_uz) ? master.specialties_uz : [],
         works: workPhotos(master.work_photos),
+        ...publicRating(ratingOf.get(Number(master.id))),
       })),
     }, 200, { 'Cache-Control': 'public, max-age=60' });
   } catch (error) {

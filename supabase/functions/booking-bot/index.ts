@@ -17,6 +17,9 @@
 //                       a new number is asked its name, its surname and
 //                       «Вы уже были у нас?» (k:1 / k:0), a card without a
 //                       surname only that; the master sees him in the app.
+// And the rating of a visit, in @MaestroBarberia_bot only: half an hour after
+// it is recorded, {"action":"reviews"} asks four questions in one message
+// (v:<review>:<step>:<score>), then asks for a few words.
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
 // clients' 24 h and 2 h reminders, each through the bot its booking was
 // confirmed with, and the masters' «закройте запись» a quarter of an hour
@@ -35,6 +38,10 @@ import {
   masterReminder,
   masterText,
   mirrorStartCode,
+  reviewKeyboard,
+  reviewOwnerNotice,
+  reviewQuestion,
+  reviewSummary,
   secretsMatch,
   staffNotice,
   webhookBot,
@@ -162,6 +169,20 @@ async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, 
       lang: masterLang,
     }), { reply_markup: { inline_keyboard: [[{ text: masterText(masterLang).openButton, web_app: { url: APP_URL } }]] } }) : null,
   ]);
+}
+
+// The owner in person hears of a low score and of words to approve.
+async function ownerChats(): Promise<string[]> {
+  const { data, error } = await db.from('app_users')
+    .select('telegram_id')
+    .eq('role', 'owner')
+    .eq('active', true)
+    .not('telegram_id', 'is', null);
+  if (error) {
+    console.warn('[booking-bot] owner chats', error.message);
+    return [];
+  }
+  return [...new Set((data ?? []).map((row: { telegram_id: number | string }) => String(row.telegram_id)))];
 }
 
 async function confirm(bot: Bot, appointmentId: string, tgUserId: string, phone: string | null, username: string | null, chatId: number, fallbackLang: string) {
@@ -292,6 +313,7 @@ async function handleCallback(bot: Bot, query: Record<string, any>) {
   const tgUserId = String(query.from.id);
   const fallbackLang = langOf(query.from.language_code);
   const [kind, appointmentId] = String(query.data ?? '').split(':');
+  if (bot === 'client' && kind === 'v') return reviewTap(query);
   if (bot === 'client' && (kind === 'l' || kind === 'k')) {
     if (query.message?.message_id) {
       await telegram(bot, 'editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
@@ -366,6 +388,13 @@ async function masterNoShow(appointmentId: string, tgUserId: string, chatId: num
 }
 
 async function handleUpdate(bot: Bot, update: Record<string, any>) {
+  // Whoever writes to the clients' bot may be written to: the rating after a
+  // visit is asked only of them.
+  const from = update.callback_query?.from ?? update.message?.from;
+  if (bot === 'client' && from?.id && (update.callback_query || update.message?.chat?.type === 'private')) {
+    const seen = await db.rpc('maestro_client_bot_seen', { p_tg_user_id: String(from.id) });
+    if (seen.error) console.warn('[booking-bot] chat not kept', seen.error.message);
+  }
   if (update.callback_query) return handleCallback(bot, update.callback_query);
   const message = update.message;
   if (!message || !message.from) return;
@@ -382,6 +411,11 @@ async function handleUpdate(bot: Bot, update: Record<string, any>) {
     const session = await mirrorSession(String(message.from.id));
     if (session && typeof message.text === 'string' && !message.text.startsWith('/')) {
       return mirrorText(message.chat.id, String(message.from.id), message.text, session, fallbackLang);
+    }
+    if (typeof message.text === 'string' && !message.text.startsWith('/')) {
+      const waiting = await db.rpc('maestro_review_waiting_words', { p_tg_user_id: String(message.from.id) });
+      if (waiting.error) throw waiting.error;
+      if (waiting.data) return reviewWords(message.chat.id, String(message.from.id), message.text, fallbackLang);
     }
   }
   return send(bot, message.chat.id, botText(fallbackLang).help(SITE));
@@ -506,6 +540,111 @@ async function mirrorKnown(chatId: number, tgUserId: string, knownBefore: boolea
   return mirrorReply(chatId, data ?? {}, fallbackLang);
 }
 
+// ------------------------------------------------- the rating of a visit
+
+type ReviewView = {
+  ok?: boolean;
+  error?: string;
+  rated?: boolean;
+  low?: boolean;
+  review_id?: number;
+  step?: number;
+  lang?: string;
+  quality?: number | null;
+  service?: number | null;
+  cleanliness?: number | null;
+  comfort?: number | null;
+  comment?: string | null;
+  master_name?: string;
+  master_name_uz?: string;
+  client_name?: string | null;
+  client_phone?: string | null;
+  visit_date?: string;
+};
+
+function reviewMaster(view: ReviewView, lang: string) {
+  return String(lang === 'uz' ? view.master_name_uz || view.master_name : view.master_name);
+}
+
+async function tellOwner(kind: 'low' | 'words', view: ReviewView) {
+  await Promise.all((await ownerChats()).map((chatId) => send('staff', chatId, reviewOwnerNotice(kind, view))));
+}
+
+// Half an hour after a visit: the first of the four questions.
+async function sendReviewInvites() {
+  const { data, error } = await db.rpc('maestro_claim_review_invites', { p_limit: 20 });
+  if (error) throw error;
+  let sent = 0;
+  for (const invite of data ?? []) {
+    const lang = langOf(invite.lang);
+    const result = await send('client', invite.tg_user_id, reviewQuestion({
+      lang,
+      master: lang === 'uz' ? invite.master_name_uz : invite.master_name,
+      step: 1,
+    }), { reply_markup: reviewKeyboard(invite.review_id, 1) });
+    if (result.ok) {
+      sent += 1;
+      const messageId = (result.result as { message_id?: number } | undefined)?.message_id ?? null;
+      await db.rpc('maestro_review_sent', { p_review_id: invite.review_id, p_message_id: messageId });
+    } else if (String(result.description ?? '').startsWith('Forbidden')) {
+      await db.rpc('maestro_review_unreachable', { p_review_id: invite.review_id });
+    }
+  }
+  return { claimed: (data ?? []).length, sent };
+}
+
+// One tap: the next question in the same message, or after the fourth the
+// scores and the offer of a few words.
+async function reviewTap(query: Record<string, any>) {
+  const [, reviewId, step, score] = String(query.data ?? '').split(':').map(Number);
+  if (!reviewId || !step || !score) return;
+  const { data, error } = await db.rpc('maestro_review_answer', {
+    p_review_id: reviewId,
+    p_tg_user_id: String(query.from.id),
+    p_step: step,
+    p_score: score,
+  });
+  if (error) throw error;
+  const view = (data ?? {}) as ReviewView;
+  // A second tap on a question already answered changes nothing.
+  if (!view.ok) return;
+  const chatId = query.message?.chat?.id;
+  const messageId = query.message?.message_id;
+  const lang = langOf(view.lang);
+  if (!view.rated) {
+    return telegram('client', 'editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: reviewQuestion({ lang, master: reviewMaster(view, lang), step: Number(view.step) }),
+      parse_mode: 'HTML',
+      reply_markup: reviewKeyboard(reviewId, Number(view.step)),
+    });
+  }
+  await telegram('client', 'editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text: reviewSummary({ lang, quality: view.quality, service: view.service, cleanliness: view.cleanliness, comfort: view.comfort }),
+    parse_mode: 'HTML',
+  });
+  // No «Без комментария»: offered a way out, nobody writes (owner, 2026-10-21).
+  // Unanswered, the words are let go after a day; the scores stay.
+  await send('client', chatId, botText(lang).reviewAskWords);
+  if (view.low) await tellOwner('low', view);
+}
+
+async function reviewWords(chatId: number, tgUserId: string, typed: string, fallbackLang: string) {
+  const { data, error } = await db.rpc('maestro_review_words', { p_tg_user_id: tgUserId, p_text: typed });
+  if (error) throw error;
+  const view = (data ?? {}) as ReviewView;
+  const text = botText(langOf(view.lang || fallbackLang));
+  if (!view.ok) {
+    if (view.error === 'too_short') return send('client', chatId, text.reviewTooShort);
+    return send('client', chatId, botText(fallbackLang).help(SITE));
+  }
+  await send('client', chatId, text.reviewWordsThanks);
+  await tellOwner('words', view);
+}
+
 async function sendReminders() {
   const { data, error } = await db.rpc('maestro_claim_web_reminders', { p_limit: 25 });
   if (error) throw error;
@@ -580,6 +719,7 @@ async function sendMasterReminders() {
 
 async function handleService(action: string, input: Record<string, unknown>) {
   if (action === 'reminders') return reply({ ok: true, ...(await sendReminders()) });
+  if (action === 'reviews') return reply({ ok: true, ...(await sendReviewInvites()) });
   const bot: Bot = input.bot === 'client' ? 'client' : 'staff';
   if (action === 'bot_info') {
     const me = await telegram(bot, 'getMe', {});

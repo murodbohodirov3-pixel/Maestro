@@ -2806,6 +2806,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
       </div>
 
       {data.role === 'master' ? <MyWeek data={data} master={masterProfile} /> : null}
+      {data.role === 'master' ? <MyRatings setError={setError} /> : null}
 
       <div className="card wide hero-card master-earnings">
         <SectionHeading label="Мой заработок" range={range} />
@@ -4569,6 +4570,171 @@ function weekLabel(week) {
     : `${fromDay} ${MONTHS_GENITIVE[fromMonth - 1]} – ${toDay} ${MONTHS_GENITIVE[toMonth - 1]}`;
 }
 
+// How clients rate their visits (owner's decisions of 2026-10-21): four
+// questions in the clients' bot. A master's rating is the mean of the first
+// three; the comfort of the salon is the owner's alone.
+const REVIEW_PARTS = [
+  ['quality', 'Качество'],
+  ['service', 'Сервис'],
+  ['cleanliness', 'Чистота'],
+  ['comfort', 'Комфорт'],
+];
+const REVIEW_WORDS_STATUS = { pending: 'ждёт одобрения', approved: 'на сайте', hidden: 'скрыт' };
+
+function ratingText(value) {
+  return value == null ? '—' : Number(value).toFixed(1).replace('.', ',');
+}
+
+function useReviews(setError) {
+  const [state, setState] = useState({ loading: true, reviews: [], ratings: [] });
+  const load = useCallback(async () => {
+    try {
+      const result = await callLegacyApi('reviews', {});
+      setState({ loading: false, reviews: result?.reviews || [], ratings: result?.ratings || [] });
+    } catch (error) {
+      setError(actionErrorText(error));
+      setState((current) => ({ ...current, loading: false }));
+    }
+  }, [setError]);
+  useEffect(() => { load(); }, [load]);
+  return { ...state, load };
+}
+
+function ReviewScores({ review, parts = REVIEW_PARTS }) {
+  return (
+    <span className="review-scores">
+      {parts.filter(([key]) => review[key] != null).map(([key, label]) => (
+        <span className={review[key] <= 3 ? 'is-low' : ''} key={key}>{`${label} ${review[key]}`}</span>
+      ))}
+    </span>
+  );
+}
+
+function ReviewRow({ review, masterName, actions = null, parts }) {
+  const low = REVIEW_PARTS.some(([key]) => review[key] != null && review[key] <= 3);
+  return (
+    <div className={`row review-row${low ? ' is-low' : ''}`}>
+      <div>
+        <strong>{masterName ? `${masterName} · ` : ''}{displayDate(review.d)}</strong>
+        <span>{review.client_name || '—'}</span>
+        <ReviewScores review={review} parts={parts} />
+        {review.comment ? <p className="review-words">«{review.comment}»</p> : null}
+        {review.comment && review.comment_status ? (
+          <span className={`approval ${review.comment_status === 'approved' ? 'approved' : review.comment_status === 'hidden' ? 'rejected' : 'pending'}`}>
+            {REVIEW_WORDS_STATUS[review.comment_status]}
+          </span>
+        ) : null}
+      </div>
+      {actions}
+    </div>
+  );
+}
+
+// The owner's «Отзывы»: each master's rating, the words waiting for his
+// decision, and the latest ratings, a score of 3 or less marked.
+function ReviewsView({ data, setError }) {
+  const { loading, reviews, ratings, load } = useReviews(setError);
+  const [deciding, setDeciding] = useState(null);
+  const nameOf = (id) => data.masters.find((master) => String(master.id) === String(id))?.name || '—';
+  const waiting = reviews.filter((review) => review.comment && review.comment_status === 'pending');
+
+  async function decide(review, status) {
+    setDeciding(`${review.id}:${status}`);
+    setError('');
+    try {
+      await callLegacyApi('decideReview', { review_id: review.id, status });
+      haptic('success');
+      await load();
+    } catch (error) {
+      setError(actionErrorText(error));
+    } finally {
+      setDeciding(null);
+    }
+  }
+
+  const decisionButtons = (review) => (
+    <div className="approval-actions">
+      {review.comment_status !== 'approved' ? (
+        <button className="btn approval-button" type="button" disabled={Boolean(deciding)} onClick={() => decide(review, 'approved')}>
+          {deciding === `${review.id}:approved` ? 'Сохраняем…' : 'Показать на сайте'}
+        </button>
+      ) : null}
+      {review.comment_status !== 'hidden' ? (
+        <button className="btn ghost approval-button" type="button" disabled={Boolean(deciding)} onClick={() => decide(review, 'hidden')}>
+          {deciding === `${review.id}:hidden` ? 'Сохраняем…' : 'Скрыть'}
+        </button>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <section className="view-grid">
+      <div className="card wide">
+        <h2>Оценки мастеров</h2>
+        {loading ? <p className="hint">Загружаем…</p> : ratings.length ? (
+          <div className="review-ratings">
+            {[...ratings].sort((left, right) => Number(right.rating) - Number(left.rating)).map((row) => (
+              <div className="review-rating" key={row.master_id}>
+                <strong>{nameOf(row.master_id)}</strong>
+                <span className="review-rating-value">★ {ratingText(row.rating)}</span>
+                <small><span>{row.ratings}</span> <span>{pluralRu(row.ratings, 'оценка', 'оценки', 'оценок')}</span></small>
+                <span className="review-scores">
+                  {REVIEW_PARTS.map(([key, label]) => <span key={key}>{`${label} ${ratingText(row[key])}`}</span>)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : <p className="hint">Оценок пока нет.</p>}
+      </div>
+      {waiting.length ? (
+        <div className="card wide">
+          <h2>Отзывы ждут одобрения</h2>
+          <Rows rows={waiting} empty="" render={(review) => (
+            <ReviewRow key={review.id} review={review} masterName={nameOf(review.master_id)} actions={decisionButtons(review)} />
+          )} />
+        </div>
+      ) : null}
+      <div className="card wide">
+        <h2>Последние оценки</h2>
+        <Rows rows={reviews.slice(0, 60)} empty={loading ? '' : 'Оценок пока нет.'} render={(review) => (
+          <ReviewRow
+            key={review.id}
+            review={review}
+            masterName={nameOf(review.master_id)}
+            actions={review.comment && review.comment_status !== 'pending' ? decisionButtons(review) : null}
+          />
+        )} />
+      </div>
+    </section>
+  );
+}
+
+// A master's own rating, below his week: no comfort of the salon, which is
+// not his, and every word about him with no sign of which reached the site
+// (owner's decision of 2026-10-21: he is to expect them all there).
+function MyRatings({ setError }) {
+  const { loading, reviews, ratings } = useReviews(setError);
+  const mine = ratings[0];
+  const parts = REVIEW_PARTS.slice(0, 3);
+  if (loading) return null;
+  return (
+    <div className="card wide my-ratings">
+      <h2>Мои оценки</h2>
+      {mine ? (
+        <>
+          <p className="big-line">★ {ratingText(mine.rating)} <small><span>{mine.ratings}</span> <span>{pluralRu(mine.ratings, 'оценка', 'оценки', 'оценок')}</span></small></p>
+          <span className="review-scores">
+            {parts.map(([key, label]) => <span key={key}>{`${label} ${ratingText(mine[key])}`}</span>)}
+          </span>
+          <Rows rows={reviews.slice(0, 8)} empty="" render={(review) => (
+            <ReviewRow key={review.id} review={review} parts={parts} />
+          )} />
+        </>
+      ) : <p className="hint">Пока нет оценок.</p>}
+    </div>
+  );
+}
+
 function PayoutsView({ data, reload, setError }) {
   const isOwner = data.appRole === 'owner';
   const thisWeek = weekStartOf(TODAY);
@@ -5070,7 +5236,7 @@ const NAV_ITEMS = [
   { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
   { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
   { id: 'stock', label: 'Склад', views: ['stock'], icon: 'box' },
-  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings', 'payouts'], icon: 'team' },
+  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings', 'payouts', 'reviews'], icon: 'team' },
 ];
 
 const TEAM_TABS = [
@@ -5078,6 +5244,7 @@ const TEAM_TABS = [
   ['master', 'Рабочий день'],
   ['bookings', 'Записи'],
   ['payouts', 'Выплаты'],
+  ['reviews', 'Отзывы'],
 ];
 
 // The administrator has no tab bar: two sections at the top of her screen.
@@ -5095,6 +5262,7 @@ const VIEW_TITLES = {
   stock: 'Склад',
   bookings: 'Команда',
   payouts: 'Команда',
+  reviews: 'Команда',
   settings: 'Настройки',
 };
 
@@ -5115,12 +5283,20 @@ function viewIdsForUser(data) {
       'attendance',
       'master',
       'bookings',
-      ...(data.appRole === 'owner' ? ['payouts'] : []),
+      ...(data.appRole === 'owner' ? ['payouts', 'reviews'] : []),
       'settings',
     ];
   }
   if (data.role === 'master') return ['master'];
   return [];
+}
+
+// Sideways only: the page itself does not move.
+function keepTabInSight(button) {
+  const strip = button?.parentElement;
+  if (!strip) return;
+  const offset = button.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+  strip.scrollLeft += offset - (strip.clientWidth - button.clientWidth) / 2;
 }
 
 // A light tap under the thumb when a tab or a decision lands. Telegram only;
@@ -5770,6 +5946,7 @@ export default function App() {
     stock: data.role === 'frontdesk' ? DeskStockView : StockView,
     bookings: BookingsView,
     payouts: PayoutsView,
+    reviews: ReviewsView,
     settings: SettingsView,
   }[view] || MasterView;
 
@@ -5788,7 +5965,7 @@ export default function App() {
     : view === 'settings'
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
-  const inTeam = ['attendance', 'master', 'bookings', 'payouts'].includes(view);
+  const inTeam = ['attendance', 'master', 'bookings', 'payouts', 'reviews'].includes(view);
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
@@ -5821,7 +5998,14 @@ export default function App() {
       {inTeam && !isMaster && teamTabs.length > 1 ? (
         <nav className="seg team-tabs" aria-label="Команда">
           {teamTabs.map(([id, label]) => (
-            <button className={view === id ? 'on' : ''} key={id} type="button" onClick={() => openView(id)}>
+            <button
+              className={view === id ? 'on' : ''}
+              key={id}
+              type="button"
+              onClick={() => openView(id)}
+              // Five tabs run past a phone's width: the open one is kept in sight.
+              ref={view === id ? keepTabInSight : undefined}
+            >
               {label}
             </button>
           ))}

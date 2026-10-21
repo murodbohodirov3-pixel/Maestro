@@ -4847,6 +4847,88 @@ label {
   flex: 0 0 auto;
 }
 
+/* Clients' ratings of their visits: the owner's «Отзывы», a master's own. */
+.review-ratings {
+  display: grid;
+  gap: 10px;
+}
+
+.review-rating {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.review-rating:first-child {
+  border-top: 0;
+}
+
+.review-rating-value {
+  font-weight: 800;
+  font-size: 17px;
+  color: var(--brass);
+}
+
+.review-rating small,
+.review-rating .review-scores {
+  grid-column: 1 / -1;
+}
+
+.review-rating small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.review-scores .is-low {
+  color: var(--fine);
+}
+
+/* Inside a row every span is a line of its own; the scores stay on one. */
+.row .review-scores {
+  display: flex;
+  margin-top: 2px;
+}
+
+.row .review-scores span {
+  display: inline;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.row .review-scores .is-low {
+  color: var(--fine);
+}
+
+.review-row.is-low {
+  border-left: 3px solid var(--fine);
+  padding-left: 10px;
+}
+
+.review-words {
+  margin: 6px 0 2px;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.my-ratings .big-line small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* Who scanned the QR at the master's mirror, above the search. */
 .mirror-scans {
   display: grid;
