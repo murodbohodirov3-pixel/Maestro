@@ -142,6 +142,9 @@ export const PHRASES = {
   '+ Новый клиент': '+ Yangi mijoz',
   'Телефон, например 90 123 45 67': 'Telefon, masalan 90 123 45 67',
   'Гость без имени': 'Ismsiz mehmon',
+  'Отсканировал у вашего зеркала': 'Oynangiz yonida skanerladi',
+  'Отсканировал у зеркала': 'Oyna yonida skanerladi',
+  'только что': 'hozirgina',
   'Готово': 'Tayyor',
   'Был у нас раньше?': 'Avval bizda boʻlganmi?',
   'Создать карточку': 'Karta yaratish',
@@ -545,6 +548,9 @@ export const PHRASES = {
 
 // {0}, {1}… stand for the parts that change.
 export const TEMPLATES = {
+  '{0} ч {1} мин назад': '{0} soat {1} daqiqa oldin',
+  '{0} мин назад': '{0} daqiqa oldin',
+  '{0} ч назад': '{0} soat oldin',
   'Смена с {0}, опоздание — после {1}.': 'Smena {0} dan, kechikish — {1} dan keyin.',
   'Смена с {0}.': 'Smena {0} dan.',
   'Опоздание — после {0}.': 'Kechikish — {0} dan keyin.',

@@ -4847,6 +4847,46 @@ label {
   flex: 0 0 auto;
 }
 
+/* Who scanned the QR at the master's mirror, above the search. */
+.mirror-scans {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.mirror-scans-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mirror-scan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--brass-soft);
+  color: var(--ink);
+  text-align: left;
+}
+
+.mirror-scan strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
+.mirror-scan small {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* A client who gives neither his name nor his number: a guest, no card. */
 .client-guest {
   min-height: 40px;

@@ -58,6 +58,7 @@ import { pluralRu } from './utils/plural.js';
 import { applyLanguage, registerNames, tr } from './i18n/index.js';
 import { masterWeek, weekOf, weekPayouts, weekStartOf } from './utils/payouts.js';
 import { checkClientName, checkLastName, NAME_PART_MAX } from '../supabase/functions/_shared/clientName.js';
+import { scannedAgo } from '../supabase/functions/_shared/mirror.js';
 import {
   blockPosition,
   canRecordVisit,
@@ -1446,9 +1447,30 @@ function SurnameField({ client, onDone, setError }) {
 // takes a name, a surname and a number (owner's decisions of 2026-10-21). A
 // client who gives neither is a guest without a name: no card, only «Был у
 // нас раньше?», and only for a visit (allowGuest), never for a booking.
-function ClientPicker({ client, onChange, setError, allowGuest = false }) {
+function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitle = '', scanMaster = '' }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  // Who scanned the QR at this master's mirror (owner's decisions of
+  // 2026-10-21): asked again every half minute while the form waits for a
+  // client, so a scan made during the haircut is there when it ends.
+  const [scans, setScans] = useState([]);
+  const watchScans = Boolean(scanTitle) && allowGuest && !client && !creating;
+  useEffect(() => {
+    if (!watchScans) return undefined;
+    let alive = true;
+    const load = () => callLegacyApi('mirrorScans', { master: scanMaster })
+      .then((result) => { if (alive) setScans(result?.scans || []); })
+      .catch(() => {});
+    load();
+    const timer = setInterval(load, 30000);
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [watchScans, scanMaster]);
   const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '', known_before: null, guest: false });
   const [saving, setSaving] = useState(false);
   const { results, searching } = useClientSearch(query, setError);
@@ -1593,6 +1615,17 @@ function ClientPicker({ client, onChange, setError, allowGuest = false }) {
 
   return (
     <div className="picker">
+      {watchScans && scans.length ? (
+        <div className="mirror-scans">
+          <span className="mirror-scans-title">{scanTitle}</span>
+          {scans.map((scan) => (
+            <button key={scan.id} className="mirror-scan" type="button" onClick={() => pick(scan.client)}>
+              <strong>{scan.client.full_name}</strong>
+              <small>{scannedAgo(scan.scanned_at)}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <input
         type="search"
         enterKeyHint="search"
@@ -2696,7 +2729,14 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
             <button className="link-button" type="button" onClick={() => setVisitBooking(null)}>Без записи</button>
           </div>
         ) : null}
-        <ClientPicker client={visitClient} onChange={setVisitClient} setError={setError} allowGuest={!visitBooking} />
+        <ClientPicker
+          client={visitClient}
+          onChange={setVisitClient}
+          setError={setError}
+          allowGuest={!visitBooking}
+          scanTitle={data.role === 'master' ? 'Отсканировал у вашего зеркала' : 'Отсканировал у зеркала'}
+          scanMaster={masterName}
+        />
         {split ? (
           <div className="split-amounts">
             {PAYMENT_METHODS.map(([key, label]) => (

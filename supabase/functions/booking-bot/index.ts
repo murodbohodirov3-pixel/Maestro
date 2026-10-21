@@ -12,6 +12,11 @@
 //   c:<id> / x:<id>   → confirm with the known number / cancel
 //   p:<id>            → not that number: share another contact
 //   n:<id>            → a master marks his booking «Не пришёл» (staff bot only)
+// And the QR at a master's mirror, in @MaestroBarberia_bot only:
+//   /start m_<code>   → «Выберите язык» (l:ru / l:uz), then «Поделиться номером»;
+//                       a new number is asked its name, its surname and
+//                       «Вы уже были у нас?» (k:1 / k:0), a card without a
+//                       surname only that; the master sees him in the app.
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
 // clients' 24 h and 2 h reminders, each through the bot its booking was
 // confirmed with, and the masters' «закройте запись» a quarter of an hour
@@ -23,17 +28,20 @@ import {
   bookingLines,
   botText,
   CLIENT_BOT_PROFILE,
+  escapeHtml,
   langOf,
   maskPhone,
   masterBookingNotice,
   masterReminder,
   masterText,
+  mirrorStartCode,
   secretsMatch,
   staffNotice,
   webhookBot,
 } from '../_shared/bookingCore.js';
 import { bookingSettings, db, tokenHash } from '../_shared/bookingHttp.ts';
 import { maskPhoneForStaff } from '../_shared/access.js';
+import { tidyNamePart } from '../_shared/clientName.js';
 
 type Bot = 'client' | 'staff';
 
@@ -204,6 +212,9 @@ async function isStaff(tgUserId: string) {
 }
 
 async function handleStart(bot: Bot, chatId: number, tgUserId: string, token: string, fallbackLang: string) {
+  // A site booking now: a number he shares confirms it, not the mirror.
+  const dropped = await db.rpc('maestro_mirror_drop', { p_tg_user_id: tgUserId });
+  if (dropped.error) console.warn('[booking-bot] mirror session not dropped', dropped.error.message);
   const { data, error } = await db.rpc('maestro_booking_for_bot', {
     p_token_hash: await tokenHash(token),
     p_appointment_id: null,
@@ -262,6 +273,10 @@ async function handleContact(bot: Bot, message: Record<string, any>) {
   if (String(message.contact?.user_id ?? '') !== tgUserId) {
     return send(bot, chatId, botText(fallbackLang).foreignContact);
   }
+  if (bot === 'client') {
+    const session = await mirrorSession(tgUserId);
+    if (session) return mirrorContact(chatId, tgUserId, String(message.contact.phone_number ?? ''), session, fallbackLang);
+  }
   const { data: appointmentId, error } = await db.rpc('maestro_latest_hold_for_telegram', { p_tg_user_id: tgUserId });
   if (error) throw error;
   if (!appointmentId) {
@@ -277,6 +292,14 @@ async function handleCallback(bot: Bot, query: Record<string, any>) {
   const tgUserId = String(query.from.id);
   const fallbackLang = langOf(query.from.language_code);
   const [kind, appointmentId] = String(query.data ?? '').split(':');
+  if (bot === 'client' && (kind === 'l' || kind === 'k')) {
+    if (query.message?.message_id) {
+      await telegram(bot, 'editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
+    }
+    return kind === 'l'
+      ? mirrorLang(chatId, tgUserId, appointmentId, fallbackLang)
+      : mirrorKnown(chatId, tgUserId, appointmentId === '1', fallbackLang);
+  }
   if (!UUID.test(appointmentId ?? '')) return;
 
   if (kind === 'c') {
@@ -353,7 +376,134 @@ async function handleUpdate(bot: Bot, update: Record<string, any>) {
   const fallbackLang = langOf(message.from.language_code);
   const start = String(message.text ?? '').match(/^\/start(?:@\w+)?\s+b_([A-Za-z0-9_-]{22,40})\s*$/);
   if (start) return handleStart(bot, message.chat.id, String(message.from.id), start[1], fallbackLang);
+  if (bot === 'client') {
+    const code = mirrorStartCode(message.text);
+    if (code) return mirrorBegin(message.chat.id, message.from, code);
+    const session = await mirrorSession(String(message.from.id));
+    if (session && typeof message.text === 'string' && !message.text.startsWith('/')) {
+      return mirrorText(message.chat.id, String(message.from.id), message.text, session, fallbackLang);
+    }
+  }
   return send(bot, message.chat.id, botText(fallbackLang).help(SITE));
+}
+
+// ------------------------------------------------- the QR at the mirror
+// Only @MaestroBarberia_bot asks these questions; the base keeps where each
+// Telegram user is (mirror_sessions) and makes the card and the scan.
+
+type MirrorView = {
+  ok?: boolean;
+  error?: string;
+  next?: string;
+  step?: string;
+  lang?: string | null;
+  first_name?: string | null;
+  created?: boolean;
+  master_name?: string;
+  master_name_uz?: string;
+};
+
+const LANG_KEYBOARD = {
+  inline_keyboard: [[{ text: 'Русский', callback_data: 'l:ru' }, { text: 'Oʻzbekcha', callback_data: 'l:uz' }]],
+};
+const NO_KEYBOARD = { remove_keyboard: true };
+
+function mirrorMaster(view: MirrorView, lang: string) {
+  return escapeHtml(lang === 'uz' ? view.master_name_uz || view.master_name : view.master_name);
+}
+
+async function mirrorSession(tgUserId: string): Promise<MirrorView | null> {
+  const { data, error } = await db.rpc('maestro_mirror_session', { p_tg_user_id: tgUserId });
+  if (error) throw error;
+  return data ?? null;
+}
+
+function askContactForMirror(chatId: number, view: MirrorView, lang: string) {
+  const text = botText(lang);
+  return send('client', chatId, text.mirrorAskContact(mirrorMaster(view, lang)), {
+    reply_markup: { keyboard: [[{ text: text.shareButton, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true },
+  });
+}
+
+function askKnown(chatId: number, lang: string) {
+  const text = botText(lang);
+  return send('client', chatId, text.mirrorAskKnown, {
+    reply_markup: { inline_keyboard: [[
+      { text: text.mirrorKnownYes, callback_data: 'k:1' },
+      { text: text.mirrorKnownNo, callback_data: 'k:0' },
+    ]] },
+  });
+}
+
+// Every answer of the base is said the same way, whichever question it closes.
+function mirrorReply(chatId: number, view: MirrorView, fallbackLang: string) {
+  const lang = langOf(view.lang || fallbackLang);
+  const text = botText(lang);
+  if (!view.ok) {
+    if (view.error === 'no_session') return send('client', chatId, text.mirrorExpired, { reply_markup: NO_KEYBOARD });
+    if (view.error === 'client_blocked') return send('client', chatId, text.mirrorBlocked, { reply_markup: NO_KEYBOARD });
+    if (view.error === 'invalid_phone') return send('client', chatId, text.foreignContact);
+    if (view.error === 'invalid_name') return send('client', chatId, text.mirrorBadName);
+    if (view.error === 'not_asked') return send('client', chatId, text.mirrorUseButtons);
+    return send('client', chatId, text.error);
+  }
+  const name = escapeHtml(view.first_name || '');
+  if (view.next === 'done') {
+    const line = view.created ? text.mirrorDone : text.mirrorWelcomeBack;
+    return send('client', chatId, line(name, mirrorMaster(view, lang)), { reply_markup: NO_KEYBOARD });
+  }
+  if (view.next === 'first_name') return send('client', chatId, text.mirrorAskFirst, { reply_markup: NO_KEYBOARD });
+  if (view.next === 'surname') return send('client', chatId, text.mirrorAskSurname(name), { reply_markup: NO_KEYBOARD });
+  if (view.next === 'last_name') return send('client', chatId, text.mirrorAskLast);
+  if (view.next === 'known_before') return askKnown(chatId, lang);
+  return send('client', chatId, text.error);
+}
+
+async function mirrorBegin(chatId: number, from: Record<string, any>, code: string) {
+  const { data, error } = await db.rpc('maestro_mirror_begin', {
+    p_code: code,
+    p_tg_user_id: String(from.id),
+    p_tg_username: from.username ?? null,
+  });
+  if (error) throw error;
+  const text = botText(langOf(from.language_code));
+  if (!data?.ok) {
+    return send('client', chatId, data?.error === 'staff_account' ? text.mirrorStaff : text.mirrorUnknownCode, { reply_markup: NO_KEYBOARD });
+  }
+  return send('client', chatId, text.mirrorPickLang, { reply_markup: LANG_KEYBOARD });
+}
+
+async function mirrorLang(chatId: number, tgUserId: string, lang: string, fallbackLang: string) {
+  const { data, error } = await db.rpc('maestro_mirror_lang', { p_tg_user_id: tgUserId, p_lang: lang });
+  if (error) throw error;
+  if (!data?.ok) return mirrorReply(chatId, data ?? {}, fallbackLang);
+  const chosen = langOf(data.lang);
+  if (data.step === 'contact') return askContactForMirror(chatId, data, chosen);
+  // The language changed halfway: the question he was at, again.
+  return mirrorReply(chatId, { ...data, next: data.step }, chosen);
+}
+
+async function mirrorContact(chatId: number, tgUserId: string, phone: string, session: MirrorView, fallbackLang: string) {
+  const { data, error } = await db.rpc('maestro_mirror_contact', { p_tg_user_id: tgUserId, p_phone: phone });
+  if (error) throw error;
+  return mirrorReply(chatId, { lang: session.lang, ...(data ?? {}) }, fallbackLang);
+}
+
+async function mirrorText(chatId: number, tgUserId: string, typed: string, session: MirrorView, fallbackLang: string) {
+  const lang = langOf(session.lang || fallbackLang);
+  const text = botText(lang);
+  if (session.step === 'lang') return send('client', chatId, text.mirrorPickLang, { reply_markup: LANG_KEYBOARD });
+  if (session.step === 'contact') return askContactForMirror(chatId, session, lang);
+  if (session.step === 'known_before') return askKnown(chatId, lang);
+  const { data, error } = await db.rpc('maestro_mirror_name', { p_tg_user_id: tgUserId, p_part: tidyNamePart(typed) });
+  if (error) throw error;
+  return mirrorReply(chatId, { lang: session.lang, ...(data ?? {}) }, fallbackLang);
+}
+
+async function mirrorKnown(chatId: number, tgUserId: string, knownBefore: boolean, fallbackLang: string) {
+  const { data, error } = await db.rpc('maestro_mirror_known', { p_tg_user_id: tgUserId, p_known_before: knownBefore });
+  if (error) throw error;
+  return mirrorReply(chatId, data ?? {}, fallbackLang);
 }
 
 async function sendReminders() {

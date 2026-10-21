@@ -193,6 +193,24 @@ const TEXT = {
     reminder24: 'Напоминаем: завтра вы записаны в Maestro Barberia.',
     reminder2: 'Через 2 часа ждём вас в Maestro Barberia.',
     error: 'Что-то пошло не так. Попробуйте ещё раз через минуту.',
+    // The QR at a master's mirror.
+    mirrorPickLang: 'Выберите язык · Tilni tanlang',
+    mirrorAskContact: (master) => `Вы у зеркала мастера ${master}. Нажмите «Поделиться номером» внизу — и мастеру не придётся записывать вас вручную.`,
+    mirrorShareNumber: 'Нажмите «Поделиться номером» внизу.',
+    mirrorAskFirst: 'Как вас зовут? Напишите имя.',
+    mirrorAskLast: 'Теперь напишите фамилию.',
+    mirrorAskSurname: (name) => `${name}, напишите, пожалуйста, вашу фамилию.`,
+    mirrorBadName: 'Только буквы, от 2 до 40, без цифр. Напишите ещё раз.',
+    mirrorAskKnown: 'Вы уже были у нас в Maestro?',
+    mirrorKnownYes: 'Да, был',
+    mirrorKnownNo: 'Нет, впервые',
+    mirrorUseButtons: 'Ответьте кнопкой выше.',
+    mirrorDone: (name, master) => `Спасибо, ${name}! ${master} уже видит вас в приложении. Хорошей стрижки!`,
+    mirrorWelcomeBack: (name, master) => `С возвращением, ${name}! ${master} уже видит вас в приложении. Хорошей стрижки!`,
+    mirrorUnknownCode: 'Этот QR-код больше не действует. Скажите мастеру — он запишет вас сам.',
+    mirrorExpired: 'Время вышло. Отсканируйте QR-код у зеркала ещё раз.',
+    mirrorStaff: 'Это аккаунт сотрудника салона. QR у зеркала — для клиентов.',
+    mirrorBlocked: 'Спасибо! Мастер сам внесёт ваш визит.',
   },
   uz: {
     title: 'Maestro Barberia\'ga yozilish',
@@ -221,6 +239,23 @@ const TEXT = {
     reminder24: 'Eslatma: ertaga siz Maestro Barberia\'ga yozilgansiz.',
     reminder2: '2 soatdan keyin sizni Maestro Barberia\'da kutamiz.',
     error: 'Xatolik yuz berdi. Bir daqiqadan so\'ng qayta urinib ko\'ring.',
+    mirrorPickLang: 'Выберите язык · Tilni tanlang',
+    mirrorAskContact: (master) => `Siz ${master} ustaning oynasi oldidasiz. Pastdagi «Raqamni yuborish» tugmasini bosing — usta sizni qo'lda yozib o'tirmaydi.`,
+    mirrorShareNumber: 'Pastdagi «Raqamni yuborish» tugmasini bosing.',
+    mirrorAskFirst: 'Ismingiz nima? Ismingizni yozing.',
+    mirrorAskLast: 'Endi familiyangizni yozing.',
+    mirrorAskSurname: (name) => `${name}, iltimos, familiyangizni yozing.`,
+    mirrorBadName: 'Faqat harflar, 2 tadan 40 tagacha, raqamsiz. Qaytadan yozing.',
+    mirrorAskKnown: 'Avval Maestro\'da bo\'lganmisiz?',
+    mirrorKnownYes: 'Ha, bo\'lganman',
+    mirrorKnownNo: 'Yo\'q, birinchi marta',
+    mirrorUseButtons: 'Yuqoridagi tugma bilan javob bering.',
+    mirrorDone: (name, master) => `Rahmat, ${name}! ${master} sizni ilovada ko'rib turibdi. Soch olish yoqimli o'tsin!`,
+    mirrorWelcomeBack: (name, master) => `Qaytganingizdan xursandmiz, ${name}! ${master} sizni ilovada ko'rib turibdi. Soch olish yoqimli o'tsin!`,
+    mirrorUnknownCode: 'Bu QR-kod endi ishlamaydi. Ustaga ayting — u sizni o\'zi yozadi.',
+    mirrorExpired: 'Vaqt tugadi. Oyna yonidagi QR-kodni qaytadan skanerlang.',
+    mirrorStaff: 'Bu salon xodimining akkaunti. Oyna yonidagi QR — mijozlar uchun.',
+    mirrorBlocked: 'Rahmat! Usta tashrifingizni o\'zi kiritadi.',
   },
 };
 
@@ -253,16 +288,27 @@ export function bookingBotOf(value) {
   return value === 'client' ? 'client' : 'staff';
 }
 
+// A master's QR opens @MaestroBarberia_bot with «/start m_<code>», the code
+// being masters.mirror_code (owner's decision of 2026-10-21).
+export function mirrorStartUrl(botUsername, code) {
+  return `https://t.me/${botUsername}?start=m_${code}`;
+}
+
+export function mirrorStartCode(text) {
+  const match = String(text ?? '').match(/^\/start(?:@\w+)?\s+m_([a-f0-9]{10})\s*$/);
+  return match ? match[1] : null;
+}
+
 // What a client reads of @MaestroBarberia_bot before pressing «Старт», and in
 // its profile.
 export const CLIENT_BOT_PROFILE = {
   ru: {
-    description: 'Maestro Barberia.\n\nЗдесь вы подтверждаете запись с сайта, получаете напоминание о визите и при необходимости отменяете запись одной кнопкой.',
-    short: 'Записи в Maestro Barberia: подтверждение, напоминания и отмена.',
+    description: 'Maestro Barberia.\n\nЗдесь вы подтверждаете запись с сайта, получаете напоминание о визите и при необходимости отменяете запись одной кнопкой. А у зеркала мастера достаточно отсканировать QR-код — и мастеру не придётся записывать вас вручную.',
+    short: 'Maestro Barberia: запись, напоминания и QR у зеркала мастера.',
   },
   uz: {
-    description: 'Maestro Barberia.\n\nBu yerda saytdagi yozilishingizni tasdiqlaysiz, tashrif haqida eslatma olasiz va kerak bo\'lsa yozilishni bitta tugma bilan bekor qilasiz.',
-    short: 'Maestro Barberia\'ga yozilish: tasdiqlash, eslatmalar va bekor qilish.',
+    description: 'Maestro Barberia.\n\nBu yerda saytdagi yozilishingizni tasdiqlaysiz, tashrif haqida eslatma olasiz va kerak bo\'lsa yozilishni bitta tugma bilan bekor qilasiz. Usta oynasi yonidagi QR-kodni skanerlasangiz kifoya — usta sizni qo\'lda yozib o\'tirmaydi.',
+    short: 'Maestro Barberia: yozilish, eslatmalar va usta oynasidagi QR.',
   },
 };
 

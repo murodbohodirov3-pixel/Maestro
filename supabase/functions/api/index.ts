@@ -5,6 +5,7 @@ import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
 import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
 import { checkClientName, checkLastName } from '../_shared/clientName.js';
+import { latestScanPerClient, MIRROR_SCAN_HOURS } from '../_shared/mirror.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -760,6 +761,35 @@ Deno.serve(async (req) => {
       return json({ error: 'forbidden' }, 403);
     }
 
+    // Who scanned a master's QR (owner's decisions of 2026-10-21): for two
+    // hours, or until a visit of his is recorded. A master sees his own
+    // mirror; the owner that of the master he records for.
+    if (action === 'mirrorScans') {
+      let masterId = myMasterId;
+      if (isAdmin && payload.master) {
+        const picked = await sb.from('masters').select('id').eq('name', String(payload.master)).maybeSingle();
+        if (picked.error) return json({ error: picked.error.message }, 500);
+        masterId = picked.data ? Number(picked.data.id) : null;
+      }
+      if (!masterId) return json({ scans: [] });
+      const since = new Date(Date.now() - MIRROR_SCAN_HOURS * 60 * 60 * 1000).toISOString();
+      const { data, error } = await sb.from('client_scans')
+        .select(`id, scanned_at, client:clients(${CLIENT_COLUMNS})`)
+        .eq('master_id', masterId)
+        .is('used_at', null)
+        .gte('scanned_at', since);
+      if (error) return json({ error: error.message }, 500);
+      const scans = await Promise.all(latestScanPerClient(data).map(async (row: { id: number; scanned_at: string; client: ClientRow }) => {
+        const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: row.client.id });
+        return {
+          id: row.id,
+          scanned_at: row.scanned_at,
+          client: clientForCaller({ ...row.client, visit_count: visits.data ?? 0 }, fullPhones),
+        };
+      }));
+      return json({ scans });
+    }
+
     if (action === 'searchClients') {
       const query = String(payload.query ?? '').trim().slice(0, 60);
       if (query.length < 2) return json({ clients: [] });
@@ -1104,6 +1134,15 @@ Deno.serve(async (req) => {
         }
       }
       if (error) return json({ error: error.message }, 500);
+
+      // His scan at the mirror has done its work: it leaves every master's list.
+      if (clientId) {
+        const used = await sb.from('client_scans')
+          .update({ used_at: new Date().toISOString() })
+          .eq('client_id', clientId)
+          .is('used_at', null);
+        if (used.error) console.error('[maestro-api] scan not cleared', used.error.message);
+      }
 
       if (appointmentId !== null) {
         const closed = await sb.rpc('maestro_complete_appointment_for_visit', {
