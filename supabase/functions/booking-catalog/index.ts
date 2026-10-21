@@ -1,6 +1,6 @@
 // GET /booking-catalog — the salon, its services and the masters a client can
 // book online (Maestro-Booking/docs/API_CONTRACT.md §1). No personal data.
-import { allowRead, answer, bookingSettings, db, fail, preflight } from '../_shared/bookingHttp.ts';
+import { allowRead, answer, bookingSettings, callerHash, db, fail, preflight } from '../_shared/bookingHttp.ts';
 
 /** masters.work_photos → only well-formed entries, in their order. */
 function workPhotos(value: unknown) {
@@ -50,6 +50,9 @@ Deno.serve(async (request) => {
       // Clients' ratings (owner's decisions of 2026-10-21): the rating once
       // three visits are rated, and the words the owner approved.
       db.rpc('maestro_public_reviews'),
+      // The page opened: one visitor a day per address, for the owner's count
+      // (the salted hash only). Its failure costs the page nothing.
+      callerHash(request).then((ipHash) => db.rpc('maestro_site_visit', { p_ip_hash: ipHash })),
     ]);
     for (const result of [categories, services, masters, rated]) if (result.error) throw result.error;
     const ratingOf = new Map((rated.data ?? []).map((row: { master_id: number }) => [Number(row.master_id), row]));

@@ -22,6 +22,7 @@ const PARTNER_ACTIONS = new Set([
   'setMasterDayOff',
   'moveBooking',
   'setLanguage',
+  'siteStats',
 ]);
 
 export function partnerMayCall(action) {

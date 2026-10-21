@@ -4847,6 +4847,33 @@ label {
   flex: 0 0 auto;
 }
 
+/* The booking page on «Главная»: three rows, three windows. */
+.site-table {
+  display: grid;
+  grid-template-columns: 1fr repeat(3, minmax(56px, auto));
+  gap: 8px 14px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.site-table strong {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.site-table span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.site-table b {
+  font-size: 17px;
+  font-weight: 800;
+  text-align: right;
+}
+
 /* Clients' ratings of their visits: the owner's «Отзывы», a master's own. */
 .review-ratings {
   display: grid;

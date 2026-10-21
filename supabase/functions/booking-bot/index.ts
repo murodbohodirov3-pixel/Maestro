@@ -418,7 +418,12 @@ async function handleUpdate(bot: Bot, update: Record<string, any>) {
       if (waiting.data) return reviewWords(message.chat.id, String(message.from.id), message.text, fallbackLang);
     }
   }
-  return send(bot, message.chat.id, botText(fallbackLang).help(SITE));
+  return send(bot, message.chat.id, botText(fallbackLang).help(SITE), { reply_markup: bookKeyboard(fallbackLang) });
+}
+
+// «Записаться» under the greeting opens the booking page.
+function bookKeyboard(lang: string) {
+  return { inline_keyboard: [[{ text: botText(lang).bookButton, url: SITE }]] };
 }
 
 // ------------------------------------------------- the QR at the mirror
@@ -761,6 +766,11 @@ async function handleService(action: string, input: Record<string, unknown>) {
       const words = CLIENT_BOT_PROFILE[lang];
       results.push(await telegram('client', 'setMyDescription', { description: words.description, language_code: code }));
       results.push(await telegram('client', 'setMyShortDescription', { short_description: words.short, language_code: code }));
+      // The menu's one command: «/start — Записаться», which answers with the button.
+      results.push(await telegram('client', 'setMyCommands', {
+        commands: [{ command: 'start', description: botText(lang).startCommand }],
+        language_code: code,
+      }));
     }
     return reply({ ok: results.every((result) => result.ok), refused: results.filter((result) => !result.ok).map((result) => result.description) });
   }

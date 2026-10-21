@@ -1189,6 +1189,47 @@ function MasterSheet({ data, master, onClose }) {
   );
 }
 
+// The booking page, day by day (owner's request of 2026-10-21): who opened
+// it, who chose a time and went on to Telegram, who confirmed there. Nothing
+// shows until the counter has a day to tell.
+const SITE_ROWS = [
+  ['visitors', 'Открыли сайт'],
+  ['started', 'Выбрали время'],
+  ['booked', 'Записались'],
+];
+
+function SiteCard() {
+  const [days, setDays] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    callLegacyApi('siteStats', {})
+      .then((result) => { if (alive) setDays(result?.days || []); })
+      .catch(() => { if (alive) setDays([]); });
+    return () => { alive = false; };
+  }, []);
+  if (!days || !days.some((day) => Number(day.visitors) || Number(day.started))) return null;
+  const sum = (rows, key) => rows.reduce((total, row) => total + (Number(row[key]) || 0), 0);
+  const windows = [['Сегодня', days.slice(-1)], ['7 дней', days.slice(-7)], ['30 дней', days]];
+  const visitors = sum(days, 'visitors');
+  const booked = sum(days, 'booked');
+  return (
+    <div className="card wide site-card">
+      <h2>Сайт записи</h2>
+      <div className="site-table">
+        <span />
+        {windows.map(([label]) => <strong key={label}>{label}</strong>)}
+        {SITE_ROWS.flatMap(([key, label]) => [
+          <span key={key}>{label}</span>,
+          ...windows.map(([window, rows]) => <b key={`${key}:${window}`}>{sum(rows, key)}</b>),
+        ])}
+      </div>
+      {visitors ? (
+        <p className="hint">{`За 30 дней записались ${Math.round((booked / visitors) * 100)}% открывших`}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function OverviewView({ data, reload, setError, setView }) {
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
@@ -1339,6 +1380,7 @@ function OverviewView({ data, reload, setError, setView }) {
         </p>
       ) : null}
 
+      <SiteCard />
       <SignalsCard result={signals} />
       <MastersOfMonth
         rows={masterRows}

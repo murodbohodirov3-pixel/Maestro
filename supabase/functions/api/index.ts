@@ -1045,6 +1045,15 @@ Deno.serve(async (req) => {
       return json(data);
     }
 
+    // The booking page, day by day (owner's request of 2026-10-21): who opened
+    // it, who chose a time and went on to Telegram, who confirmed there.
+    if (action === 'siteStats') {
+      if (!isAdmin && !isPartner) return json({ error: 'forbidden' }, 403);
+      const { data, error } = await sb.rpc('maestro_site_stats', { p_days: 30 });
+      if (error) return json({ error: error.message }, 500);
+      return json({ days: data ?? [] });
+    }
+
     if (action === 'getClient') {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
       const clientId = String(payload.client_id ?? '');
