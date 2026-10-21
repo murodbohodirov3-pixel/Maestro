@@ -4818,6 +4818,21 @@ label {
   flex: none;
 }
 
+/* A card from before the two parts: its surname, next to the chosen card. */
+.client-surname {
+  display: flex;
+  gap: 8px;
+}
+
+.client-surname input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.client-surname .btn {
+  flex: none;
+}
+
 .client-known {
   display: flex;
   align-items: center;

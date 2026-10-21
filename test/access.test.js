@@ -29,7 +29,7 @@ test('the api source still names the actions this guard is checked against', () 
 
 test('a partner reads, takes bookings and sets days off, nothing else, including actions added later', () => {
   assert.equal(PARTNER_ROLE, 'partner');
-  const allowed = ['load', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'setMasterDayOff', 'moveBooking', 'setLanguage'];
+  const allowed = ['load', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'completeClientName', 'setMasterDayOff', 'moveBooking', 'setLanguage'];
   for (const action of allowed) assert.equal(partnerMayCall(action), true, action);
   const refused = apiActions.filter((action) => ![...allowed, 'telegramOAuth'].includes(action));
   assert.ok(refused.length >= 20);
@@ -75,7 +75,7 @@ test('every total a partner sees is the same sum the owner sees', () => {
 
 test('the administrator sells goods and keeps the bookings, nothing else', () => {
   assert.equal(ADMIN_ROLE, 'admin');
-  const allowed = ['load', 'addProductSale', 'delStockEntry', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'moveBooking', 'setLanguage'];
+  const allowed = ['load', 'addProductSale', 'delStockEntry', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'completeClientName', 'moveBooking', 'setLanguage'];
   for (const action of allowed) assert.equal(adminMayCall(action), true, action);
   const refused = apiActions.filter((action) => ![...allowed, 'telegramOAuth'].includes(action));
   assert.ok(refused.length >= 25);

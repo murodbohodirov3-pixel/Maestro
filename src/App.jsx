@@ -57,6 +57,7 @@ import {
 import { pluralRu } from './utils/plural.js';
 import { applyLanguage, registerNames, tr } from './i18n/index.js';
 import { masterWeek, weekOf, weekPayouts, weekStartOf } from './utils/payouts.js';
+import { checkClientName, checkLastName, NAME_PART_MAX } from '../supabase/functions/_shared/clientName.js';
 import {
   blockPosition,
   canRecordVisit,
@@ -310,6 +311,9 @@ const ACTION_ERROR_TEXT = {
   not_in_list: 'Ваш доступ отключён. Обратитесь к владельцу.',
   invalid_fine: 'Проверьте сумму штрафа.',
   invalid_client_name: 'Введите имя клиента.',
+  invalid_first_name: 'Введите имя клиента буквами.',
+  invalid_last_name: 'Введите фамилию клиента буквами.',
+  client_surname_required: 'Допишите фамилию клиента.',
   invalid_phone: 'Проверьте номер: например, 90 123 45 67.',
   invalid_merge: 'Эти карточки нельзя объединить.',
   client_not_found: 'Карточка не найдена — обновите экран.',
@@ -1402,14 +1406,45 @@ function clientVisitsLine(client) {
   return `${client.visit_count} ${pluralRu(client.visit_count, 'визит', 'визита', 'визитов')}${last}${master}`;
 }
 
+// A card made before the two parts (2026-10-21) has a name and no surname:
+// whoever records the client's visit or booking adds it, once.
+function SurnameField({ client, onDone, setError }) {
+  const [lastName, setLastName] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const checked = checkLastName(lastName);
+    if (!checked.ok) return setError(ACTION_ERROR_TEXT[checked.error]);
+    setSaving(true);
+    setError('');
+    try {
+      const result = await callLegacyApi('completeClientName', { client_id: client.id, last_name: checked.last_name });
+      haptic('success');
+      onDone(result.client);
+    } catch (error) {
+      setError(actionErrorText(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="client-surname">
+      <input aria-label="Фамилия" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Фамилия" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+      <button className="btn" type="button" disabled={saving} onClick={save}>{saving ? 'Сохраняем…' : 'Сохранить'}</button>
+    </div>
+  );
+}
+
 // One number, one card (owner's decision of 2026-10-16). A number typed on a
 // new card is looked up as soon as it is whole, and the card already in the
 // base is offered instead. «Был у нас раньше?» is asked only on a new card: a
-// client picked from the base is new or returning by his history.
+// client picked from the base is new or returning by his history. A new card
+// takes a name and a surname, both (owner's decision of 2026-10-21).
 function ClientPicker({ client, onChange, setError }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState({ full_name: '', phone: '', known_before: null });
+  const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '', known_before: null });
   const [saving, setSaving] = useState(false);
   const { results, searching } = useClientSearch(query, setError);
   const phoneDigits = draft.phone.replace(/\D/g, '');
@@ -1426,18 +1461,22 @@ function ClientPicker({ client, onChange, setError }) {
   function startNew() {
     const typed = query.trim();
     const looksLikePhone = /^[0-9 +()-]+$/.test(typed);
-    setDraft({ full_name: looksLikePhone ? '' : typed, phone: looksLikePhone ? typed : '', known_before: null });
+    // What was typed in the search: the first word is the name, the rest the surname.
+    const [firstWord = '', ...rest] = looksLikePhone ? [] : typed.split(/\s+/);
+    setDraft({ first_name: firstWord, last_name: rest.join(' '), phone: looksLikePhone ? typed : '', known_before: null });
     setCreating(true);
   }
 
   async function createCard() {
-    if (!draft.full_name.trim()) return setError('Введите имя клиента.');
+    const name = checkClientName(draft.first_name, draft.last_name);
+    if (!name.ok) return setError(ACTION_ERROR_TEXT[name.error]);
     if (draft.known_before === null) return setError('Отметьте, был ли клиент у нас раньше.');
     setSaving(true);
     setError('');
     try {
       const result = await callLegacyApi('addClient', {
-        full_name: draft.full_name.trim(),
+        first_name: name.first_name,
+        last_name: name.last_name,
         phone: draft.phone.trim() || null,
         known_before: draft.known_before,
       });
@@ -1461,10 +1500,11 @@ function ClientPicker({ client, onChange, setError }) {
         <div className="picker-selected">
           <span>
             <strong>{client.full_name}</strong>
-            <small>{client.phone || 'без номера'} · {clientVisitsLine(client)}</small>
+            <small>{client.phone || 'без номера'} · {clientVisitsLine(client)}{client.needs_surname ? ' · нет фамилии' : ''}</small>
           </span>
           <button className="link-button" type="button" onClick={() => onChange(null)}>Изменить</button>
         </div>
+        {client.needs_surname ? <SurnameField key={client.id} client={client} onDone={onChange} setError={setError} /> : null}
       </div>
     );
   }
@@ -1472,7 +1512,8 @@ function ClientPicker({ client, onChange, setError }) {
   if (creating) {
     return (
       <div className="client-new">
-        <input maxLength={120} placeholder="Имя" value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} />
+        <input aria-label="Имя" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Имя" value={draft.first_name} onChange={(event) => setDraft({ ...draft, first_name: event.target.value })} />
+        <input aria-label="Фамилия" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Фамилия" value={draft.last_name} onChange={(event) => setDraft({ ...draft, last_name: event.target.value })} />
         <input inputMode="tel" maxLength={20} placeholder="Телефон, например 90 123 45 67" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
         {!draft.phone.trim() ? <span className="client-no-phone">Без номера — владелец получит уведомление</span> : null}
         {existing ? (
@@ -1543,7 +1584,7 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
   const [currentId, setCurrentId] = useState(clientId);
   const [card, setCard] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ full_name: '', phone: '' });
+  const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '' });
   const [conflict, setConflict] = useState(null);
   const [message, setMessage] = useState('');
   const { run, busy } = useAction(setError, setMessage);
@@ -1569,19 +1610,31 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
   }, [currentId, onClose, setError]);
 
   function startEdit() {
-    setDraft({ full_name: card?.client?.full_name || '', phone: card?.client?.phone || '' });
+    const current = card?.client;
+    // A card from before the two parts: its whole name goes into «Имя».
+    setDraft({
+      first_name: current?.first_name || current?.full_name || '',
+      last_name: current?.last_name || '',
+      phone: current?.phone || '',
+    });
     setConflict(null);
     setMessage('');
     setEditing(true);
   }
 
   async function saveEdit() {
-    if (!draft.full_name.trim()) return setError('Введите имя клиента.');
+    const name = checkClientName(draft.first_name, draft.last_name);
+    if (!name.ok) return setError(ACTION_ERROR_TEXT[name.error]);
     setConflict(null);
     let refused = null;
     const ok = await run(async () => {
       try {
-        await callLegacyApi('updateClient', { client_id: currentId, full_name: draft.full_name.trim(), phone: draft.phone.trim() || null });
+        await callLegacyApi('updateClient', {
+          client_id: currentId,
+          first_name: name.first_name,
+          last_name: name.last_name,
+          phone: draft.phone.trim() || null,
+        });
       } catch (error) {
         if (error.details?.error === 'client_exists') {
           refused = error.details;
@@ -1633,7 +1686,7 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
           <div>
             <strong>{client?.full_name || 'Клиент'}</strong>
             <small>
-              {client ? `${client.phone || 'без номера'} · ${visits.length} ${pluralRu(visits.length, 'визит', 'визита', 'визитов')}${missed.length ? ` · неявок и отмен ${missed.length}` : ''}` : 'Загружаем…'}
+              {client ? `${client.phone || 'без номера'} · ${visits.length} ${pluralRu(visits.length, 'визит', 'визита', 'визитов')}${missed.length ? ` · неявок и отмен ${missed.length}` : ''}${client.last_name ? '' : ' · нет фамилии'}` : 'Загружаем…'}
             </small>
           </div>
           <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
@@ -1642,7 +1695,8 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
           <>
             {editing ? (
               <div className="client-new client-edit">
-                <input aria-label="Имя" maxLength={120} placeholder="Имя" value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} />
+                <input aria-label="Имя" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Имя" value={draft.first_name} onChange={(event) => setDraft({ ...draft, first_name: event.target.value })} />
+                <input aria-label="Фамилия" autoCapitalize="words" maxLength={NAME_PART_MAX} placeholder="Фамилия" value={draft.last_name} onChange={(event) => setDraft({ ...draft, last_name: event.target.value })} />
                 <input aria-label="Телефон" inputMode="tel" maxLength={20} placeholder="Телефон" value={draft.phone} onChange={(event) => setDraft({ ...draft, phone: event.target.value })} />
                 {conflict ? (
                   <div className="client-exists">
@@ -1752,6 +1806,7 @@ function clientFromBooking(appointment) {
     phone: appointment.client_phone,
     visit_count: Number(appointment.client_visit_count) || 0,
     known_before: appointment.client_known_before === true,
+    needs_surname: appointment.client_needs_surname === true,
   };
 }
 
@@ -2024,6 +2079,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
     if (!serviceIds.length) return setError('Выберите услугу.');
     if (!startsAt) return setError('Выберите время.');
     if (!client) return setError('Выберите клиента или создайте карточку.');
+    if (client.needs_surname) return setError(ACTION_ERROR_TEXT.client_surname_required);
     const ok = await run(
       () => callLegacyApi('addBooking', {
         master_id: Number(masterId),
@@ -2387,6 +2443,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     }
     if (!masterName) return setError('Сначала выберите мастера.');
     if (!visitClient) return setError('Выберите клиента или создайте карточку.');
+    if (visitClient.needs_surname) return setError(ACTION_ERROR_TEXT.client_surname_required);
     if (data.role === 'master' && !visitBooking) {
       const waiting = data.appointments
         .filter((appointment) => String(appointment.master_id) === String(masterProfile?.id))

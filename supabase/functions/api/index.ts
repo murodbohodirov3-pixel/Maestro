@@ -4,6 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.2';
 import { auditedDeleteResponse } from './deleteAudit.js';
 import { captureEdgeException } from '../_shared/sentry.ts';
 import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
+import { checkClientName, checkLastName } from '../_shared/clientName.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -113,7 +114,7 @@ async function fetchAppointments(filters: Record<string, string | number> = {}, 
   const toDate = `${tashkentDate(180)}T00:00:00+05:00`;
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    let query = sb.from('appointments').select('*, client:clients(lifecycle_status, known_before)');
+    let query = sb.from('appointments').select('*, client:clients(lifecycle_status, known_before, last_name)');
     for (const [column, value] of Object.entries(filters)) query = query.eq(column, value);
     const { data, error } = await query
       .gte('starts_at', fromDate)
@@ -136,6 +137,7 @@ async function fetchAppointments(filters: Record<string, string | number> = {}, 
         client_phone: maskPhones ? maskPhoneForStaff(appointment.client_phone as string | null) : appointment.client_phone,
         client_is_blocked: client?.lifecycle_status === 'blocked',
         client_known_before: client?.known_before === true,
+        client_needs_surname: Boolean(client) && !client.last_name,
         client_visit_count: 0,
       };
     }));
@@ -408,7 +410,16 @@ function formatSum(value: number) {
   return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-type ClientRow = { id: string; full_name: string; phone_e164: string | null; known_before: boolean; lifecycle_status?: string };
+type ClientRow = {
+  id: string;
+  full_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone_e164: string | null;
+  known_before: boolean;
+  lifecycle_status?: string;
+};
+const CLIENT_COLUMNS = 'id, full_name, first_name, last_name, phone_e164, known_before, lifecycle_status';
 
 // A client as the caller may see him: the number whole for the owner, the
 // administrator and the partner, masked for a master.
@@ -416,6 +427,10 @@ function clientForCaller(client: ClientRow & { visit_count?: number; last_visit?
   return {
     id: client.id,
     full_name: client.full_name,
+    first_name: client.first_name ?? null,
+    last_name: client.last_name ?? null,
+    // A card from before the two parts (2026-10-21): the next visit adds it.
+    needs_surname: !client.last_name,
     phone: fullPhone ? client.phone_e164 : maskPhoneForStaff(client.phone_e164),
     has_phone: Boolean(client.phone_e164),
     known_before: client.known_before === true,
@@ -739,7 +754,7 @@ Deno.serve(async (req) => {
     // number whole and reads a card's history.
     const isOwnerCaller = appUserResult.data.role === 'owner';
     const fullPhones = seesFullPhones(appUserResult.data.role);
-    if (['searchClients', 'addClient'].includes(action) && !(isOwnerCaller || myMaster || isFrontDesk || isPartner)) {
+    if (['searchClients', 'addClient', 'completeClientName'].includes(action) && !(isOwnerCaller || myMaster || isFrontDesk || isPartner)) {
       return json({ error: 'forbidden' }, 403);
     }
 
@@ -751,9 +766,22 @@ Deno.serve(async (req) => {
       return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, fullPhones)) });
     }
 
+    // An app opened before the two fields still sends one full_name for a
+    // while: its first word is the name and the rest the surname.
+    const nameParts = (data: Record<string, unknown>) => {
+      if (data.first_name != null || data.last_name != null || data.full_name == null) return data;
+      const [first = '', ...rest] = String(data.full_name).trim().split(/\s+/);
+      return { first_name: first, last_name: rest.join(' ') };
+    };
+
     if (action === 'addClient') {
+      // A name and a surname, both (owner's decision of 2026-10-21).
+      const typed = nameParts(payload);
+      const name = checkClientName(typed.first_name, typed.last_name);
+      if (!name.ok) return json({ error: name.error }, 400);
       const { data, error } = await sb.rpc('maestro_add_client_card', {
-        p_full_name: String(payload.full_name ?? ''),
+        p_first_name: name.first_name,
+        p_last_name: name.last_name,
         p_phone: payload.phone ? String(payload.phone) : null,
         p_known_before: payload.known_before === true,
         p_actor_user_id: appUserResult.data.id,
@@ -762,7 +790,7 @@ Deno.serve(async (req) => {
       if (!data?.ok) {
         if (data?.error === 'client_exists' && data.client_id) {
           // The number is already in the base: offer that card instead.
-          const existing = await sb.from('clients').select('id, full_name, phone_e164, known_before, lifecycle_status')
+          const existing = await sb.from('clients').select(CLIENT_COLUMNS)
             .eq('id', data.client_id).maybeSingle();
           const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: data.client_id });
           return json({
@@ -772,10 +800,30 @@ Deno.serve(async (req) => {
         }
         return json({ error: data?.error || 'invalid_client' }, 400);
       }
-      const created = await sb.from('clients').select('id, full_name, phone_e164, known_before, lifecycle_status')
+      const created = await sb.from('clients').select(CLIENT_COLUMNS)
         .eq('id', data.client_id).maybeSingle();
       if (created.error || !created.data) return json({ error: created.error?.message || 'client_not_found' }, 500);
       return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, fullPhones) });
+    }
+
+    // A card made before the two parts gets its surname from whoever records
+    // the client's visit or booking; its name stays as it is.
+    if (action === 'completeClientName') {
+      const clientId = String(payload.client_id ?? '');
+      if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
+      const surname = checkLastName(payload.last_name);
+      if (!surname.ok) return json({ error: surname.error }, 400);
+      const { data, error } = await sb.rpc('maestro_complete_client_name', {
+        p_client_id: clientId,
+        p_last_name: surname.last_name,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!data?.ok) return json(data ?? { error: 'invalid_client' }, data?.error === 'client_not_found' ? 404 : 400);
+      const completed = await sb.from('clients').select(CLIENT_COLUMNS).eq('id', clientId).maybeSingle();
+      if (completed.error || !completed.data) return json({ error: completed.error?.message || 'client_not_found' }, 500);
+      const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
+      return json({ ok: true, client: clientForCaller({ ...completed.data, visit_count: visits.data ?? 0 }, fullPhones) });
     }
 
     // Bookings taken by phone or Telegram: the owner, the administrator and
@@ -826,6 +874,12 @@ Deno.serve(async (req) => {
       const serviceIds = Array.isArray(payload.service_ids)
         ? payload.service_ids.map((value: unknown) => String(value)).slice(0, 10)
         : [];
+      // The client of a booking has a surname too (owner's decision of 2026-10-21).
+      if (UUID_PATTERN.test(String(payload.client_id ?? ''))) {
+        const booked = await sb.from('clients').select('last_name').eq('id', String(payload.client_id)).maybeSingle();
+        if (booked.error) return json({ error: booked.error.message }, 500);
+        if (booked.data && !booked.data.last_name) return json({ error: 'client_surname_required' }, 409);
+      }
       const { data, error } = await sb.rpc('maestro_book_appointment', {
         p_master_id: Number(payload.master_id),
         p_service_ids: serviceIds,
@@ -879,9 +933,13 @@ Deno.serve(async (req) => {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
       const clientId = String(payload.client_id ?? '');
       if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
+      const typed = nameParts(payload);
+      const name = checkClientName(typed.first_name, typed.last_name);
+      if (!name.ok) return json({ error: name.error }, 400);
       const { data, error } = await sb.rpc('maestro_update_client_card', {
         p_client_id: clientId,
-        p_full_name: String(payload.full_name ?? ''),
+        p_first_name: name.first_name,
+        p_last_name: name.last_name,
         p_phone: payload.phone ? String(payload.phone) : null,
         p_actor_user_id: appUserResult.data.id,
       });
@@ -948,12 +1006,13 @@ Deno.serve(async (req) => {
       const clientId = String(payload.client_id ?? '');
       if (!UUID_PATTERN.test(clientId)) return json({ error: 'client_required' }, 400);
       const clientRecord = await sb.from('clients')
-        .select('id, full_name, phone_e164, known_before, lifecycle_status')
+        .select(CLIENT_COLUMNS)
         .eq('id', clientId)
         .maybeSingle();
       if (clientRecord.error) return json({ error: clientRecord.error.message }, 500);
       if (!clientRecord.data) return json({ error: 'client_not_found' }, 404);
       if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
+      if (!clientRecord.data.last_name) return json({ error: 'client_surname_required' }, 409);
       const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
       if (visits.error) return json({ error: visits.error.message }, 500);
       // New or returning is the base's to say, never the master's: «Был у нас

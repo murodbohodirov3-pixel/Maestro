@@ -214,6 +214,8 @@ export const PHRASES = {
   'ещё не был': 'hali kelmagan',
   'без номера': 'raqamsiz',
   'заблокирован': 'bloklangan',
+  'нет фамилии': 'familiyasi yoʻq',
+  'Фамилия': 'Familiya',
 
   // Attendance
   'Табель': 'Tabel',
@@ -442,6 +444,9 @@ export const PHRASES = {
   'Выберите клиента или создайте карточку.': 'Mijozni tanlang yoki karta yarating.',
   'Отметьте, был ли клиент у нас раньше.': 'Mijoz avval bizda boʻlganmi — belgilang.',
   'Введите имя клиента.': 'Mijoz ismini kiriting.',
+  'Введите имя клиента буквами.': 'Mijoz ismini harflar bilan kiriting.',
+  'Введите фамилию клиента буквами.': 'Mijoz familiyasini harflar bilan kiriting.',
+  'Допишите фамилию клиента.': 'Mijozning familiyasini yozing.',
   'Введите сумму.': 'Summani kiriting.',
   'Введите сумму штрафа.': 'Jarima summasini kiriting.',
   'Выберите причину штрафа.': 'Jarima sababini tanlang.',

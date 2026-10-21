@@ -18,6 +18,7 @@ const PARTNER_ACTIONS = new Set([
   'setAppointmentOutcome',
   'searchClients',
   'addClient',
+  'completeClientName',
   'setMasterDayOff',
   'moveBooking',
   'setLanguage',
@@ -43,6 +44,7 @@ const ADMIN_ACTIONS = new Set([
   'setAppointmentOutcome',
   'searchClients',
   'addClient',
+  'completeClientName',
   'moveBooking',
   'setLanguage',
 ]);

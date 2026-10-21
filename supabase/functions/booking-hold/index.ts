@@ -2,6 +2,7 @@
 // confirms in Telegram (Maestro-Booking/docs/API_CONTRACT.md §3). The phone is
 // not asked here: the bot takes it from the client's own Telegram contact.
 import { bookingForPage, isZonedMoment, telegramStartUrl } from '../_shared/bookingCore.js';
+import { checkClientName } from '../_shared/clientName.js';
 import {
   answer,
   callerHash,
@@ -27,12 +28,17 @@ Deno.serve(async (request) => {
       : [];
     const masterId = input.master_id == null ? null : Number(input.master_id);
     const startsAt = String(input.starts_at ?? '');
-    const clientName = String(input.client_name ?? '').trim();
+    // The name in two parts (owner's decision of 2026-10-21); client_name alone
+    // still comes from a page loaded before the change.
+    const hasParts = input.client_first_name != null || input.client_last_name != null;
+    const name = hasParts ? checkClientName(input.client_first_name, input.client_last_name) : null;
+    const clientName = name?.ok ? `${name.first_name} ${name.last_name}` : String(input.client_name ?? '').trim();
     const comment = String(input.comment ?? '').trim();
     if (!serviceIds.length || serviceIds.length > 10 || serviceIds.some((id) => id.length > 80)
       || (masterId !== null && (!Number.isSafeInteger(masterId) || masterId <= 0))
       || !isZonedMoment(startsAt)
-      || !clientName || clientName.length > 60 || comment.length > 300) {
+      || (name && !name.ok)
+      || !clientName || clientName.length > 81 || comment.length > 300) {
       return fail(request, 'invalid_request');
     }
 
@@ -43,6 +49,8 @@ Deno.serve(async (request) => {
       p_master_id: masterId,
       p_starts_at: startsAt,
       p_client_name: clientName,
+      p_client_first_name: name?.ok ? name.first_name : null,
+      p_client_last_name: name?.ok ? name.last_name : null,
       p_comment: comment,
       p_lang: input.lang === 'uz' ? 'uz' : 'ru',
       p_ip_hash: await callerHash(request),
