@@ -228,6 +228,44 @@ export function botText(lang) {
   return TEXT[langOf(lang)];
 }
 
+// Two bots answer in booking-bot (owner's decision of 2026-10-21): clients
+// confirm their site bookings with @MaestroBarberia_bot, and @Maestro_uzbot
+// stays with the app and the staff. A webhook call says which bot it is by its
+// secret. Telegram lets a bot write only to whoever started it, so a booking
+// hears again from the bot it was confirmed with; those from before, from
+// @Maestro_uzbot.
+export const BOOKING_BOTS = ['client', 'staff'];
+
+export function secretsMatch(actual, expected) {
+  if (!actual || !expected || actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < actual.length; index += 1) {
+    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+export function webhookBot(header, secrets) {
+  return BOOKING_BOTS.find((bot) => secretsMatch(header, secrets[bot])) || null;
+}
+
+export function bookingBotOf(value) {
+  return value === 'client' ? 'client' : 'staff';
+}
+
+// What a client reads of @MaestroBarberia_bot before pressing «Старт», and in
+// its profile.
+export const CLIENT_BOT_PROFILE = {
+  ru: {
+    description: 'Maestro Barberia.\n\nЗдесь вы подтверждаете запись с сайта, получаете напоминание о визите и при необходимости отменяете запись одной кнопкой.',
+    short: 'Записи в Maestro Barberia: подтверждение, напоминания и отмена.',
+  },
+  uz: {
+    description: 'Maestro Barberia.\n\nBu yerda saytdagi yozilishingizni tasdiqlaysiz, tashrif haqida eslatma olasiz va kerak bo\'lsa yozilishni bitta tugma bilan bekor qilasiz.',
+    short: 'Maestro Barberia\'ga yozilish: tasdiqlash, eslatmalar va bekor qilish.',
+  },
+};
+
 // The lines every bot message about a booking repeats.
 export function bookingLines({ startsAt, masterName, serviceName, price }, lang) {
   const text = botText(lang);

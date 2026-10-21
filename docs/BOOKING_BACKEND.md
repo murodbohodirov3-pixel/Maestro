@@ -17,7 +17,7 @@
 - Ограничения частоты по IP. Хранится только солёный хеш адреса.
   - Чтение (каталог, слоты, статус, отказ): 600 запросов за 10 минут.
   - Удержание: не больше 3 активных и 10 попыток в час.
-- Бот подтверждения: `@Maestro_uzbot`. Ссылка из `booking-hold` выглядит так: `https://t.me/Maestro_uzbot?start=b_<token>`.
+- Бот подтверждения — `@MaestroBarberia_bot`, клиентский (с 21.10.2026; до того был `@Maestro_uzbot`). Ссылка из `booking-hold` выглядит так: `https://t.me/MaestroBarberia_bot?start=b_<token>`. Имя бота берётся из `BOOKING_BOT_USERNAME`: вернуть прежнего — поставить там `Maestro_uzbot`.
 
 ### Пример ответа `booking-hold`
 
@@ -35,7 +35,7 @@
     "total_price_uzs": 150000,
     "total_duration_minutes": 60
   },
-  "telegram_url": "https://t.me/Maestro_uzbot?start=b_q8Xf2kP0aZq8Xf2kP0aZq8Xf2kP0aZq8"
+  "telegram_url": "https://t.me/MaestroBarberia_bot?start=b_q8Xf2kP0aZq8Xf2kP0aZq8Xf2kP0aZq8"
 }
 ```
 
@@ -52,7 +52,10 @@
 
 1. **Удержание.** `booking-hold` вызывает `maestro_hold_booking`. Та создаёт запись `appointments` со статусом `pending`, источником `web` и `hold_expires_at` через 10 минут. Время сразу защищено ограничением исключения по мастеру. При «любом мастере» берётся тот, у кого в этот день меньше записей.
 2. **Токен.** В базе только его SHA-256 (`booking_token_hash`).
-3. **Бот** — функция `booking-bot`, вебхук с секретом `X-Telegram-Bot-Api-Secret-Token`.
+3. **Бот** — функция `booking-bot`, вебхук двух ботов, у каждого свой секрет в `X-Telegram-Bot-Api-Secret-Token`. По секрету функция узнаёт, какой бот пишет, и отвечает клиенту от него же.
+   - `@MaestroBarberia_bot` — клиентский: на него ведёт сайт.
+   - `@Maestro_uzbot` — приложение и сотрудники. Всё, что слышат сотрудники (о записях, «закройте запись», «Не пришёл»), идёт от него. Ссылки `/start b_`, выданные до 21.10, он тоже принимает.
+   - Запись помнит, через какого бота её подтвердили (`appointments.booking_bot`: `client` или `staff`, пусто — до 21.10, значит `staff`). Напоминания и «Отменить запись» идут от того же бота: писать Telegram позволяет только тем, кто нажал у бота «Старт».
    - `/start b_<token>` привязывает удержание к этому Telegram-пользователю: `booking_tg_user_id`, функция `maestro_booking_for_bot`.
    - Если номер этого пользователя уже известен, хватает одной кнопки «Подтвердить». Иначе — кнопка «Поделиться номером».
    - Контакт принимается, только если `contact.user_id` совпадает с `from.id`.
@@ -68,8 +71,10 @@
 | Имя | Что это |
 |---|---|
 | `BOT_TOKEN` | Токен `@Maestro_uzbot`, уже есть: на нём вход в приложение |
-| `BOOKING_BOT_USERNAME` | `Maestro_uzbot` |
-| `BOOKING_BOT_WEBHOOK_SECRET` | Секрет вебхука, случайная строка |
+| `CLIENT_BOT_TOKEN` | Токен `@MaestroBarberia_bot`; вносит владелец |
+| `BOOKING_BOT_USERNAME` | `MaestroBarberia_bot` |
+| `BOOKING_BOT_WEBHOOK_SECRET` | Секрет вебхука `@Maestro_uzbot`, случайная строка |
+| `CLIENT_BOT_WEBHOOK_SECRET` | Секрет вебхука `@MaestroBarberia_bot`, другая случайная строка |
 | `BOOKING_CRON_SECRET` | Секрет для pg_cron и служебных действий; то же значение в Vault под именем `booking_cron_secret` |
 | `BOOKING_IP_SALT` | Соль для хеша IP |
 | `BOOKING_SITE_ORIGINS` | `https://maestro-booking.vercel.app,http://localhost:5181` |
@@ -77,7 +82,9 @@
 
 ## Служебные действия бота
 
-Это `POST /booking-bot` с заголовком `x-booking-cron-secret`:
+Это `POST /booking-bot` с заголовком `x-booking-cron-secret`. Где нужен бот, добавляют `"bot": "client"` (без него — `@Maestro_uzbot`):
+- `{"action":"bot_info"}` — имя бота, на чей токен смотрит функция;
 - `{"action":"webhook_info"}` — какой вебхук сейчас стоит у бота;
 - `{"action":"set_webhook"}` — поставить вебхук. Чужой вебхук без `"force": true` бот не перезапишет;
+- `{"action":"set_profile","bot":"client"}` — описание клиентского бота на русском и узбекском (тексты — `CLIENT_BOT_PROFILE` в `_shared/bookingCore.js`);
 - `{"action":"reminders"}` — отправить напоминания, которым пришло время.

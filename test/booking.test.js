@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addDays,
+  bookingBotOf,
   bookingForPage,
   bookingLines,
   botText,
+  CLIENT_BOT_PROFILE,
   corsHeaders,
   formatWhen,
   groupDayTimes,
@@ -17,12 +19,14 @@ import {
   masterReminder,
   nearestByMaster,
   parseOrigins,
+  secretsMatch,
   servicesTotal,
   staffNotice,
   tashkentDate,
   tashkentIso,
   telegramStartUrl,
   TOKEN_PATTERN,
+  webhookBot,
 } from '../supabase/functions/_shared/bookingCore.js';
 
 test('moments are written in Tashkent time with +05:00, whatever the input zone', () => {
@@ -180,4 +184,30 @@ test('a staff account booking on the site is sent to the administrator, in both 
   assert.match(botText('uz').staffAccount, /administrator/);
   // Every message the bot can send exists in Uzbek too.
   assert.deepEqual(Object.keys(botText('uz')).sort(), Object.keys(botText('ru')).sort());
+});
+
+test('a webhook call is the bot whose secret it carries, and nothing without one', () => {
+  const secrets = { client: 'client-secret-aaaa', staff: 'staff-secret-bbbbb' };
+  assert.equal(webhookBot('client-secret-aaaa', secrets), 'client');
+  assert.equal(webhookBot('staff-secret-bbbbb', secrets), 'staff');
+  assert.equal(webhookBot('client-secret-aaab', secrets), null);
+  assert.equal(webhookBot(null, secrets), null);
+  // A bot whose secret is not set yet answers to nothing, not to an empty header.
+  assert.equal(webhookBot('', { client: '', staff: 'staff-secret-bbbbb' }), null);
+  assert.equal(secretsMatch('abc', 'abcd'), false);
+});
+
+test('a booking hears again from the bot it was confirmed with, an older one from @Maestro_uzbot', () => {
+  assert.equal(bookingBotOf('client'), 'client');
+  assert.equal(bookingBotOf('staff'), 'staff');
+  assert.equal(bookingBotOf(null), 'staff');
+  assert.equal(bookingBotOf(undefined), 'staff');
+});
+
+test("the clients' bot describes itself in both languages, within Telegram's limits", () => {
+  for (const lang of ['ru', 'uz']) {
+    assert.ok(CLIENT_BOT_PROFILE[lang].description.length <= 512);
+    assert.ok(CLIENT_BOT_PROFILE[lang].short.length <= 120);
+    assert.match(CLIENT_BOT_PROFILE[lang].description, /Maestro Barberia/);
+  }
 });

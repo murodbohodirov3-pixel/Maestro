@@ -1,68 +1,82 @@
 // booking-bot — the Telegram side of online booking.
 //
-// Telegram calls it as a webhook (header X-Telegram-Bot-Api-Secret-Token):
+// Two bots call it as their webhook, each with its own secret in the header
+// X-Telegram-Bot-Api-Secret-Token (owner's decision of 2026-10-21):
+// @MaestroBarberia_bot is the clients', and the site sends them there;
+// @Maestro_uzbot is the app's and the staff's, and still takes the links it
+// gave out before. Whatever a client does, the answer comes from the bot he
+// wrote to; whatever the staff hear, from @Maestro_uzbot.
 //   /start b_<token>  → the held booking, then «Поделиться номером» (or one
 //                       button if this Telegram user's number is known)
 //   contact           → only the user's own contact; confirms his latest hold
 //   c:<id> / x:<id>   → confirm with the known number / cancel
 //   p:<id>            → not that number: share another contact
-//   n:<id>            → a master marks his booking «Не пришёл»
+//   n:<id>            → a master marks his booking «Не пришёл» (staff bot only)
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
-// clients' 24 h and 2 h reminders and the masters' «закройте запись» a quarter
-// of an hour after an open booking ended; {"action":"webhook_info"} and {"action":"set_webhook"}
-// manage the webhook without the bot token ever leaving the server.
+// clients' 24 h and 2 h reminders, each through the bot its booking was
+// confirmed with, and the masters' «закройте запись» a quarter of an hour
+// after an open booking ended; {"action":"webhook_info"}, {"action":"set_webhook"},
+// {"action":"bot_info"} and {"action":"set_profile"} (with "bot": "client" or
+// "staff") look after the bots without a token ever leaving the server.
 import {
+  bookingBotOf,
   bookingLines,
   botText,
+  CLIENT_BOT_PROFILE,
   langOf,
   maskPhone,
   masterBookingNotice,
   masterReminder,
   masterText,
+  secretsMatch,
   staffNotice,
+  webhookBot,
 } from '../_shared/bookingCore.js';
 import { bookingSettings, db, tokenHash } from '../_shared/bookingHttp.ts';
 import { maskPhoneForStaff } from '../_shared/access.js';
 
-const BOT_TOKEN = Deno.env.get('BOT_TOKEN') || '';
-const WEBHOOK_SECRET = Deno.env.get('BOOKING_BOT_WEBHOOK_SECRET') || '';
+type Bot = 'client' | 'staff';
+
+const TOKENS: Record<Bot, string> = {
+  client: Deno.env.get('CLIENT_BOT_TOKEN') || '',
+  staff: Deno.env.get('BOT_TOKEN') || '',
+};
+const WEBHOOK_SECRETS: Record<Bot, string> = {
+  client: Deno.env.get('CLIENT_BOT_WEBHOOK_SECRET') || '',
+  staff: Deno.env.get('BOOKING_BOT_WEBHOOK_SECRET') || '',
+};
 const CRON_SECRET = Deno.env.get('BOOKING_CRON_SECRET') || '';
 const SITE = Deno.env.get('BOOKING_SITE_URL') || 'https://maestro-booking.vercel.app';
 const APP_URL = Deno.env.get('MAESTRO_APP_URL') || 'https://maestro-pied-two.vercel.app';
 const WEBHOOK_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function secretsMatch(actual: string | null, expected: string) {
-  if (!actual || !expected || actual.length !== expected.length) return false;
-  let difference = 0;
-  for (let index = 0; index < actual.length; index += 1) {
-    difference |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
-  }
-  return difference === 0;
-}
-
 function reply(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-async function telegram(method: string, body: Record<string, unknown>) {
+async function telegram(bot: Bot, method: string, body: Record<string, unknown>) {
+  if (!TOKENS[bot]) {
+    console.warn('[booking-bot] no token for', bot, method);
+    return { ok: false, description: 'no_token' } as { ok: boolean; description?: string; result?: unknown };
+  }
   try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    const response = await fetch(`https://api.telegram.org/bot${TOKENS[bot]}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const result = await response.json().catch(() => ({ ok: false, description: `HTTP ${response.status}` }));
-    if (!result.ok) console.warn('[booking-bot] telegram refused', method, result.description);
+    if (!result.ok) console.warn('[booking-bot] telegram refused', bot, method, result.description);
     return result as { ok: boolean; description?: string; result?: unknown };
   } catch (error) {
-    console.warn('[booking-bot] telegram unreachable', method, String(error));
+    console.warn('[booking-bot] telegram unreachable', bot, method, String(error));
     return { ok: false, description: 'unreachable' };
   }
 }
 
-function send(chatId: string | number, text: string, extra: Record<string, unknown> = {}) {
-  return telegram('sendMessage', {
+function send(bot: Bot, chatId: string | number, text: string, extra: Record<string, unknown> = {}) {
+  return telegram(bot, 'sendMessage', {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
@@ -107,7 +121,8 @@ async function deskChats(): Promise<string[]> {
 }
 
 // The desk, and the master in person with the number masked, as everywhere he
-// sees it. A failed delivery is logged and never stops the client's answer.
+// sees it — always from @Maestro_uzbot, the bot they started and the one that
+// opens the app. A failed delivery is logged and never stops the client's answer.
 async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, unknown>) {
   const booking = facts.booking as { starts_at: string; total_price_uzs: number };
   const phone = facts.client_phone ? String(facts.client_phone) : '';
@@ -129,8 +144,8 @@ async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, 
     masterLang = String(login?.lang || 'ru');
   }
   await Promise.all([
-    ...desk.map((chatId) => send(chatId, textWith(phone))),
-    masterChat ? send(masterChat, masterBookingNotice({
+    ...desk.map((chatId) => send('staff', chatId, textWith(phone))),
+    masterChat ? send('staff', masterChat, masterBookingNotice({
       kind: kind === 'cancelled' ? 'cancelled' : 'new',
       startsAt: booking.starts_at,
       clientName: String(facts.client_name ?? ''),
@@ -141,7 +156,7 @@ async function notifyStaff(kind: 'created' | 'cancelled', facts: Record<string, 
   ]);
 }
 
-async function confirm(appointmentId: string, tgUserId: string, phone: string | null, username: string | null, chatId: number, fallbackLang: string) {
+async function confirm(bot: Bot, appointmentId: string, tgUserId: string, phone: string | null, username: string | null, chatId: number, fallbackLang: string) {
   const { data, error } = await db.rpc('maestro_confirm_booking', {
     p_appointment_id: appointmentId,
     p_tg_user_id: tgUserId,
@@ -154,22 +169,26 @@ async function confirm(appointmentId: string, tgUserId: string, phone: string | 
 
   if (!data?.ok) {
     const code = String(data?.error);
-    if (code === 'expired') return send(chatId, text.expired(SITE), { reply_markup: { remove_keyboard: true } });
+    if (code === 'expired') return send(bot, chatId, text.expired(SITE), { reply_markup: { remove_keyboard: true } });
     if (code === 'client_blocked') {
       const settings = await bookingSettings();
-      return send(chatId, text.blocked(settings.salon_phone || ''), { reply_markup: { remove_keyboard: true } });
+      return send(bot, chatId, text.blocked(settings.salon_phone || ''), { reply_markup: { remove_keyboard: true } });
     }
-    if (code === 'forbidden') return send(chatId, text.notYours);
-    if (code === 'not_found') return send(chatId, text.notFound(SITE));
-    if (code === 'invalid_phone') return send(chatId, text.foreignContact);
-    if (code === 'staff_account') return send(chatId, text.staffAccount, { reply_markup: { remove_keyboard: true } });
-    return send(chatId, text.error);
+    if (code === 'forbidden') return send(bot, chatId, text.notYours);
+    if (code === 'not_found') return send(bot, chatId, text.notFound(SITE));
+    if (code === 'invalid_phone') return send(bot, chatId, text.foreignContact);
+    if (code === 'staff_account') return send(bot, chatId, text.staffAccount, { reply_markup: { remove_keyboard: true } });
+    return send(bot, chatId, text.error);
   }
-  if (data.already_confirmed) return send(chatId, text.already);
+  if (data.already_confirmed) return send(bot, chatId, text.already);
+
+  // The reminders follow the bot the client confirmed with.
+  const remembered = await db.from('appointments').update({ booking_bot: bot }).eq('id', String(data.appointment_id));
+  if (remembered.error) console.error('[booking-bot] booking bot not kept', remembered.error.message);
 
   const settings = await bookingSettings();
   const address = lang === 'uz' ? (settings.salon_address_uz || settings.salon_address_ru) : settings.salon_address_ru;
-  await send(chatId, `${text.confirmed}\n\n${linesOf(data, lang)}\n\n${text.address(address || '')}`, {
+  await send(bot, chatId, `${text.confirmed}\n\n${linesOf(data, lang)}\n\n${text.address(address || '')}`, {
     reply_markup: cancelKeyboard(String(data.appointment_id), lang),
   });
   await notifyStaff('created', data);
@@ -184,48 +203,48 @@ async function isStaff(tgUserId: string) {
   return (data ?? []).length > 0;
 }
 
-async function handleStart(chatId: number, tgUserId: string, token: string, fallbackLang: string) {
+async function handleStart(bot: Bot, chatId: number, tgUserId: string, token: string, fallbackLang: string) {
   const { data, error } = await db.rpc('maestro_booking_for_bot', {
     p_token_hash: await tokenHash(token),
     p_appointment_id: null,
     p_tg_user_id: tgUserId,
   });
   if (error) throw error;
-  if (!data?.ok) return send(chatId, botText(fallbackLang).notFound(SITE));
+  if (!data?.ok) return send(bot, chatId, botText(fallbackLang).notFound(SITE));
 
   const lang = langOf(data.lang);
   const text = botText(lang);
   const status = data.booking.status;
-  if (status === 'expired') return send(chatId, text.expired(SITE));
-  if (status === 'cancelled') return send(chatId, text.cancelledBefore(SITE));
+  if (status === 'expired') return send(bot, chatId, text.expired(SITE));
+  if (status === 'cancelled') return send(bot, chatId, text.cancelledBefore(SITE));
   if (status === 'confirmed') {
-    if (!data.mine) return send(chatId, text.notYours);
-    return send(chatId, `${text.already}\n\n${linesOf(data, lang)}`, {
+    if (!data.mine) return send(bot, chatId, text.notYours);
+    return send(bot, chatId, `${text.already}\n\n${linesOf(data, lang)}`, {
       reply_markup: cancelKeyboard(String(data.appointment_id), lang),
     });
   }
 
   // Said at once rather than after the number is shared; the confirmation
   // itself refuses a staff account and gives the time back to the site.
-  if (await isStaff(tgUserId)) return confirm(String(data.appointment_id), tgUserId, null, null, chatId, lang);
+  if (await isStaff(tgUserId)) return confirm(bot, String(data.appointment_id), tgUserId, null, null, chatId, lang);
 
   const head = `<b>${text.title}</b>\n\n${linesOf(data, lang)}`;
   if (data.known_phone) {
     // A returning client: one button, no contact again. The number this
     // Telegram account is known by may be someone else's (a shared phone, a
     // card linked by mistake), so another one is a tap away.
-    return send(chatId, `${head}\n\n${text.knownNumber(maskPhone(data.known_phone))}`, {
+    return send(bot, chatId, `${head}\n\n${text.knownNumber(maskPhone(data.known_phone))}`, {
       reply_markup: { inline_keyboard: [
         [{ text: text.confirmButton, callback_data: `c:${data.appointment_id}` }],
         [{ text: text.otherNumberButton, callback_data: `p:${data.appointment_id}` }],
       ] },
     });
   }
-  return askForContact(chatId, text, head);
+  return askForContact(bot, chatId, text, head);
 }
 
-function askForContact(chatId: number, text: ReturnType<typeof botText>, head = '') {
-  return send(chatId, `${head ? `${head}\n\n` : ''}${text.askContact}`, {
+function askForContact(bot: Bot, chatId: number, text: ReturnType<typeof botText>, head = '') {
+  return send(bot, chatId, `${head ? `${head}\n\n` : ''}${text.askContact}`, {
     reply_markup: {
       keyboard: [[{ text: text.shareButton, request_contact: true }]],
       resize_keyboard: true,
@@ -234,25 +253,25 @@ function askForContact(chatId: number, text: ReturnType<typeof botText>, head = 
   });
 }
 
-async function handleContact(message: Record<string, any>) {
+async function handleContact(bot: Bot, message: Record<string, any>) {
   const chatId = message.chat.id;
   const tgUserId = String(message.from.id);
   const fallbackLang = langOf(message.from.language_code);
   // Only the user's own number: a contact forwarded from the address book
   // carries someone else's user_id, or none.
   if (String(message.contact?.user_id ?? '') !== tgUserId) {
-    return send(chatId, botText(fallbackLang).foreignContact);
+    return send(bot, chatId, botText(fallbackLang).foreignContact);
   }
   const { data: appointmentId, error } = await db.rpc('maestro_latest_hold_for_telegram', { p_tg_user_id: tgUserId });
   if (error) throw error;
   if (!appointmentId) {
-    return send(chatId, botText(fallbackLang).noHold(SITE), { reply_markup: { remove_keyboard: true } });
+    return send(bot, chatId, botText(fallbackLang).noHold(SITE), { reply_markup: { remove_keyboard: true } });
   }
-  return confirm(String(appointmentId), tgUserId, String(message.contact.phone_number ?? ''), message.from.username ?? null, chatId, fallbackLang);
+  return confirm(bot, String(appointmentId), tgUserId, String(message.contact.phone_number ?? ''), message.from.username ?? null, chatId, fallbackLang);
 }
 
-async function handleCallback(query: Record<string, any>) {
-  await telegram('answerCallbackQuery', { callback_query_id: query.id });
+async function handleCallback(bot: Bot, query: Record<string, any>) {
+  await telegram(bot, 'answerCallbackQuery', { callback_query_id: query.id });
   const chatId = query.message?.chat?.id;
   if (!chatId) return;
   const tgUserId = String(query.from.id);
@@ -261,16 +280,17 @@ async function handleCallback(query: Record<string, any>) {
   if (!UUID.test(appointmentId ?? '')) return;
 
   if (kind === 'c') {
-    await confirm(appointmentId, tgUserId, null, query.from.username ?? null, chatId, fallbackLang);
+    await confirm(bot, appointmentId, tgUserId, null, query.from.username ?? null, chatId, fallbackLang);
     return;
   }
-  if (kind === 'n') return masterNoShow(appointmentId, tgUserId, chatId, query.message?.message_id);
+  // Only @Maestro_uzbot puts «Не пришёл» under a master's reminder.
+  if (kind === 'n') return bot === 'staff' ? masterNoShow(appointmentId, tgUserId, chatId, query.message?.message_id) : undefined;
   // «Другой номер»: the contact the person shares confirms the hold instead.
   if (kind === 'p') {
     if (query.message?.message_id) {
-      await telegram('editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
+      await telegram(bot, 'editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
     }
-    return askForContact(chatId, botText(fallbackLang));
+    return askForContact(bot, chatId, botText(fallbackLang));
   }
   if (kind !== 'x') return;
 
@@ -281,20 +301,20 @@ async function handleCallback(query: Record<string, any>) {
   if (error) throw error;
   const text = botText(data?.lang || fallbackLang);
   if (!data?.ok) {
-    if (data?.error === 'too_late') return send(chatId, text.tooLate);
-    if (data?.error === 'forbidden') return send(chatId, text.notYours);
-    return send(chatId, text.notFound(SITE));
+    if (data?.error === 'too_late') return send(bot, chatId, text.tooLate);
+    if (data?.error === 'forbidden') return send(bot, chatId, text.notYours);
+    return send(bot, chatId, text.notFound(SITE));
   }
   // The button under the old message no longer means anything.
   if (query.message?.message_id) {
-    await telegram('editMessageReplyMarkup', {
+    await telegram(bot, 'editMessageReplyMarkup', {
       chat_id: chatId,
       message_id: query.message.message_id,
       reply_markup: { inline_keyboard: [] },
     });
   }
-  if (data.already_cancelled) return send(chatId, text.cancelled(SITE));
-  await send(chatId, text.cancelled(SITE));
+  if (data.already_cancelled) return send(bot, chatId, text.cancelled(SITE));
+  await send(bot, chatId, text.cancelled(SITE));
   await notifyStaff('cancelled', data);
 }
 
@@ -305,7 +325,7 @@ async function masterNoShow(appointmentId: string, tgUserId: string, chatId: num
     .select('id, lang').eq('telegram_id', tgUserId).eq('active', true).maybeSingle();
   if (userError) throw userError;
   const replies = masterText(user?.lang).replies;
-  if (!user) return send(chatId, replies.notYours);
+  if (!user) return send('staff', chatId, replies.notYours);
   const { data, error } = await db.rpc('maestro_set_appointment_outcome', {
     p_appointment_id: appointmentId,
     p_outcome: 'no_show',
@@ -315,32 +335,41 @@ async function masterNoShow(appointmentId: string, tgUserId: string, chatId: num
     p_actor_user_id: user.id,
   });
   if (error) throw error;
-  if (data?.error === 'forbidden') return send(chatId, replies.notYours);
+  if (data?.error === 'forbidden') return send('staff', chatId, replies.notYours);
   if (messageId) {
-    await telegram('editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
+    await telegram('staff', 'editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
   }
-  return send(chatId, data?.ok ? replies.noShow : replies.closed);
+  return send('staff', chatId, data?.ok ? replies.noShow : replies.closed);
 }
 
-async function handleUpdate(update: Record<string, any>) {
-  if (update.callback_query) return handleCallback(update.callback_query);
+async function handleUpdate(bot: Bot, update: Record<string, any>) {
+  if (update.callback_query) return handleCallback(bot, update.callback_query);
   const message = update.message;
   if (!message || !message.from) return;
   // Groups are not the bot's business.
   if (message.chat?.type !== 'private') return;
-  if (message.contact) return handleContact(message);
+  if (message.contact) return handleContact(bot, message);
 
   const fallbackLang = langOf(message.from.language_code);
   const start = String(message.text ?? '').match(/^\/start(?:@\w+)?\s+b_([A-Za-z0-9_-]{22,40})\s*$/);
-  if (start) return handleStart(message.chat.id, String(message.from.id), start[1], fallbackLang);
-  return send(message.chat.id, botText(fallbackLang).help(SITE));
+  if (start) return handleStart(bot, message.chat.id, String(message.from.id), start[1], fallbackLang);
+  return send(bot, message.chat.id, botText(fallbackLang).help(SITE));
 }
 
 async function sendReminders() {
   const { data, error } = await db.rpc('maestro_claim_web_reminders', { p_limit: 25 });
   if (error) throw error;
+  const notices = data ?? [];
+  // Which bot each booking was confirmed with; one from before, @Maestro_uzbot.
+  const ids = [...new Set(notices.map((notice: { appointment_id: string }) => String(notice.appointment_id)))];
+  const botOf = new Map<string, Bot>();
+  if (ids.length) {
+    const bots = await db.from('appointments').select('id, booking_bot').in('id', ids);
+    if (bots.error) throw bots.error;
+    for (const row of bots.data ?? []) botOf.set(String(row.id), bookingBotOf(row.booking_bot) as Bot);
+  }
   let sent = 0;
-  for (const notice of data ?? []) {
+  for (const notice of notices) {
     const lang = langOf(notice.language);
     const text = botText(lang);
     const head = notice.kind === 'reminder_24h' ? text.reminder24 : text.reminder2;
@@ -350,7 +379,8 @@ async function sendReminders() {
       serviceName: notice.service_name,
       price: null,
     }, lang);
-    const result = await send(notice.telegram_chat_id, `${head}\n\n${lines}`, {
+    const bot = botOf.get(String(notice.appointment_id)) ?? 'staff';
+    const result = await send(bot, notice.telegram_chat_id, `${head}\n\n${lines}`, {
       reply_markup: cancelKeyboard(String(notice.appointment_id), lang),
     });
     if (result.ok) {
@@ -367,11 +397,11 @@ async function sendReminders() {
       });
     }
   }
-  return { claimed: (data ?? []).length, sent, masters: await sendMasterReminders() };
+  return { claimed: notices.length, sent, masters: await sendMasterReminders() };
 }
 
 // A quarter of an hour after a booking ended still open, its master hears
-// about it once.
+// about it once, from @Maestro_uzbot: its «Открыть приложение» signs him in.
 async function sendMasterReminders() {
   const { data, error } = await db.rpc('maestro_claim_master_reminders', { p_limit: 25 });
   if (error) throw error;
@@ -379,7 +409,7 @@ async function sendMasterReminders() {
   for (const notice of data ?? []) {
     if (!notice.master_chat_id) continue;
     const words = masterText(notice.master_lang);
-    const result = await send(notice.master_chat_id, masterReminder({
+    const result = await send('staff', notice.master_chat_id, masterReminder({
       startsAt: notice.starts_at,
       endsAt: notice.ends_at,
       clientName: notice.client_name,
@@ -400,24 +430,49 @@ async function sendMasterReminders() {
 
 async function handleService(action: string, input: Record<string, unknown>) {
   if (action === 'reminders') return reply({ ok: true, ...(await sendReminders()) });
+  const bot: Bot = input.bot === 'client' ? 'client' : 'staff';
+  if (action === 'bot_info') {
+    const me = await telegram(bot, 'getMe', {});
+    const result = (me.result ?? {}) as Record<string, unknown>;
+    return reply({ ok: me.ok, bot, username: result.username ?? null });
+  }
   if (action === 'webhook_info') {
-    const info = await telegram('getWebhookInfo', {});
+    const info = await telegram(bot, 'getWebhookInfo', {});
     const result = (info.result ?? {}) as Record<string, unknown>;
-    return reply({ ok: info.ok, url: result.url ?? '', pending_update_count: result.pending_update_count ?? 0, ours: result.url === WEBHOOK_URL });
+    return reply({
+      ok: info.ok,
+      bot,
+      url: result.url ?? '',
+      pending_update_count: result.pending_update_count ?? 0,
+      last_error_message: result.last_error_message ?? null,
+      ours: result.url === WEBHOOK_URL,
+    });
   }
   if (action === 'set_webhook') {
+    if (!WEBHOOK_SECRETS[bot]) return reply({ ok: false, error: 'no_webhook_secret', bot }, 500);
     // Never silently take over a webhook something else relies on.
-    const info = await telegram('getWebhookInfo', {});
+    const info = await telegram(bot, 'getWebhookInfo', {});
     const current = String((info.result as Record<string, unknown> | undefined)?.url ?? '');
     if (current && current !== WEBHOOK_URL && input.force !== true) {
       return reply({ ok: false, error: 'webhook_exists', url: current }, 409);
     }
-    const result = await telegram('setWebhook', {
+    const result = await telegram(bot, 'setWebhook', {
       url: WEBHOOK_URL,
-      secret_token: WEBHOOK_SECRET,
+      secret_token: WEBHOOK_SECRETS[bot],
       allowed_updates: ['message', 'callback_query'],
     });
-    return reply({ ok: result.ok, description: result.description ?? null });
+    return reply({ ok: result.ok, bot, description: result.description ?? null });
+  }
+  if (action === 'set_profile') {
+    // Only the clients' bot: @Maestro_uzbot's profile is the owner's.
+    if (bot !== 'client') return reply({ ok: false, error: 'client_bot_only' }, 400);
+    const results = [];
+    for (const [lang, code] of [['ru', ''], ['uz', 'uz']] as const) {
+      const words = CLIENT_BOT_PROFILE[lang];
+      results.push(await telegram('client', 'setMyDescription', { description: words.description, language_code: code }));
+      results.push(await telegram('client', 'setMyShortDescription', { short_description: words.short, language_code: code }));
+    }
+    return reply({ ok: results.every((result) => result.ok), refused: results.filter((result) => !result.ok).map((result) => result.description) });
   }
   return reply({ ok: false, error: 'unknown_action' }, 400);
 }
@@ -436,14 +491,13 @@ Deno.serve(async (request) => {
     }
   }
 
-  if (!secretsMatch(request.headers.get('x-telegram-bot-api-secret-token'), WEBHOOK_SECRET)) {
-    return reply({ ok: false }, 401);
-  }
+  const bot = webhookBot(request.headers.get('x-telegram-bot-api-secret-token'), WEBHOOK_SECRETS) as Bot | null;
+  if (!bot) return reply({ ok: false }, 401);
   try {
-    await handleUpdate(await request.json());
+    await handleUpdate(bot, await request.json());
   } catch (error) {
     // Telegram retries anything but 200; a broken update is logged, not replayed.
-    console.error('[booking-bot] update', error instanceof Error ? error.message : String(error));
+    console.error('[booking-bot] update', bot, error instanceof Error ? error.message : String(error));
   }
   return reply({ ok: true });
 });
