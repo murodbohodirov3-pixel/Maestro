@@ -3649,22 +3649,12 @@ function AttendanceView({ data, reload, setError }) {
                   </span>
                 </div>
                 {readOnly ? (
-                  // The partner sets days off (decision of 2026-10-16) and
-                  // fines (2026-10-21), and nothing else on this sheet.
+                  // The partner sets days off (decision of 2026-10-16), and
+                  // nothing else on this sheet: his fines go through «+ Выставить
+                  // штраф» below, a late arrival being fined on its own.
                   <div className="attendance-actions">
                     {arrived ? <span className="attendance-time">{arrived}</span> : null}
                     {row.record ? null : dayOffButton}
-                    {row.status === 'late' ? (
-                      <button
-                        className="fine-button"
-                        disabled={quickFineExists || savingFineKey === fineKey}
-                        title={`Штраф ${money(lateFineAmount(data.settings))} сум`}
-                        type="button"
-                        onClick={() => addLateFine({ master: masterName, d: row.d })}
-                      >
-                        {quickFineExists ? 'Штраф выставлен' : savingFineKey === fineKey ? 'Сохраняю…' : 'Штраф'}
-                      </button>
-                    ) : null}
                   </div>
                 ) : (
                 <div className="attendance-actions">
