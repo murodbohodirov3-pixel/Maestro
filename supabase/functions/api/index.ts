@@ -766,18 +766,11 @@ Deno.serve(async (req) => {
       return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, fullPhones)) });
     }
 
-    // An app opened before the two fields still sends one full_name for a
-    // while: its first word is the name and the rest the surname.
-    const nameParts = (data: Record<string, unknown>) => {
-      if (data.first_name != null || data.last_name != null || data.full_name == null) return data;
-      const [first = '', ...rest] = String(data.full_name).trim().split(/\s+/);
-      return { first_name: first, last_name: rest.join(' ') };
-    };
-
     if (action === 'addClient') {
-      // A name and a surname, both (owner's decision of 2026-10-21).
-      const typed = nameParts(payload);
-      const name = checkClientName(typed.first_name, typed.last_name);
+      // A name and a surname, both (owner's decision of 2026-10-21). An app
+      // still open from before sends one full_name and gets an error: the
+      // owner tells everyone to reopen it.
+      const name = checkClientName(payload.first_name, payload.last_name);
       if (!name.ok) return json({ error: name.error }, 400);
       const { data, error } = await sb.rpc('maestro_add_client_card', {
         p_first_name: name.first_name,
@@ -933,8 +926,7 @@ Deno.serve(async (req) => {
       if (!isOwnerCaller) return json({ error: 'forbidden' }, 403);
       const clientId = String(payload.client_id ?? '');
       if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
-      const typed = nameParts(payload);
-      const name = checkClientName(typed.first_name, typed.last_name);
+      const name = checkClientName(payload.first_name, payload.last_name);
       if (!name.ok) return json({ error: name.error }, 400);
       const { data, error } = await sb.rpc('maestro_update_client_card', {
         p_client_id: clientId,
