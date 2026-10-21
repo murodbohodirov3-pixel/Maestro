@@ -19,7 +19,9 @@
 //                       surname only that; the master sees him in the app.
 // And the rating of a visit, in @MaestroBarberia_bot only: half an hour after
 // it is recorded, {"action":"reviews"} asks four questions in one message
-// (v:<review>:<step>:<score>), then asks for a few words.
+// (v:<review>:<step>:<score>), then asks for a few words. And «пора
+// подстричься»: {"action":"haircut_reminders"} at 11:00 writes to whoever was
+// cut 15 or 30 days ago, with «📅 Записаться» and «Не напоминать» (o:1).
 // pg_cron calls it with x-booking-cron-secret: {"action":"reminders"} sends the
 // clients' 24 h and 2 h reminders, each through the bot its booking was
 // confirmed with, and the masters' «закройте запись» a quarter of an hour
@@ -314,6 +316,7 @@ async function handleCallback(bot: Bot, query: Record<string, any>) {
   const fallbackLang = langOf(query.from.language_code);
   const [kind, appointmentId] = String(query.data ?? '').split(':');
   if (bot === 'client' && kind === 'v') return reviewTap(query);
+  if (bot === 'client' && kind === 'o') return haircutRemindersOff(query);
   if (bot === 'client' && (kind === 'l' || kind === 'k')) {
     if (query.message?.message_id) {
       await telegram(bot, 'editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
@@ -650,6 +653,47 @@ async function reviewWords(chatId: number, tgUserId: string, typed: string, fall
   await tellOwner('words', view);
 }
 
+// ------------------------------------------------- «пора подстричься»
+
+async function sendHaircutReminders() {
+  const { data, error } = await db.rpc('maestro_claim_haircut_reminders', { p_limit: 100 });
+  if (error) throw error;
+  let sent = 0;
+  for (const reminder of data ?? []) {
+    const lang = langOf(reminder.lang);
+    const text = botText(lang);
+    const result = await send('client', reminder.tg_user_id, text.haircutReminder(escapeHtml(reminder.first_name || ''), Number(reminder.days_since)), {
+      reply_markup: { inline_keyboard: [[
+        { text: text.bookButton, url: SITE },
+        { text: text.haircutOffButton, callback_data: 'o:1' },
+      ]] },
+    });
+    if (result.ok) sent += 1;
+    await db.rpc('maestro_haircut_reminder_done', {
+      p_reminder_id: reminder.reminder_id,
+      p_sent: result.ok,
+      p_blocked: !result.ok && String(result.description ?? '').startsWith('Forbidden'),
+    });
+  }
+  return { claimed: (data ?? []).length, sent };
+}
+
+// «Не напоминать»: no more reminders; the booking button stays.
+async function haircutRemindersOff(query: Record<string, any>) {
+  const { data, error } = await db.rpc('maestro_haircut_reminders_off', { p_tg_user_id: String(query.from.id) });
+  if (error) throw error;
+  const lang = langOf(data?.lang || query.from.language_code);
+  const text = botText(lang);
+  if (query.message?.message_id) {
+    await telegram('client', 'editMessageReplyMarkup', {
+      chat_id: query.message.chat.id,
+      message_id: query.message.message_id,
+      reply_markup: { inline_keyboard: [[{ text: text.bookButton, url: SITE }]] },
+    });
+  }
+  return send('client', query.message?.chat?.id ?? query.from.id, text.haircutOff);
+}
+
 async function sendReminders() {
   const { data, error } = await db.rpc('maestro_claim_web_reminders', { p_limit: 25 });
   if (error) throw error;
@@ -725,6 +769,7 @@ async function sendMasterReminders() {
 async function handleService(action: string, input: Record<string, unknown>) {
   if (action === 'reminders') return reply({ ok: true, ...(await sendReminders()) });
   if (action === 'reviews') return reply({ ok: true, ...(await sendReviewInvites()) });
+  if (action === 'haircut_reminders') return reply({ ok: true, ...(await sendHaircutReminders()) });
   const bot: Bot = input.bot === 'client' ? 'client' : 'staff';
   if (action === 'bot_info') {
     const me = await telegram(bot, 'getMe', {});

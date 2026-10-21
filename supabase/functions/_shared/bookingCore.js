@@ -228,6 +228,10 @@ const TEXT = {
     reviewAskWords: 'Напишите, пожалуйста, пару слов о визите: что понравилось, что можно сделать лучше.',
     reviewWordsThanks: 'Спасибо за отзыв! Он поможет мастеру и другим клиентам.',
     reviewTooShort: 'Напишите, пожалуйста, хотя бы пару слов.',
+    // «Пора подстричься», 15 and 30 days after the last visit.
+    haircutReminder: (name, days) => `${name}, прошло ${days} ${plural(days, ['день', 'дня', 'дней'])} с вашей прошлой стрижки. Не забудьте уделить время себе!\n\nС уважением, Maestro Barberia`,
+    haircutOffButton: 'Не напоминать',
+    haircutOff: 'Хорошо, больше не будем напоминать. Записаться можно в любой момент — кнопка «📅 Записаться» ниже или /start.',
   },
   uz: {
     title: 'Maestro Barberia\'ga yozilish',
@@ -289,11 +293,24 @@ const TEXT = {
     reviewAskWords: 'Iltimos, tashrif haqida bir-ikki so\'z yozing: nima yoqdi, nimani yaxshilash mumkin.',
     reviewWordsThanks: 'Fikringiz uchun rahmat! U ustaga va boshqa mijozlarga yordam beradi.',
     reviewTooShort: 'Iltimos, kamida bir-ikki so\'z yozing.',
+    haircutReminder: (name, days) => `${name}, oxirgi soch olganingizdan beri ${days} kun o'tdi. O'zingizga vaqt ajratishni unutmang!\n\nHurmat bilan, Maestro Barberia`,
+    haircutOffButton: 'Eslatmang',
+    haircutOff: 'Yaxshi, endi eslatmaymiz. Istalgan vaqtda yozilishingiz mumkin — pastdagi «📅 Yozilish» tugmasi yoki /start.',
   },
 };
 
 export function botText(lang) {
   return TEXT[langOf(lang)];
+}
+
+// «1 день», «3 дня», «15 дней».
+function plural(count, [one, few, many]) {
+  const tens = count % 100;
+  const units = count % 10;
+  if (tens >= 11 && tens <= 14) return many;
+  if (units === 1) return one;
+  if (units >= 2 && units <= 4) return few;
+  return many;
 }
 
 // Two bots answer in booking-bot (owner's decision of 2026-10-21): clients
