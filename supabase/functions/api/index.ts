@@ -6,6 +6,7 @@ import { captureEdgeException } from '../_shared/sentry.ts';
 import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
 import { checkClientName, checkLastName } from '../_shared/clientName.js';
 import { latestScanPerClient, MIRROR_SCAN_HOURS } from '../_shared/mirror.js';
+import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest } from '../_shared/duty.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -401,6 +402,63 @@ async function tellMasterAboutBooking(appointmentId: string) {
   if (appointment) await tellMaster(Number(appointment.master_id), 'new', appointment);
 }
 
+async function sendStaffMessage(chatId: string, text: string, replyMarkup: Record<string, unknown> | null = null) {
+  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', ...(replyMarkup ? { reply_markup: replyMarkup } : {}) }),
+  });
+  if (!response.ok) console.warn('[maestro-api] staff message refused', response.status, await response.text());
+}
+
+// Duty (owner's decisions of 2026-10-26), as every screen shows it. A failure
+// leaves the app without the duty card rather than without data.
+async function dutyState(masterId: number | null) {
+  const { data, error } = await sb.rpc('maestro_duty_state', { p_master_id: masterId });
+  if (error) {
+    console.warn('[maestro-api] duty state', error.message);
+    return null;
+  }
+  return data;
+}
+
+// The master asked to take a day over hears it at once, with the buttons.
+async function tellDutySwapRequest(swap: Record<string, unknown>, toMasterId: number) {
+  const chat = await masterChat(toMasterId);
+  if (!chat) return;
+  await sendStaffMessage(chat.chatId, dutySwapRequest({
+    lang: chat.lang,
+    fromName: String(swap.from_name ?? ''),
+    day: String(swap.day ?? ''),
+    startsAt: String(swap.starts_at ?? ''),
+  }), dutySwapKeyboard(Number(swap.swap_id), chat.lang));
+}
+
+// The asker hears the answer given in the app; the owner hears of a day that
+// changed hands (the bot says the same for an answer given there).
+async function tellDutySwapAnswer(answer: Record<string, unknown>) {
+  const accepted = answer.status === 'accepted';
+  const asker = await masterChat(Number(answer.from_master_id));
+  if (asker) {
+    await sendStaffMessage(asker.chatId, dutySwapAnswer({ lang: asker.lang, toName: answer.to_name, day: answer.day, accepted }));
+  }
+  if (accepted) await messageOwners(dutySwapOwnerNotice({ fromName: answer.from_name, toName: answer.to_name, day: answer.day }));
+}
+
+// A JPEG from the app, as base64; anything else is refused.
+function dutyPhotoBytes(image: unknown) {
+  const text = String(image ?? '');
+  if (!text || text.length > 3_000_000 || !/^[A-Za-z0-9+/]+=*$/.test(text)) return null;
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+  if (bytes.length < 1000 || bytes.length > 2_097_152 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  return bytes;
+}
+
 // The attendance sheet names a master; the fines are keyed by his id.
 async function masterIdFor(name: string) {
   const { data } = await sb.from('masters').select('id').eq('name', name).maybeSingle();
@@ -620,7 +678,7 @@ Deno.serve(async (req) => {
         since: tashkentDate(-1),
       });
       // And the bookings: every master's day, with numbers to call clients.
-      const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses, deskSettings] = await Promise.all([
+      const [deskMasters, appointments, bookingServices, scheduleRules, dayStatuses, deskSettings, duty] = await Promise.all([
         sb.from('masters').select('id, name, active').eq('active', true).order('id'),
         fetchAppointments({}, false),
         fetchAllRows('booking_services', 'id'),
@@ -629,6 +687,8 @@ Deno.serve(async (req) => {
         // Only when the booking control started: older open bookings are not
         // shown as overdue.
         sb.from('settings').select('booking_control_since').eq('id', 1),
+        // Who is on duty today, as on everyone's screen.
+        dutyState(null),
       ]);
       if (deskMasters.error) return json({ error: deskMasters.error.message }, 500);
       return json({
@@ -642,6 +702,7 @@ Deno.serve(async (req) => {
         master_schedule_rules: scheduleRules,
         master_day_statuses: dayStatuses,
         settings: deskSettings.data ?? [],
+        duty,
         sessionToken: issuedSessionToken,
       });
     }
@@ -662,7 +723,7 @@ Deno.serve(async (req) => {
       const byDate = since ? { column: 'date', since } : null;
 
       if (isAdmin || isPartner) {
-        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients, products, product_receipts, product_sales, product_writeoffs, master_advances, master_payouts] = await Promise.all([
+        const [sales, fines, attendance, expenses, debts, debt_payments, booking_services, master_day_statuses, appointments, master_schedule_rules, clients, products, product_receipts, product_sales, product_writeoffs, master_advances, master_payouts, duty] = await Promise.all([
           fetchAllRows('sales', 'd', {}, byDay),
           fetchAllRows('fines', 'id', {}, byDay),
           fetchAllRows('attendance', 'id', {}, byDay),
@@ -686,6 +747,7 @@ Deno.serve(async (req) => {
           // Advances and payouts: a row a week per master, small for years.
           fetchAllRows('master_advances', 'id'),
           fetchAllRows('master_payouts', 'id'),
+          dutyState(null),
         ]);
 
         return json({
@@ -711,13 +773,14 @@ Deno.serve(async (req) => {
           product_writeoffs,
           master_advances,
           master_payouts,
+          duty,
           appRole: appUserResult.data.role,
           sessionToken: issuedSessionToken,
           windowSince: since,
         });
       }
 
-      const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules, master_advances, master_payouts] = await Promise.all([
+      const [sales, fines, attendance, booking_services, master_day_statuses, appointments, master_schedule_rules, master_advances, master_payouts, duty] = await Promise.all([
         fetchAllRows('sales', 'd', { master: myMaster }, byDay),
         fetchAllRows('fines', 'id', { master: myMaster }, byDay),
         fetchAllRows('attendance', 'id', { master: myMaster }, byDay),
@@ -728,6 +791,8 @@ Deno.serve(async (req) => {
         // His own advances and payouts: what he will get on Sunday.
         fetchAllRows('master_advances', 'id', { master_id: myMasterId! }),
         fetchAllRows('master_payouts', 'id', { master_id: myMasterId! }),
+        // The roster, today's windows, and his own requests.
+        dutyState(myMasterId),
       ]);
       const meOnly = masters.filter((master: { name: string }) => master.name === myMaster);
 
@@ -747,8 +812,132 @@ Deno.serve(async (req) => {
         master_schedule_rules,
         master_advances,
         master_payouts,
+        duty,
         sessionToken: issuedSessionToken,
         windowSince: since,
+      });
+    }
+
+    // Duty (owner's decisions of 2026-10-26). The owner sets the week; a
+    // master asks another to take his day and answers such a request; the
+    // day's duty master sends the photo of the open window; the owner and the
+    // partner look at a day's photos.
+    if (action === 'setDutyRoster') {
+      if (appUserResult.data.role !== 'owner') return json({ error: 'forbidden' }, 403);
+      const days = Array.isArray(payload.days) ? payload.days : null;
+      if (!days || !days.length || days.length > 21) return json({ error: 'invalid_duty_roster' }, 400);
+      const clean = [];
+      for (const item of days) {
+        const masterId = item?.master_id == null || item.master_id === '' ? null : Number(item.master_id);
+        if (!isValidIsoDate(item?.day) || (masterId !== null && !Number.isInteger(masterId))) {
+          return json({ error: 'invalid_duty_roster' }, 400);
+        }
+        clean.push({ day: String(item.day), master_id: masterId });
+      }
+      const { data: result, error } = await sb.rpc('maestro_set_duty_roster', {
+        p_days: clean,
+        p_actor_user_id: appUserResult.data.id,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, 400);
+      return json(result);
+    }
+
+    if (['askDutySwap', 'answerDutySwap', 'cancelDutySwap', 'addDutyPhoto'].includes(action) && !myMasterId) {
+      return json({ error: 'forbidden' }, 403);
+    }
+
+    if (action === 'askDutySwap') {
+      const toMasterId = Number(payload.to_master_id);
+      if (!isValidIsoDate(payload.day) || !Number.isInteger(toMasterId)) return json({ error: 'invalid_duty_swap' }, 400);
+      const { data: result, error } = await sb.rpc('maestro_ask_duty_swap', {
+        p_day: String(payload.day),
+        p_from_master_id: myMasterId,
+        p_to_master_id: toMasterId,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, 409);
+      inBackground(tellDutySwapRequest(result, toMasterId));
+      return json(result);
+    }
+
+    if (action === 'answerDutySwap') {
+      const swapId = Number(payload.id);
+      if (!Number.isInteger(swapId)) return json({ error: 'invalid_duty_swap' }, 400);
+      const { data: result, error } = await sb.rpc('maestro_answer_duty_swap', {
+        p_swap_id: swapId,
+        p_master_id: myMasterId,
+        p_accept: payload.accept === true,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, 409);
+      inBackground(tellDutySwapAnswer(result));
+      return json(result);
+    }
+
+    if (action === 'cancelDutySwap') {
+      const swapId = Number(payload.id);
+      if (!Number.isInteger(swapId)) return json({ error: 'invalid_duty_swap' }, 400);
+      const { data: result, error } = await sb.rpc('maestro_cancel_duty_swap', { p_swap_id: swapId, p_master_id: myMasterId });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, 409);
+      return json(result);
+    }
+
+    if (action === 'addDutyPhoto') {
+      const phash = String(payload.phash ?? '').toLowerCase();
+      const bytes = dutyPhotoBytes(payload.image);
+      if (!bytes || !/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
+      const shot = Number(payload.shot_at);
+      const shotAt = Number.isFinite(shot) && shot > 1_500_000_000_000 && shot < 4_000_000_000_000
+        ? new Date(shot).toISOString()
+        : null;
+      const sha = toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer)));
+      const path = `${tashkentDate()}/${myMasterId}-${crypto.randomUUID()}.jpg`;
+      const { data: result, error } = await sb.rpc('maestro_add_duty_photo', {
+        p_master_id: myMasterId,
+        p_storage_path: path,
+        p_sha256: sha,
+        p_phash: phash,
+        p_bytes: bytes.length,
+        p_shot_at: shotAt,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (!result?.ok) return json(result, ['duty_photo_done', 'duty_photo_repeat'].includes(result?.error) ? 409 : 400);
+      // The row first, so two taps cannot both pass; the file after it, and
+      // the row goes again if the file does not land.
+      const uploaded = await sb.storage.from('duty-photos').upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
+      if (uploaded.error) {
+        console.error('[maestro-api] duty photo upload', uploaded.error.message);
+        await sb.from('duty_photos').delete().eq('storage_path', path);
+        return json({ error: 'duty_photo_upload_failed' }, 502);
+      }
+      return json(result);
+    }
+
+    if (action === 'dutyDay') {
+      if (appUserResult.data.role !== 'owner' && !isPartner) return json({ error: 'forbidden' }, 403);
+      const day = String(payload.day ?? '');
+      if (!isValidIsoDate(day) || day < tashkentDate(-31) || day > tashkentDate(14)) return json({ error: 'invalid_duty_day' }, 400);
+      const [windows, photos, fines] = await Promise.all([
+        sb.rpc('maestro_duty_windows', { p_day: day }),
+        sb.from('duty_photos').select('id, master_id, window_starts_at, window_ends_at, taken_at, storage_path').eq('day', day).order('window_starts_at'),
+        sb.from('fines').select('id, master_id, amount, duty_window').eq('auto', 'duty').eq('d', day),
+      ]);
+      const failed = windows.error || photos.error || fines.error;
+      if (failed) return json({ error: failed.message }, 500);
+      const paths = (photos.data ?? []).map((photo: { storage_path: string }) => photo.storage_path);
+      const signed = paths.length ? await sb.storage.from('duty-photos').createSignedUrls(paths, 60 * 60) : { data: [], error: null };
+      if (signed.error) return json({ error: signed.error.message }, 500);
+      const urlOf = new Map((signed.data ?? []).map((item: { path: string | null; signedUrl: string | null }) => [item.path, item.signedUrl]));
+      return json({
+        day,
+        windows: windows.data ?? [],
+        photos: (photos.data ?? []).map(({ storage_path, ...photo }: { storage_path: string } & Record<string, unknown>) => ({
+          ...photo,
+          url: urlOf.get(storage_path) ?? null,
+        })),
+        fines: fines.data ?? [],
       });
     }
 

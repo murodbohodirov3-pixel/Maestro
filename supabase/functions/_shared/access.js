@@ -26,6 +26,8 @@ const PARTNER_ACTIONS = new Set([
   'setLanguage',
   'siteStats',
   'addFine',
+  // The duty master's photos of a day (owner's decision of 2026-10-26).
+  'dutyDay',
 ]);
 
 export function partnerMayCall(action) {

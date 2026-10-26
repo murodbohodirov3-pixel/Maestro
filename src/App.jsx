@@ -86,6 +86,28 @@ import {
 } from './utils/stock.js';
 import { comparisonLabel, sameWeekdayLastWeek } from './utils/periods.js';
 import {
+  addDaysIso,
+  differenceHash,
+  dutyMasterName,
+  greyFromRgba,
+  HASH_HEIGHT,
+  HASH_WIDTH,
+  mondayOf,
+  currentWindow,
+  masterDutyAttention,
+  myDuty,
+  nextWindow,
+  openWindow,
+  rosterChanges,
+  rosterOn,
+  swapCandidates,
+  weekDays,
+  windowsDone,
+  windowStatus,
+  worksOn,
+} from './utils/duty.js';
+import { dutyDateLabel, dutyDayLabel } from '../supabase/functions/_shared/duty.js';
+import {
   attentionSignals,
   compactMoney,
   monthForecast,
@@ -330,6 +352,24 @@ const ACTION_ERROR_TEXT = {
   advance_not_found: 'Аванс уже удалён — обновите экран.',
   payout_not_found: 'Выплата уже удалена — обновите экран.',
   payout_delete_window_expired: 'Выплату старше трёх дней удалить нельзя.',
+  duty_not_today: 'Сегодня дежурите не вы.',
+  duty_no_window: 'Сейчас фото не нужно — дождитесь своего времени.',
+  duty_photo_done: 'Фото за это время уже есть.',
+  duty_photo_old: 'Это старое фото. Сфотографируйте салон сейчас.',
+  duty_photo_repeat: 'Это фото уже присылали. Сфотографируйте салон заново.',
+  invalid_duty_photo: 'Не удалось прочитать фото. Попробуйте ещё раз.',
+  duty_photo_unreadable: 'Не удалось прочитать фото. Попробуйте ещё раз.',
+  duty_photo_upload_failed: 'Фото не загрузилось. Попробуйте ещё раз.',
+  duty_not_yours: 'Этот день дежурите не вы.',
+  duty_swap_too_late: 'Поздно: дежурство в этот день уже началось.',
+  duty_swap_target: 'Выберите другого мастера.',
+  duty_swap_closed: 'Эта просьба уже закрыта — обновите экран.',
+  duty_swap_not_yours: 'Эта просьба не вам.',
+  duty_swap_not_found: 'Просьба не найдена — обновите экран.',
+  invalid_duty_swap: 'Не удалось отправить просьбу. Попробуйте ещё раз.',
+  invalid_duty_roster: 'Проверьте график дежурств.',
+  duty_day_out_of_range: 'Прошедшие дни дежурств не меняются.',
+  invalid_duty_day: 'Фото дежурных хранятся 30 дней.',
 };
 
 function actionErrorText(error) {
@@ -463,6 +503,7 @@ const FINE_REASONS = [
 const FINE_REASON_LABELS = {
   ...Object.fromEntries(FINE_REASONS.map((item) => [item.value, item.label])),
   no_mark: 'Нет отметки к 18:00',
+  duty: 'Дежурство: нет фото',
 };
 
 // The automatic fines' amounts, decided by the owner on 2026-10-16.
@@ -645,6 +686,8 @@ function normalizeData(data) {
     productWriteoffs: data.product_writeoffs || [],
     advances: data.master_advances || [],
     payouts: data.master_payouts || [],
+    // Duty (owner's decisions of 2026-10-26): null until the server has it.
+    duty: data.duty || null,
     lang: data.lang || null,
     settings,
   };
@@ -1478,6 +1521,7 @@ function OverviewView({ data, reload, setError, setView }) {
         </p>
       ) : null}
 
+      <DutyTodayCard data={data} onOpen={viewIdsForUser(data).includes('duty') ? () => setView('duty') : null} />
       <SiteCard />
       <SignalsCard result={signals} />
       <MastersOfMonth
@@ -2502,6 +2546,8 @@ function BookingsView({ data, reload, setError, onVisit }) {
           {data.appRole === 'partner' ? <small className="unclosed-note">Закрывает мастер</small> : null}
         </div>
       ) : null}
+      {/* The administrator has no Главная: who is on duty stands here. */}
+      {data.role === 'frontdesk' ? <DutyTodayCard data={data} /> : null}
       <div className="wide day-chips">
         {days.map((day, index) => (
           <button className={day === date ? 'on' : ''} key={day} type="button" onClick={() => setDate(day)}>
@@ -5384,6 +5430,524 @@ function MyWeek({ data, master }) {
   );
 }
 
+// ------------------------------------------------------------- дежурство
+// Дежурный по чистоте (owner's decisions of 2026-10-26): one master a day,
+// set by the owner a week ahead; from the start of his shift a photo of the
+// salon every two hours, a window without one fined 50 000; a day off is
+// arranged with another master, who takes the day over in the app.
+
+const DUTY_WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+// Ticks the screen over every half minute: a window opens and closes on the
+// clock, not on a load.
+function useNow(step = 30000) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), step);
+    return () => window.clearInterval(id);
+  }, [step]);
+  return now;
+}
+
+function dutyDayTitle(day) {
+  const text = dutyDayLabel(day, 'ru');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function dutyWindowLabel(window) {
+  return `${appointmentTime(window.starts_at)}–${appointmentTime(window.ends_at)}`;
+}
+
+const DUTY_STATUS_TEXT = {
+  done: 'фото есть',
+  fined: 'штраф',
+  open: 'сейчас',
+  missed: 'нет фото',
+  later: 'позже',
+};
+
+// The days before the fines start are a trial (owner's decision of
+// 2026-10-26: the first week, to 2 November, without fines).
+function DutyTrialNote({ duty }) {
+  if (!duty?.since || String(duty.today) >= String(duty.since)) return null;
+  return <p className="duty-trial">{`Пробная неделя. Штрафы начнутся с ${dutyDateLabel(duty.since, 'ru')}.`}</p>;
+}
+
+function DutyWindows({ windows, now }) {
+  if (!windows.length) return null;
+  return (
+    <ol className="duty-windows">
+      {windows.map((window) => {
+        const status = windowStatus(window, now);
+        return (
+          <li className={`duty-window is-${status}`} key={window.starts_at}>
+            <strong>{dutyWindowLabel(window)}</strong>
+            <span>{DUTY_STATUS_TEXT[status]}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// The picture as the server takes it: at most 1280 px on its long side, a
+// JPEG, and its fingerprint from a grey 17×16 copy (made in two steps, so a
+// big photo does not alias into noise).
+function decodePicture(file) {
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => decodeWithImage(file));
+  }
+  return decodeWithImage(file);
+}
+
+function decodeWithImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('duty_photo_unreadable')); };
+    image.src = url;
+  });
+}
+
+function canvasOf(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  return canvas;
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('duty_photo_unreadable'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function prepareDutyPhoto(file) {
+  const picture = await decodePicture(file);
+  const scale = Math.min(1, 1280 / Math.max(picture.width, picture.height));
+  const full = canvasOf(picture.width * scale, picture.height * scale);
+  const fullContext = full.getContext('2d');
+  fullContext.imageSmoothingQuality = 'high';
+  fullContext.drawImage(picture, 0, 0, full.width, full.height);
+  picture.close?.();
+  const blob = await new Promise((resolve) => full.toBlob(resolve, 'image/jpeg', 0.8));
+  if (!blob) throw new Error('duty_photo_unreadable');
+
+  const middle = canvasOf(HASH_WIDTH * 4, HASH_HEIGHT * 4);
+  const middleContext = middle.getContext('2d');
+  middleContext.imageSmoothingQuality = 'high';
+  middleContext.drawImage(full, 0, 0, middle.width, middle.height);
+  const small = canvasOf(HASH_WIDTH, HASH_HEIGHT);
+  const smallContext = small.getContext('2d', { willReadFrequently: true });
+  smallContext.imageSmoothingQuality = 'high';
+  smallContext.drawImage(middle, 0, 0, HASH_WIDTH, HASH_HEIGHT);
+  const grey = greyFromRgba(smallContext.getImageData(0, 0, HASH_WIDTH, HASH_HEIGHT).data);
+
+  return {
+    image: await blobToBase64(blob),
+    phash: differenceHash(grey),
+    // When the phone says the picture was made: a camera shot is «now», a
+    // photo picked from the gallery is as old as it is.
+    shot_at: Number(file.lastModified) || null,
+  };
+}
+
+// The camera, straight away where the phone allows it.
+function DutyPhotoButton({ busy, onPick, label = 'Сфотографировать салон' }) {
+  const inputRef = useRef(null);
+  return (
+    <>
+      <button className="btn duty-photo-button" type="button" disabled={busy} onClick={() => inputRef.current?.click()}>
+        {busy ? 'Отправляю фото…' : label}
+      </button>
+      <input
+        ref={inputRef}
+        hidden
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) onPick(file);
+        }}
+      />
+    </>
+  );
+}
+
+// Who is on duty today, on the owner's and the partner's Главная and on the
+// administrator's screen; the owner and the partner open the duty tab from it.
+function DutyTodayCard({ data, onOpen }) {
+  const now = useNow();
+  const duty = data.duty;
+  if (!duty) return null;
+  const today = rosterOn(duty, duty.today);
+  const windows = duty.windows || [];
+  const done = windowsDone(windows);
+  const fined = windows.filter((window) => window.fined).length;
+  const open = openWindow(windows, now);
+  const line = !today
+    ? 'Дежурный не назначен'
+    : fined
+      ? `Фото ${done} из ${windows.length} · штрафов ${fined}`
+      : `Фото ${done} из ${windows.length}`;
+  const body = (
+    <>
+      <span className="duty-card-text">
+        <small>Дежурный сегодня</small>
+        <strong>{today ? dutyMasterName(duty, today.master_id) : '—'}</strong>
+        <span className={fined ? 'is-negative' : ''}>{line}</span>
+        {open && !open.photo_at ? <span className="duty-card-now">{`Ждём фото до ${appointmentTime(open.ends_at)}`}</span> : null}
+      </span>
+      {onOpen ? (
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+      ) : null}
+    </>
+  );
+  return onOpen
+    ? <button className="card wide duty-card" type="button" onClick={onOpen}>{body}</button>
+    : <div className="card wide duty-card">{body}</div>;
+}
+
+function DutySwapSheet({ duty, day, selfId, busy, onAsk, onClose }) {
+  useTelegramBack(onClose);
+  const dialogRef = useDialogFocus();
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const candidates = swapCandidates(duty, day, selfId);
+  return (
+    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+      <div aria-label="Кто подменит" aria-modal="true" className="card master-sheet duty-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
+        <div className="master-sheet-head">
+          <div>
+            <strong>Кто подменит?</strong>
+            <small>{dutyDayTitle(day)}</small>
+          </div>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+        </div>
+        <div className="duty-candidates">
+          {candidates.map((master) => (
+            <button className="duty-candidate" disabled={busy} key={master.id} type="button" onClick={() => onAsk(master)}>
+              <strong>{master.name}</strong>
+              <span>{master.works ? 'работает' : 'выходной'}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A master's duty in «Работа»: who is on today; his photos when it is him;
+// what another master asked of him; his days ahead, each with «Найти
+// замену»; the answers to what he asked.
+function MyDuty({ data, reload, setError }) {
+  const now = useNow();
+  const setMessage = useNotice();
+  const { run, busy } = useAction(setError, setMessage);
+  const [asking, setAsking] = useState(null);
+  const closeAsking = useCallback(() => setAsking(null), []);
+  const duty = data.duty;
+  const masterId = data.byName[data.me]?.id;
+  if (!duty || !masterId) return null;
+
+  const today = rosterOn(duty, duty.today);
+  const mine = myDuty(duty, masterId, duty.today, now);
+  const onDutyToday = today && String(today.master_id) === String(masterId);
+  const windows = onDutyToday ? duty.windows || [] : [];
+  const current = currentWindow(windows, now);
+  const next = nextWindow(windows, now);
+  const doneLine = current
+    ? (next ? `Фото за ${dutyWindowLabel(current)} есть. Следующее с ${appointmentTime(next.starts_at)}` : `Фото за ${dutyWindowLabel(current)} есть`)
+    : next ? `Следующее фото с ${appointmentTime(next.starts_at)}` : 'Дежурство на сегодня закончено';
+  // A day can still be handed over until its duty begins.
+  const ahead = mine.days.filter((row) => !row.starts_at || now < new Date(row.starts_at).getTime());
+  const nameOf = (id) => dutyMasterName(duty, id);
+
+  async function sendPhoto(file) {
+    const ok = await run(async () => {
+      const photo = await prepareDutyPhoto(file);
+      await callLegacyApi('addDutyPhoto', photo);
+    }, 'Фото принято.');
+    if (ok) haptic('success');
+    reload();
+  }
+
+  async function ask(master) {
+    const day = asking;
+    const ok = await run(
+      () => callLegacyApi('askDutySwap', { day, to_master_id: master.id }),
+      `Просьба отправлена: ${master.name}.`,
+    );
+    if (ok) setAsking(null);
+    reload();
+  }
+
+  async function answer(swap, accept) {
+    await run(
+      () => callLegacyApi('answerDutySwap', { id: swap.id, accept }),
+      accept ? 'Принято: этот день дежурите вы.' : 'Вы отказались.',
+    );
+    reload();
+  }
+
+  async function cancel(swap) {
+    await run(() => callLegacyApi('cancelDutySwap', { id: swap.id }), 'Просьба отменена.');
+    reload();
+  }
+
+  return (
+    <>
+      {mine.incoming.map((swap) => (
+        <div className="card wide duty-request" key={swap.id} role="alert">
+          <strong>{`${nameOf(swap.from_master_id)} просит подменить его на дежурстве`}</strong>
+          <span>{dutyDayTitle(swap.day)}</span>
+          <div className="duty-request-actions">
+            <button className="btn" type="button" disabled={busy} onClick={() => answer(swap, true)}>Принять</button>
+            <button className="btn ghost" type="button" disabled={busy} onClick={() => answer(swap, false)}>Отказать</button>
+          </div>
+        </div>
+      ))}
+
+      <div className={`card duty-mine${onDutyToday ? ' is-on-duty' : ''}`}>
+        <h2>Дежурство</h2>
+        <DutyTrialNote duty={duty} />
+        {onDutyToday ? (
+          <>
+            <p className="big-line">Сегодня дежурите вы</p>
+            <DutyWindows windows={windows} now={now} />
+            {current && !current.photo_at ? (
+              <DutyPhotoButton busy={busy} onPick={sendPhoto} />
+            ) : (
+              <p className="hint">{doneLine}</p>
+            )}
+          </>
+        ) : (
+          <p className="big-line">{today ? `Сегодня дежурит ${nameOf(today.master_id)}` : 'Сегодня дежурный не назначен'}</p>
+        )}
+
+        {ahead.length ? (
+          <div className="duty-ahead">
+            <span className="duty-ahead-title">Ваши дежурства</span>
+            {ahead.map((row) => {
+              const asked = mine.outgoing.filter((swap) => swap.day === row.day);
+              return (
+                <div className="duty-ahead-row" key={row.day}>
+                  <div>
+                    <strong>{dutyDayTitle(row.day)}</strong>
+                    {row.starts_at ? <span>{`с ${appointmentTime(row.starts_at)} до ${appointmentTime(row.ends_at)}`}</span> : null}
+                    {asked.map((swap) => (
+                      <span className="duty-asked" key={swap.id}>
+                        {`Ждём ответа: ${nameOf(swap.to_master_id)}`}
+                        <button className="link-button" type="button" disabled={busy} onClick={() => cancel(swap)}>Отменить</button>
+                      </span>
+                    ))}
+                  </div>
+                  <button className="btn ghost" type="button" disabled={busy} onClick={() => setAsking(row.day)}>Найти замену</button>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {mine.answered.map((swap) => (
+          <p className={`duty-answer is-${swap.status}`} key={swap.id}>
+            {swap.status === 'accepted'
+              ? `${nameOf(swap.to_master_id)} подменит вас: ${dutyDayLabel(swap.day, 'ru')}`
+              : `${nameOf(swap.to_master_id)} отказался: ${dutyDayLabel(swap.day, 'ru')}`}
+          </p>
+        ))}
+      </div>
+
+      {asking ? (
+        <DutySwapSheet duty={duty} day={asking} selfId={masterId} busy={busy} onAsk={ask} onClose={closeAsking} />
+      ) : null}
+    </>
+  );
+}
+
+// A master's own «Дежурство» tab (owner's request of 2026-10-26: beside
+// Работа, Календарь and Отзывы).
+function MasterDutyView({ data, reload, setError }) {
+  return (
+    <section className="view-grid">
+      {data.duty
+        ? <MyDuty data={data} reload={reload} setError={setError} />
+        : <p className="hint">Дежурства появятся после обновления сервера.</p>}
+    </section>
+  );
+}
+
+// A day's photos for the owner and the partner, by window, with the fines.
+function DutyDayPhotos({ day, refreshKey, setError }) {
+  const now = useNow();
+  const [result, setResult] = useState(null);
+  const [opened, setOpened] = useState(null);
+  const closeOpened = useCallback(() => setOpened(null), []);
+  useEffect(() => {
+    let alive = true;
+    callLegacyApi('dutyDay', { day })
+      .then((answer) => { if (alive) setResult(answer); })
+      .catch((error) => { if (alive) { setResult({ windows: [], photos: [], fines: [] }); setError(actionErrorText(error)); } });
+    return () => { alive = false; };
+  }, [day, refreshKey, setError]);
+
+  if (!result) return <p className="hint">Загружаю фото…</p>;
+  const photos = result.photos || [];
+  const fines = result.fines || [];
+  const photoOf = (window) => photos.find((photo) => photo.window_starts_at === window.starts_at)
+    || photos.find((photo) => new Date(photo.window_starts_at).getTime() === new Date(window.starts_at).getTime());
+  const fineOf = (window) => fines.find((fine) => new Date(fine.duty_window).getTime() === new Date(window.starts_at).getTime());
+  const windows = result.windows || [];
+  if (!windows.length && !photos.length) return <p className="hint">В этот день дежурного не было.</p>;
+
+  return (
+    <>
+      <div className="duty-photos">
+        {windows.map((window) => {
+          const photo = photoOf(window);
+          const fine = fineOf(window);
+          // Not over yet: nothing is missing.
+          const status = windowStatus({ ...window, photo_at: photo?.taken_at, fined: Boolean(fine) }, now);
+          return (
+            <div className="duty-photo" key={window.starts_at}>
+              {photo?.url ? (
+                <button className="duty-photo-thumb" type="button" onClick={() => setOpened(photo)}>
+                  <img alt={`Фото ${dutyWindowLabel(window)}`} loading="lazy" src={photo.url} />
+                </button>
+              ) : (
+                <span className={`duty-photo-empty is-${status}`}>
+                  {fine ? `штраф ${money(fine.amount)}` : status === 'open' ? 'ждём фото' : status === 'later' ? 'позже' : 'нет фото'}
+                </span>
+              )}
+              <span>{dutyWindowLabel(window)}</span>
+            </div>
+          );
+        })}
+      </div>
+      {opened ? <DutyPhotoViewer photo={opened} onClose={closeOpened} /> : null}
+    </>
+  );
+}
+
+function DutyPhotoViewer({ photo, onClose }) {
+  useTelegramBack(onClose);
+  return (
+    <div className="modal-backdrop duty-viewer" onClick={onClose} role="dialog" aria-modal="true" aria-label="Фото дежурного">
+      <img alt="Фото дежурного" src={photo.url} />
+      <span>{`Отправлено в ${appointmentTime(photo.taken_at)}`}</span>
+    </div>
+  );
+}
+
+// Команда → «Дежурство», for the owner and the partner: the week (the owner
+// sets it; on Sunday the next week opens first), a day's photos, and the
+// requests between masters.
+function DutyView({ data, reload, setError }) {
+  const duty = data.duty;
+  const readOnly = isReadOnly(data);
+  const setMessage = useNotice();
+  const { run, busy } = useAction(setError, setMessage);
+  const today = duty?.today || TODAY;
+  const thisMonday = mondayOf(today);
+  const isSunday = new Date(`${today}T12:00:00Z`).getUTCDay() === 0;
+  const [week, setWeek] = useState(isSunday ? 'next' : 'this');
+  const [edits, setEdits] = useState({});
+  const [photoDay, setPhotoDay] = useState(today);
+  const monday = week === 'next' ? addDaysIso(thisMonday, 7) : thisMonday;
+  const days = weekDays(monday);
+
+  if (!duty) return <section className="view-grid"><p className="hint">Дежурства появятся после обновления сервера.</p></section>;
+
+  const valueOf = (day) => (Object.prototype.hasOwnProperty.call(edits, day) ? edits[day] : String(rosterOn(duty, day)?.master_id ?? ''));
+  const changes = rosterChanges(duty, Object.fromEntries(days.filter((day) => day >= today).map((day) => [day, valueOf(day)])));
+  const photoDays = Array.from({ length: 7 }, (_, index) => addDaysIso(today, -index));
+  const todayDone = windowsDone(duty.windows || []);
+  const swaps = (duty.swaps || []).filter((swap) => swap.status === 'pending' || swap.status === 'accepted');
+
+  async function save() {
+    const ok = await run(() => callLegacyApi('setDutyRoster', { days: changes }), 'График дежурств сохранён.');
+    if (ok) setEdits({});
+    reload();
+  }
+
+  return (
+    <section className="view-grid">
+      <div className="card wide duty-roster">
+        <div className="duty-roster-head">
+          <h2>Дежурства</h2>
+          <div className="seg duty-week-seg" role="group" aria-label="Неделя">
+            <button className={week === 'this' ? 'on' : ''} type="button" onClick={() => setWeek('this')}>Эта неделя</button>
+            <button className={week === 'next' ? 'on' : ''} type="button" onClick={() => setWeek('next')}>Следующая</button>
+          </div>
+        </div>
+        <DutyTrialNote duty={duty} />
+        <div className="duty-days">
+          {days.map((day) => {
+            const row = rosterOn(duty, day);
+            const past = day < today;
+            const weekday = DUTY_WEEKDAYS[(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7];
+            return (
+              <div className={`duty-day${day === today ? ' is-today' : ''}${past ? ' is-past' : ''}`} key={day}>
+                <span className="duty-day-name">
+                  {weekday} {Number(day.slice(8))}
+                  {row?.source === 'swap' ? <small className="duty-day-swap">подмена</small> : null}
+                </span>
+                {readOnly || past ? (
+                  <strong>{row ? dutyMasterName(duty, row.master_id) : '—'}</strong>
+                ) : (
+                  <select aria-label={`Дежурный ${dutyDayLabel(day, 'ru')}`} value={valueOf(day)} onChange={(event) => setEdits((current) => ({ ...current, [day]: event.target.value }))}>
+                    <option value="">—</option>
+                    {(duty.masters || []).map((master) => (
+                      <option key={master.id} value={String(master.id)}>
+                        {worksOn(duty, day, master.id) ? master.name : `${master.name} · выходной`}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {!readOnly && changes.length ? (
+          <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняю…' : 'Сохранить график'}</button>
+        ) : null}
+      </div>
+
+      <div className="card wide duty-day-card">
+        <h2>Фото дежурных</h2>
+        <div className="day-chips" role="group" aria-label="День">
+          {photoDays.map((day, index) => (
+            <button className={`chip${photoDay === day ? ' on' : ''}`} key={day} type="button" onClick={() => setPhotoDay(day)}>
+              {index === 0 ? 'Сегодня' : index === 1 ? 'Вчера' : <>{DUTY_WEEKDAYS[(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7]} {Number(day.slice(8))}</>}
+            </button>
+          ))}
+        </div>
+        <DutyDayPhotos day={photoDay} refreshKey={photoDay === today ? todayDone : 0} setError={setError} />
+      </div>
+
+      {swaps.length ? (
+        <div className="card wide duty-swaps">
+          <h2>Подмены</h2>
+          {swaps.map((swap) => (
+            <p key={swap.id}>
+              {`${dutyMasterName(duty, swap.from_master_id)} → ${dutyMasterName(duty, swap.to_master_id)} · ${dutyDayLabel(swap.day, 'ru')} · ${swap.status === 'pending' ? 'ждёт ответа' : 'договорились'}`}
+            </p>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 const AUDIT_ENTITY_LABELS = {
   fine: 'Штраф',
   expense: 'Расход',
@@ -5712,15 +6276,16 @@ const NAV_ITEMS = [
   { id: 'sales', label: 'Продажи', views: ['admin'], icon: 'receipt' },
   { id: 'expenses', label: 'Расходы', views: ['finance'], icon: 'wallet' },
   { id: 'stock', label: 'Склад', views: ['stock'], icon: 'box' },
-  { id: 'team', label: 'Команда', views: ['attendance', 'master', 'bookings', 'payouts', 'reviews'], icon: 'team' },
+  { id: 'team', label: 'Команда', views: ['attendance', 'duty', 'master', 'bookings', 'payouts', 'reviews'], icon: 'team' },
 ];
 
 // A master's own bar (owner's request of 2026-10-21): his working day, his
-// calendar, and how clients rate him.
+// calendar, and how clients rate him; and his duty (2026-10-26), its own tab.
 const MASTER_NAV_ITEMS = [
   { id: 'work', label: 'Работа', views: ['master'], icon: 'scissors' },
   { id: 'calendar', label: 'Календарь', views: ['mycalendar'], icon: 'calendar' },
   { id: 'myreviews', label: 'Отзывы', views: ['myreviews'], icon: 'star' },
+  { id: 'myduty', label: 'Дежурство', views: ['myduty'], icon: 'broom' },
 ];
 
 const TEAM_TABS = [
@@ -5729,6 +6294,8 @@ const TEAM_TABS = [
   ['bookings', 'Записи'],
   ['payouts', 'Выплаты'],
   ['reviews', 'Отзывы'],
+  // Last: anywhere else it pushed the pills on a phone to a third line.
+  ['duty', 'Дежурство'],
 ];
 
 // The administrator has no tab bar: two sections at the top of her screen.
@@ -5742,6 +6309,7 @@ const VIEW_TITLES = {
   admin: 'Продажи',
   finance: 'Расходы',
   attendance: 'Команда',
+  duty: 'Команда',
   master: 'Команда',
   stock: 'Склад',
   bookings: 'Команда',
@@ -5757,7 +6325,7 @@ function viewIdsForUser(data) {
   if (data.role === 'admin') {
     // No «Рабочий день» (entering sales for a master) and no settings.
     // The partner reads everything and takes bookings in «Записи».
-    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance', 'bookings', 'payouts'];
+    if (isReadOnly(data)) return ['overview', 'admin', 'finance', 'stock', 'attendance', 'duty', 'bookings', 'payouts'];
     const canSeeOverview = ['owner', 'admin'].includes(data.appRole);
     return [
       ...(canSeeOverview ? ['overview'] : []),
@@ -5765,13 +6333,15 @@ function viewIdsForUser(data) {
       'finance',
       'stock',
       'attendance',
+      // The duty roster is the owner's to set (owner's decision of 2026-10-26).
+      ...(data.appRole === 'owner' ? ['duty'] : []),
       'master',
       'bookings',
       ...(data.appRole === 'owner' ? ['payouts', 'reviews'] : []),
       'settings',
     ];
   }
-  if (data.role === 'master') return ['master', 'mycalendar', 'myreviews'];
+  if (data.role === 'master') return ['master', 'mycalendar', 'myreviews', 'myduty'];
   return [];
 }
 
@@ -5823,6 +6393,7 @@ function NavIcon({ name }) {
   if (name === 'scissors') return <svg {...common}><circle cx="6" cy="18" r="3" /><circle cx="18" cy="18" r="3" /><path d="M8.1 15.9 20 4M15.9 15.9 4 4" /></svg>;
   if (name === 'calendar') return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>;
   if (name === 'star') return <svg {...common}><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" /></svg>;
+  if (name === 'broom') return <svg {...common}><path d="M19 3l-7.5 7.5" /><path d="M9.5 9.5l5 5" /><path d="M9.5 9.5C7 10 4.5 12.5 3 17l4 4c4.5-1.5 7-4 7.5-6.5" /><path d="M6.5 15.5l2 2" /></svg>;
   return <svg {...common}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2.2.6 3.5 2.6 3.5 6" /></svg>;
 }
 
@@ -6411,6 +6982,10 @@ export default function App() {
   ), [availableViews, data.role]);
   // The badge is work for whoever approves; a read-only account has none.
   const pendingSalesCount = isReadOnly(data) ? 0 : approvalQueue(data).count;
+  // A master's duty tab lights up for a request or a photo due now.
+  const dutyBadge = data.role === 'master' && data.duty
+    ? masterDutyAttention(data.duty, data.byName[data.me]?.id, data.duty.today, Date.now())
+    : 0;
 
   // «Пришёл → визит» on a booking opens the owner's Рабочий день with the
   // visit filled in.
@@ -6470,6 +7045,7 @@ export default function App() {
     master: MasterView,
     admin: AdminView,
     attendance: AttendanceView,
+    duty: DutyView,
     finance: FinanceView,
     stock: data.role === 'frontdesk' ? DeskStockView : StockView,
     bookings: BookingsView,
@@ -6477,6 +7053,7 @@ export default function App() {
     reviews: ReviewsView,
     mycalendar: MasterCalendarView,
     myreviews: MasterReviewsView,
+    myduty: MasterDutyView,
     settings: SettingsView,
   }[view] || MasterView;
 
@@ -6495,7 +7072,7 @@ export default function App() {
     : view === 'settings'
       ? `${data.appRole === 'owner' ? 'Владелец' : 'Администратор'} · вход через Telegram`
       : todayHeading();
-  const inTeam = ['attendance', 'master', 'bookings', 'payouts', 'reviews'].includes(view);
+  const inTeam = ['attendance', 'duty', 'master', 'bookings', 'payouts', 'reviews'].includes(view);
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
@@ -6567,7 +7144,7 @@ export default function App() {
         <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>
           {navItems.map((item) => {
             const active = item.views.includes(view);
-            const badge = item.id === 'sales' ? pendingSalesCount : 0;
+            const badge = item.id === 'sales' ? pendingSalesCount : item.id === 'myduty' ? dutyBadge : 0;
             return (
               <button
                 aria-current={active ? 'page' : undefined}
@@ -6579,7 +7156,7 @@ export default function App() {
                 <NavIcon name={item.icon} />
                 <span>{item.label}</span>
                 {badge ? (
-                  <b className="tabbar-badge" aria-label={`${badge} продаж ожидают подтверждения`}>
+                  <b className="tabbar-badge" aria-label={item.id === 'myduty' ? 'Дежурство ждёт вас' : `${badge} продаж ожидают подтверждения`}>
                     {badge > 99 ? '99+' : badge}
                   </b>
                 ) : null}

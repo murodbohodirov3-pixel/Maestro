@@ -29,7 +29,7 @@ test('the api source still names the actions this guard is checked against', () 
 
 test('a partner reads, takes bookings and sets days off, nothing else, including actions added later', () => {
   assert.equal(PARTNER_ROLE, 'partner');
-  const allowed = ['load', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'completeClientName', 'setMasterDayOff', 'moveBooking', 'setLanguage', 'siteStats', 'addFine'];
+  const allowed = ['load', 'bookingSlots', 'addBooking', 'setAppointmentOutcome', 'searchClients', 'addClient', 'completeClientName', 'setMasterDayOff', 'moveBooking', 'setLanguage', 'siteStats', 'addFine', 'dutyDay'];
   for (const action of allowed) assert.equal(partnerMayCall(action), true, action);
   const refused = apiActions.filter((action) => ![...allowed, 'telegramOAuth'].includes(action));
   assert.ok(refused.length >= 20);

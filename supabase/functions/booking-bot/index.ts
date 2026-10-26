@@ -17,6 +17,10 @@
 //                       a new number is asked its name, its surname and
 //                       «Вы уже были у нас?» (k:1 / k:0), a card without a
 //                       surname only that; the master sees him in the app.
+// And duty (owner's decisions of 2026-10-26), in @Maestro_uzbot only:
+//   d:<swap>:<1|0>    → the asked master takes the day over or declines;
+//   {"action":"duty"} → the evening notice, the window reminder, the fine and
+//                       the owner's Sunday reminder, and old photos deleted.
 // And the rating of a visit, in @MaestroBarberia_bot only: half an hour after
 // it is recorded, {"action":"reviews"} asks four questions in one message
 // (v:<review>:<step>:<score>), then asks for a few words. And «пора
@@ -51,6 +55,17 @@ import {
 import { bookingSettings, db, tokenHash } from '../_shared/bookingHttp.ts';
 import { maskPhoneForStaff } from '../_shared/access.js';
 import { tidyNamePart } from '../_shared/clientName.js';
+import {
+  dutyDayLabel,
+  dutyEveNotice,
+  dutyFineNotice,
+  dutyRosterReminder,
+  dutySwapAnswer,
+  dutySwapOwnerNotice,
+  dutyText,
+  dutyWindowNotice,
+  parseDutyTap,
+} from '../_shared/duty.js';
 
 type Bot = 'client' | 'staff';
 
@@ -315,6 +330,8 @@ async function handleCallback(bot: Bot, query: Record<string, any>) {
   const tgUserId = String(query.from.id);
   const fallbackLang = langOf(query.from.language_code);
   const [kind, appointmentId] = String(query.data ?? '').split(':');
+  // «Принять» / «Отказать» under a request to take a duty day over.
+  if (bot === 'staff' && kind === 'd') return dutySwapTap(query);
   if (bot === 'client' && kind === 'v') return reviewTap(query);
   if (bot === 'client' && kind === 'o') return haircutRemindersOff(query);
   if (bot === 'client' && (kind === 'l' || kind === 'k')) {
@@ -388,6 +405,112 @@ async function masterNoShow(appointmentId: string, tgUserId: string, chatId: num
     await telegram('staff', 'editMessageReplyMarkup', { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } });
   }
   return send('staff', chatId, data?.ok ? replies.noShow : replies.closed);
+}
+
+// ------------------------------------------------------------- дежурство
+
+// A master's Telegram chat and language: his own login, or the id the masters
+// table kept from before logins.
+async function masterChatOf(masterId: number) {
+  const login = await db.from('app_users').select('telegram_id, lang')
+    .eq('master_id', masterId).eq('active', true).not('telegram_id', 'is', null).limit(1).maybeSingle();
+  if (login.data?.telegram_id) return { chatId: String(login.data.telegram_id), lang: String(login.data.lang || 'ru') };
+  const master = await db.from('masters').select('telegram_id').eq('id', masterId).maybeSingle();
+  return master.data?.telegram_id ? { chatId: String(master.data.telegram_id), lang: 'ru' } : null;
+}
+
+// The asked master taps «Принять» or «Отказать»: the same answer as in the
+// app, and the one who asked hears it, the owner too if the day changed hands.
+async function dutySwapTap(query: Record<string, any>) {
+  const tap = parseDutyTap(query.data);
+  const chatId = query.message?.chat?.id;
+  if (!tap || !chatId) return;
+  const { data: user, error: userError } = await db.from('app_users')
+    .select('master_id, lang').eq('telegram_id', String(query.from.id)).eq('active', true).maybeSingle();
+  if (userError) throw userError;
+  const replies = dutyText(user?.lang).replies;
+  if (!user?.master_id) return send('staff', chatId, replies.notYours);
+
+  const { data, error } = await db.rpc('maestro_answer_duty_swap', {
+    p_swap_id: tap.swapId,
+    p_master_id: Number(user.master_id),
+    p_accept: tap.accept,
+  });
+  if (error) throw error;
+  if (query.message?.message_id) {
+    await telegram('staff', 'editMessageReplyMarkup', { chat_id: chatId, message_id: query.message.message_id, reply_markup: { inline_keyboard: [] } });
+  }
+  if (!data?.ok) {
+    if (data?.error === 'duty_swap_not_yours') return send('staff', chatId, replies.notYours);
+    if (data?.error === 'duty_swap_too_late') return send('staff', chatId, replies.tooLate);
+    return send('staff', chatId, replies.closed);
+  }
+  const accepted = data.status === 'accepted';
+  await send('staff', chatId, accepted ? replies.accepted(dutyDayLabel(data.day, user.lang)) : replies.declined);
+  await tellDutySwapAnswer(data);
+}
+
+// The asker hears the answer, and the owner hears of a day that changed hands
+// (the api says the same when the answer comes from the app).
+async function tellDutySwapAnswer(answer: Record<string, any>) {
+  const accepted = answer.status === 'accepted';
+  const asker = await masterChatOf(Number(answer.from_master_id));
+  if (asker) {
+    await send('staff', asker.chatId, dutySwapAnswer({ lang: asker.lang, toName: answer.to_name, day: answer.day, accepted }));
+  }
+  if (accepted) {
+    const notice = dutySwapOwnerNotice({ fromName: answer.from_name, toName: answer.to_name, day: answer.day });
+    await Promise.all((await ownerChats()).map((ownerChat) => send('staff', ownerChat, notice)));
+  }
+}
+
+// Every five minutes while there is something to say: the evening notice,
+// the window reminder, the fine, the owner's Sunday reminder; and the photos
+// older than 30 days are deleted.
+async function sendDutyNotices() {
+  const { data, error } = await db.rpc('maestro_claim_duty_notices', { p_limit: 50 });
+  if (error) throw error;
+  const settings = await db.from('settings').select('duty_interval_minutes').eq('id', 1).maybeSingle();
+  const intervalMinutes = Number(settings.data?.duty_interval_minutes) || 120;
+  let sent = 0;
+  for (const notice of data ?? []) {
+    if (!notice.chat_id) {
+      await db.rpc('maestro_duty_notice_done', { p_notice_id: notice.notice_id, p_sent: false });
+      continue;
+    }
+    const lang = notice.lang;
+    const payload = notice.payload ?? {};
+    const text = notice.kind === 'eve'
+      ? dutyEveNotice({ lang, day: payload.day, startsAt: payload.starts_at, endsAt: payload.ends_at, intervalMinutes, amount: payload.amount, trial: payload.trial === true })
+      : notice.kind === 'window'
+        ? dutyWindowNotice({ lang, startsAt: payload.starts_at, endsAt: payload.ends_at, amount: payload.amount, trial: payload.trial === true })
+        : notice.kind === 'fine'
+          ? dutyFineNotice({ lang, startsAt: payload.starts_at, endsAt: payload.ends_at, amount: payload.amount })
+          : dutyRosterReminder({ from: payload.from, missing: payload.missing });
+    const result = await send('staff', notice.chat_id, text, {
+      reply_markup: { inline_keyboard: [[{ text: dutyText(lang).openButton, web_app: { url: APP_URL } }]] },
+    });
+    if (result.ok) sent += 1;
+    await db.rpc('maestro_duty_notice_done', { p_notice_id: notice.notice_id, p_sent: result.ok });
+  }
+  return { claimed: (data ?? []).length, sent, removed: await removeOldDutyPhotos() };
+}
+
+async function removeOldDutyPhotos() {
+  const today = new Date(Date.now() + 5 * 60 * 60 * 1000);
+  today.setUTCDate(today.getUTCDate() - 30);
+  const { data, error } = await db.from('duty_photos').select('id, storage_path')
+    .lt('day', today.toISOString().slice(0, 10)).order('id').limit(100);
+  if (error) throw error;
+  if (!data?.length) return 0;
+  const removed = await db.storage.from('duty-photos').remove(data.map((photo: { storage_path: string }) => photo.storage_path));
+  if (removed.error) {
+    console.warn('[booking-bot] old duty photos kept', removed.error.message);
+    return 0;
+  }
+  const deleted = await db.from('duty_photos').delete().in('id', data.map((photo: { id: number }) => photo.id));
+  if (deleted.error) throw deleted.error;
+  return data.length;
 }
 
 async function handleUpdate(bot: Bot, update: Record<string, any>) {
@@ -770,6 +893,7 @@ async function handleService(action: string, input: Record<string, unknown>) {
   if (action === 'reminders') return reply({ ok: true, ...(await sendReminders()) });
   if (action === 'reviews') return reply({ ok: true, ...(await sendReviewInvites()) });
   if (action === 'haircut_reminders') return reply({ ok: true, ...(await sendHaircutReminders()) });
+  if (action === 'duty') return reply({ ok: true, ...(await sendDutyNotices()) });
   const bot: Bot = input.bot === 'client' ? 'client' : 'staff';
   if (action === 'bot_info') {
     const me = await telegram(bot, 'getMe', {});
