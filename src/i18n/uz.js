@@ -429,6 +429,8 @@ export const PHRASES = {
   'новое': 'yangi',
   'Начальный остаток': 'Boshlangʻich qoldiq',
   'Координаты вручную': 'Koordinatalarni qoʻlda kiritish',
+  'Удалить аванс': 'Avansni oʻchirish',
+  'Удалить выплату': 'Toʻlovni oʻchirish',
   'Сколько выдать — в «Выплатах» →': 'Qancha berish — «Toʻlovlar»da →',
 
   // Settings

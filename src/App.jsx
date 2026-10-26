@@ -392,6 +392,14 @@ function useNotice() {
   return useContext(NoticeContext);
 }
 
+// A sheet takes the keyboard and screen-reader focus when it opens (owner's
+// review of 2026-10-26); it stayed on the button behind the dimmed page.
+function useDialogFocus() {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []);
+  return ref;
+}
+
 // Android's back button closed the whole app while a sheet was open, and a
 // half-made booking with it (owner's review of 2026-10-26). Whatever is open
 // on top registers how to close itself; Telegram's «Назад» takes one step.
@@ -1117,6 +1125,7 @@ function MonthlyTrend({ series, forecast }) {
 // of the last, and the months before it.
 function MasterSheet({ data, master, onClose }) {
   useTelegramBack(onClose);
+  const dialogRef = useDialogFocus();
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     const previousOverflow = document.body.style.overflow;
@@ -1174,7 +1183,9 @@ function MasterSheet({ data, master, onClose }) {
         aria-label={`Мастер ${master.name}`}
         aria-modal="true"
         className="card master-sheet"
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="master-sheet-head">
@@ -1787,6 +1798,7 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
 // every visit — when, at what time, to which master, for how much.
 function ClientSheet({ clientId, onClose, setError, reload }) {
   useTelegramBack(onClose);
+  const dialogRef = useDialogFocus();
   // The card shown; a merge moves it to the card that stays.
   const [currentId, setCurrentId] = useState(clientId);
   const [card, setCard] = useState(null);
@@ -1888,7 +1900,7 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
 
   return (
     <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
-      <div aria-label="Клиент" aria-modal="true" className="card master-sheet client-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+      <div aria-label="Клиент" aria-modal="true" className="card master-sheet client-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
             <strong>{client?.full_name || 'Клиент'}</strong>
@@ -2170,6 +2182,7 @@ function MoveBooking({ data, appointment, reload, setError, onDone, onCancel }) 
 
 function BookingSheet({ data, appointment, reload, setError, onClose, onVisit }) {
   useTelegramBack(onClose);
+  const dialogRef = useDialogFocus();
   const isOwner = data.appRole === 'owner';
   const canMove = ['owner', 'admin', 'partner'].includes(data.appRole);
   const [moving, setMoving] = useState(false);
@@ -2187,7 +2200,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
 
   return (
     <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
-      <div aria-label="Запись" aria-modal="true" className="card master-sheet booking-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+      <div aria-label="Запись" aria-modal="true" className="card master-sheet booking-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
             {isOwner && appointment.client_id ? (
@@ -2299,6 +2312,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
     onClose();
   }
   useTelegramBack(leave);
+  const dialogRef = useDialogFocus();
 
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') leave(); };
@@ -2355,7 +2369,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
 
   return (
     <div className="modal-backdrop sheet-backdrop" onClick={leave}>
-      <div aria-label="Новая запись" aria-modal="true" className="card master-sheet booking-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
+      <div aria-label="Новая запись" aria-modal="true" className="card master-sheet booking-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
             <strong>Новая запись</strong>
@@ -3147,7 +3161,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
                 {isRejectedByOwner(sale) ? <span className="approval rejected">Отклонено владельцем — не засчитано</span> : null}
               </div>
               {data.role === 'admin' || isPendingOwnerApproval(sale) ? (
-                <button className="del" type="button" onClick={() => deleteSale(sale.id)}>×</button>
+                <button aria-label="Удалить" className="del" type="button" onClick={() => deleteSale(sale.id)}>×</button>
               ) : null}
             </div>
           )}
@@ -3979,6 +3993,7 @@ function AttendanceView({ data, reload, setError }) {
                 </div>
                 {readOnly ? null : (
                   <button
+                    aria-label="Удалить штраф"
                     className="del"
                     disabled={!canDelete}
                     title={canDelete ? 'Удалить штраф' : 'Срок удаления 7 дней истёк'}
@@ -4203,7 +4218,7 @@ function FinanceView({ data, reload, setError }) {
               <strong>{money(expense.amount_uzs)}</strong>
               {expense.category === 'stock'
                 ? null
-                : <button className="del" type="button" onClick={() => deleteExpense(expense)}>×</button>}
+                : <button aria-label="Удалить" className="del" type="button" onClick={() => deleteExpense(expense)}>×</button>}
             </div>
           </div>
         )} />
@@ -5269,13 +5284,13 @@ function PayoutsView({ data, reload, setError }) {
                 {row.advanceRows.map((advance) => (
                   <div className="payout-history-row" key={`a${advance.id}`}>
                     <span>Аванс {money(advance.amount)} · {displayDate(advance.given_on)}{advance.note ? ` · ${advance.note}` : ''}</span>
-                    {isOwner && !row.paid ? <button className="del" type="button" disabled={busy} onClick={() => takeBack('advance', advance, `аванс ${row.master.name} ${money(advance.amount)} сум`)}>×</button> : null}
+                    {isOwner && !row.paid ? <button aria-label="Удалить аванс" className="del" type="button" disabled={busy} onClick={() => takeBack('advance', advance, `аванс ${row.master.name} ${money(advance.amount)} сум`)}>×</button> : null}
                   </div>
                 ))}
                 {row.payoutRows.map((payout) => (
                   <div className="payout-history-row" key={`p${payout.id}`}>
                     <span>Выплачено {money(payout.amount)} · {displayDate(String(payout.paid_at).slice(0, 10))}</span>
-                    {isOwner ? <button className="del" type="button" disabled={busy} onClick={() => takeBack('payout', payout, `выплату ${row.master.name} ${money(payout.amount)} сум`)}>×</button> : null}
+                    {isOwner ? <button aria-label="Удалить выплату" className="del" type="button" disabled={busy} onClick={() => takeBack('payout', payout, `выплату ${row.master.name} ${money(payout.amount)} сум`)}>×</button> : null}
                   </div>
                 ))}
               </div>
