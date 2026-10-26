@@ -780,12 +780,18 @@ function shareComparison(current, previous, comparisonRange) {
   };
 }
 
-// A figure that runs up to its value when it first appears, and glides to a
-// new value when the data refreshes. Honors reduced motion.
-function useCountUp(value, duration = 900) {
+// A figure runs up to its value the first time the app shows one, and glides
+// to a new value when the data refreshes. It used to run 0.9 s from zero on
+// every visit to a tab, so a half-counted «18 645 051» was what the owner
+// read (owner's review of 2026-10-26): once a session now, in 0.2 s, and
+// from then on it opens at its value. Honors reduced motion.
+let countUpPlayed = false;
+
+function useCountUp(value, duration = 200) {
   const target = Number(value) || 0;
-  const [shown, setShown] = useState(0);
-  const fromRef = useRef(0);
+  const [shown, setShown] = useState(() => (countUpPlayed ? target : 0));
+  const fromRef = useRef(countUpPlayed ? target : 0);
+  useEffect(() => { countUpPlayed = true; }, []);
 
   useEffect(() => {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -1303,7 +1309,13 @@ function SiteCard() {
   );
 }
 
+// Обзор's cards rise in the first time it opens in a session, not on every
+// visit to the tab (owner's review of 2026-10-26).
+let overviewSeen = false;
+
 function OverviewView({ data, reload, setError, setView }) {
+  const [overviewEntering] = useState(() => !overviewSeen);
+  useEffect(() => { overviewSeen = true; }, []);
   const [openMaster, setOpenMaster] = useState(null);
   const closeMaster = useCallback(() => setOpenMaster(null), []);
   const canEditGoal = ['owner', 'admin'].includes(data.appRole);
@@ -1388,7 +1400,7 @@ function OverviewView({ data, reload, setError, setView }) {
   const queue = approvalQueue(data);
 
   return (
-    <section className="view-grid">
+    <section className={`view-grid${overviewEntering ? ' is-entering' : ''}`}>
       {/* An approval queue is work waiting, not a statistic. It leaves
           entirely when there is nothing to approve. */}
       {queue.count && !isReadOnly(data) ? (

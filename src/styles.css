@@ -557,9 +557,11 @@ small {
   cursor: pointer;
 }
 
-.overview-more:hover {
-  background: var(--surface-2);
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .overview-more:hover {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
 }
 
 .offset-history-card .overview-more {
@@ -1187,9 +1189,11 @@ small {
   color: var(--pay-qr);
 }
 
-.pay-type:not(.on):hover {
-  border-color: #C9D3E3;
-  background: var(--surface);
+@media (hover: hover) and (pointer: fine) {
+  .pay-type:not(.on):hover {
+    border-color: #C9D3E3;
+    background: var(--surface);
+  }
 }
 
 .chart {
@@ -2648,8 +2652,10 @@ td:first-child {
   text-align: left;
 }
 
-.master-rank button:hover {
-  border-color: color-mix(in srgb, var(--brass) 45%, var(--line));
+@media (hover: hover) and (pointer: fine) {
+  .master-rank button:hover {
+    border-color: color-mix(in srgb, var(--brass) 45%, var(--line));
+  }
 }
 
 .master-rank button.is-leader {
@@ -3762,10 +3768,16 @@ label {
   border-top: 0;
 }
 
-.master-rank button.is-leader,
-.master-rank button:hover {
+.master-rank button.is-leader {
   border-color: var(--line-soft);
   background: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .master-rank button:hover {
+    border-color: var(--line-soft);
+    background: transparent;
+  }
 }
 
 .master-rank-number {
@@ -5828,4 +5840,87 @@ label {
 
 .settings-coordinates[open] summary {
   margin-bottom: 8px;
+}
+
+/* A tap answers at once (owner's review of 2026-10-26): no grey or blue flash
+   from the browser, a button sinks a little under the finger, a double tap
+   does not zoom, and a long press does not select a button's label. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+.btn,
+summary {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button:not(:disabled),
+.btn {
+  transition: transform 0.12s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+button:not(:disabled):active,
+.btn:active {
+  transform: scale(0.97);
+}
+
+/* Обзор's entrance: once a session, a fifth of a second. */
+.pending-banner,
+.revenue-hero,
+.revenue-hero-bar-column i {
+  animation: none;
+}
+
+.is-entering .pending-banner,
+.is-entering .revenue-hero {
+  animation: rise-in 0.2s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.is-entering .revenue-hero-bar-column i {
+  animation: bar-grow 0.3s cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active,
+  .btn:active {
+    transform: none;
+  }
+
+  .is-entering .pending-banner,
+  .is-entering .revenue-hero,
+  .is-entering .revenue-hero-bar-column i {
+    animation: none;
+  }
+}
+
+/* Команда's sections fit on a phone in two rows, as sections rather than as
+   one more switch like the period under them. */
+.team-tabs {
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  overflow: visible;
+  border-radius: 0;
+  background: transparent;
+}
+
+.team-tabs button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.team-tabs button.on {
+  border-color: var(--nav);
+  background: var(--nav);
+  color: #FFFFFF;
+  box-shadow: none;
 }
