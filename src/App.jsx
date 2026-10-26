@@ -802,10 +802,18 @@ function DeltaChip({ current, previous, inProgress, invert = false }) {
   return <span className={`delta-chip ${tone}`}>{change > 0 ? '▲' : change < 0 ? '▼' : '•'} {Math.abs(change)}%</span>;
 }
 
+// «1–25 окт», «1 сен»: the days a comparison covers, as the hero names them.
+function monthDaysLabel(range) {
+  const from = Number(range.from.slice(8, 10));
+  const to = Number(range.to.slice(8, 10));
+  const month = MONTH_SHORT[Number(range.to.slice(5, 7)) - 1];
+  return from === to ? `${from} ${month}` : `${from}–${to} ${month}`;
+}
+
 // The screen's one big card: the month's revenue, the months behind it, where
 // the pace will end the month, and — when the owner has set one — the goal.
 // The forecast only counts finished days; see monthForecast.
-function RevenueHero({ monthRevenue, compare, prior, priorRange, inProgress, series, forecast, goal, canEditGoal, onSetGoal }) {
+function RevenueHero({ monthRevenue, compare, compareRange, prior, priorRange, inProgress, series, forecast, goal, canEditGoal, onSetGoal }) {
   const months = series.slice(-6);
   const peak = Math.max(1, ...months.map((row) => row.revenue), forecast?.revenue || 0);
   const barValue = (value) => (value / 1_000_000).toFixed(1).replace('.', ',');
@@ -824,10 +832,12 @@ function RevenueHero({ monthRevenue, compare, prior, priorRange, inProgress, ser
         <strong><CountUp value={monthRevenue} /></strong>
         <span>сум</span>
       </div>
+      {/* The big figure runs to this minute, the percent compares finished
+          days only; both sums of that comparison are named, so the figures on
+          the card add up (owner's review of 2026-10-26). */}
       {priorRange ? (
         <span className="revenue-hero-note">
-          {comparisonLabel(priorRange, TODAY)} было {compactMoney(prior)}
-          {inProgress ? '' : ' · по законченным дням'}
+          {inProgress ? 'сегодня' : monthDaysLabel(compareRange)}: {compactMoney(compare)} · {monthDaysLabel(priorRange)}: {compactMoney(prior)}
         </span>
       ) : null}
 
@@ -857,6 +867,7 @@ function RevenueHero({ monthRevenue, compare, prior, priorRange, inProgress, ser
                 {' · '}{forecast.revenueChange > 0 ? '+' : ''}{forecast.revenueChange}%
               </em>
             ) : null}
+            {forecast.revenueChange != null ? <small>{comparisonLabel(forecast.previous, TODAY)} целиком</small> : null}
           </strong>
         </div>
       ) : null}
@@ -1360,6 +1371,7 @@ function OverviewView({ data, reload, setError, setView }) {
       <RevenueHero
         monthRevenue={monthRevenue}
         compare={compareMix.revenue}
+        compareRange={compareRange}
         prior={priorMix.revenue}
         priorRange={priorMonthRange}
         inProgress={monthInProgress}

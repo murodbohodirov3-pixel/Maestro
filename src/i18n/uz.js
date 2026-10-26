@@ -680,6 +680,7 @@ export const TEMPLATES = {
   'По темпу не хватит ≈ {0} — нужно ≈ {1} в день.': 'Shu surʼatda ≈ {0} yetmaydi — kuniga ≈ {1} kerak.',
   'По темпу цель будет перевыполнена на ≈ {0}.': 'Shu surʼatda maqsad ≈ {0} ga oshib bajariladi.',
   'Цель выполнена{0}': 'Maqsad bajarildi{0}',
+  'к {0} целиком': 'butun {0} nisbatan',
   'к {0}': '{0} bilan solishtirganda',
   '{0}: выручка {1}': '{0}: tushum {1}',
   '{0}: новых клиентов {1} против {2}': '{0}: yangi mijozlar {1} / {2}',

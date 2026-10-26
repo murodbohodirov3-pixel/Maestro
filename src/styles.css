@@ -3607,6 +3607,16 @@ label {
   font-style: normal;
 }
 
+/* What the forecast is compared with: the whole of last month, unlike the
+   finished-days comparison above it. */
+.revenue-hero-inset strong small {
+  display: block;
+  color: var(--hero-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
+}
+
 .revenue-hero-inset em.up {
   color: #6EE7B7;
 }
