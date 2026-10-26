@@ -1526,9 +1526,10 @@ function SurnameField({ client, onDone, setError }) {
 // takes a name, a surname and a number (owner's decisions of 2026-10-21). A
 // client who gives neither is a guest without a name: no card, only «Был у
 // нас раньше?», and only for a visit (allowGuest), never for a booking.
-function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitle = '', scanMaster = '' }) {
+function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitle = '', scanMaster = '', onCreating }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  useEffect(() => { onCreating?.(creating); }, [creating, onCreating]);
   // Who scanned the QR at this master's mirror (owner's decisions of
   // 2026-10-21): asked again every half minute while the form waits for a
   // client, so a scan made during the haircut is there when it ends.
@@ -2051,7 +2052,7 @@ function dayChipLabel(day, index) {
 
 // Another time or another master for an open booking (owner's request of
 // 2026-10-16). The master hears of it from the bot.
-function MoveBooking({ data, appointment, reload, setError, onDone }) {
+function MoveBooking({ data, appointment, reload, setError, onDone, onCancel }) {
   const [masterId, setMasterId] = useState(appointment.master_id);
   const [date, setDate] = useState(() => {
     const day = tashkentParts(appointment.starts_at).date;
@@ -2088,9 +2089,10 @@ function MoveBooking({ data, appointment, reload, setError, onDone }) {
   return (
     <div className="stock-form move-booking">
       <div className="seg">
-        {data.activeMasters.map((master) => (
-          <button className={String(master.id) === String(masterId) ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)}>{master.name}</button>
-        ))}
+        {data.activeMasters.map((master) => {
+          const on = String(master.id) === String(masterId);
+          return <button className={on ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)} ref={on ? keepTabInSight : undefined}>{master.name}</button>;
+        })}
       </div>
       <div className="day-chips">
         {days.map((day, index) => (
@@ -2108,6 +2110,7 @@ function MoveBooking({ data, appointment, reload, setError, onDone }) {
         ) : <p className="hint">Свободного времени нет.</p>
       ) : null}
       <button className="btn" type="button" disabled={busy || !startsAt} onClick={save}>{busy ? 'Переношу…' : 'Перенести'}</button>
+      {onCancel ? <button className="btn ghost" type="button" disabled={busy} onClick={onCancel}>Не переносить</button> : null}
     </div>
   );
 }
@@ -2163,7 +2166,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
             ) : null}
             {canMove ? (
               moving
-                ? <MoveBooking data={data} appointment={appointment} reload={reload} setError={setError} onDone={onClose} />
+                ? <MoveBooking data={data} appointment={appointment} reload={reload} setError={setError} onDone={onClose} onCancel={() => setMoving(false)} />
                 : <button className="btn ghost" type="button" onClick={() => setMoving(true)}>Перенести</button>
             ) : null}
             {moving ? null : <OutcomeChooser appointment={appointment} reload={reload} setError={setError} onDone={onClose} />}
@@ -2175,9 +2178,13 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
   );
 }
 
-// Several services, found by typing, like goods on the shelf.
+// Several services, found by typing, like goods on the shelf. Once one is
+// chosen the list folds away (owner's review of 2026-10-26): six services
+// stayed open under the chosen one and pushed the times off the sheet.
 function ServicesPicker({ services, value, onChange }) {
   const [query, setQuery] = useState('');
+  const [adding, setAdding] = useState(false);
+  const open = !value.length || adding;
   const chosen = value.map((id) => services.find((service) => service.id === id)).filter(Boolean);
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const matches = services
@@ -2195,15 +2202,21 @@ function ServicesPicker({ services, value, onChange }) {
           ))}
         </div>
       ) : null}
-      <input type="search" autoComplete="off" placeholder="Услуга" value={query} onChange={(event) => setQuery(event.target.value)} />
-      <div className="picker-list">
-        {matches.slice(0, query ? 8 : 5).map((service) => (
-          <button key={service.id} type="button" onClick={() => { onChange([...value, service.id]); setQuery(''); }}>
-            <span>{service.name_ru}</span>
-            <small>{money(service.price_uzs)} · {service.duration_minutes} мин</small>
-          </button>
-        ))}
-      </div>
+      {open ? (
+        <>
+          <input type="search" autoComplete="off" placeholder="Услуга" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <div className="picker-list">
+            {matches.slice(0, query ? 8 : 5).map((service) => (
+              <button key={service.id} type="button" onClick={() => { onChange([...value, service.id]); setQuery(''); setAdding(false); }}>
+                <span>{service.name_ru}</span>
+                <small>{money(service.price_uzs)} · {service.duration_minutes} мин</small>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <button className="link-button" type="button" onClick={() => setAdding(true)}>+ ещё услуга</button>
+      )}
     </div>
   );
 }
@@ -2215,10 +2228,33 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
   const [startsAt, setStartsAt] = useState(null);
   const [client, setClient] = useState(null);
   const [notes, setNotes] = useState('');
+  // While a new client's card is being filled, «Создать карточку» is the one
+  // dark button; «Записать» waits until there is a client to book.
+  const [creatingClient, setCreatingClient] = useState(false);
   const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const services = data.bookingServices;
   const total = serviceIds.reduce((sum, id) => sum + (Number(services.find((service) => service.id === id)?.price_uzs) || 0), 0);
+  const masterName = data.masters.find((master) => String(master.id) === String(masterId))?.name || '';
+  const dirty = serviceIds.length > 0 || Boolean(client) || Boolean(notes.trim()) || creatingClient;
+
+  // A tap beside the sheet used to throw a half-made booking away. Leaving
+  // with something filled in now asks first; Escape does the same.
+  async function leave() {
+    if (dirty && !await confirmAction('Закрыть без записи? Выбранное не сохранится.')) return;
+    onClose();
+  }
+
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') leave(); };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  });
 
   useEffect(() => {
     setStartsAt(null);
@@ -2253,7 +2289,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
         client_id: client.id,
         notes: notes.trim() || null,
       }),
-      `Записан: ${client.full_name} · ${data.masters.find((master) => String(master.id) === String(masterId))?.name || ''} · ${bookingWhen(startsAt)}`,
+      `Записан: ${client.full_name} · ${masterName} · ${bookingWhen(startsAt)}`,
     );
     if (ok) {
       haptic('success');
@@ -2263,20 +2299,21 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
   }
 
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+    <div className="modal-backdrop sheet-backdrop" onClick={leave}>
       <div aria-label="Новая запись" aria-modal="true" className="card master-sheet booking-sheet" role="dialog" onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
             <strong>Новая запись</strong>
             <small>{draft.date === TODAY ? 'сегодня' : displayDate(draft.date)}</small>
           </div>
-          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={onClose}>×</button>
+          <button aria-label="Закрыть" className="sheet-close" type="button" onClick={leave}>×</button>
         </div>
         <div className="stock-form">
           <div className="seg">
-            {data.activeMasters.map((master) => (
-              <button className={String(master.id) === String(masterId) ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)}>{master.name}</button>
-            ))}
+            {data.activeMasters.map((master) => {
+              const on = String(master.id) === String(masterId);
+              return <button className={on ? 'on' : ''} key={master.id} type="button" onClick={() => setMasterId(master.id)} ref={on ? keepTabInSight : undefined}>{master.name}</button>;
+            })}
           </div>
           <ServicesPicker services={services} value={serviceIds} onChange={setServiceIds} />
           {times ? (
@@ -2288,10 +2325,18 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
               </div>
             ) : <p className="hint">Свободного времени нет.</p>
           ) : null}
-          <ClientPicker client={client} onChange={setClient} setError={setError} />
-          <input maxLength={300} placeholder="Комментарий" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          {total ? <div className="stock-preview"><span>Сумма</span><strong>{money(total)} сум</strong></div> : null}
-          <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняем…' : 'Записать'}</button>
+          <ClientPicker client={client} onChange={setClient} setError={setError} onCreating={setCreatingClient} />
+          {creatingClient ? null : (
+            <>
+              <input maxLength={300} placeholder="Комментарий" value={notes} onChange={(event) => setNotes(event.target.value)} />
+              {/* What the desk will say to the client, next to the button. */}
+              <div className="stock-preview booking-summary">
+                <span>{masterName} · {startsAt ? bookingWhen(startsAt) : 'время не выбрано'}</span>
+                <strong>{money(total)} сум</strong>
+              </div>
+              <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняем…' : 'Записать'}</button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2314,6 +2359,7 @@ function BookingsView({ data, reload, setError, onVisit }) {
   const closeBooking = useCallback(() => setOpenId(null), []);
   const closeNew = useCallback(() => setNewDraft(null), []);
   const { run } = useAction(setError);
+  const gridRef = useRef(null);
 
   const masters = data.activeMasters;
   const hours = masters.map((master) => masterHoursOn(master, date, data.scheduleRules, data.dayStatuses));
@@ -2332,6 +2378,30 @@ function BookingsView({ data, reload, setError, onVisit }) {
     const minute = frame.start + Math.floor(((event.clientY - rect.top) / MINUTE_PX) / 15) * 15;
     setNewDraft({ masterId: master.id, date, minutes: minute });
   }
+
+  // A visible way to book (owner's review of 2026-10-26): before, only a tap
+  // on an empty stretch of the grid opened the sheet, and nothing said so.
+  // It starts with the first master working that day, at the next quarter
+  // hour today or at the start of his shift on another day.
+  function startNewBooking() {
+    const index = hours.findIndex((masterHours) => masterHours.start != null);
+    const master = masters[Math.max(0, index)];
+    if (!master) return;
+    const shiftStart = hours[Math.max(0, index)]?.start ?? frame.start;
+    const minutes = date === TODAY ? Math.max(shiftStart, Math.ceil(nowMinutes / 15) * 15) : shiftStart;
+    setNewDraft({ masterId: master.id, date, minutes });
+  }
+
+  // The grid opened at its first hour, in the morning, whatever the time.
+  // Today it opens at the red line of now; the page itself stays where it is.
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || date !== TODAY) return;
+    // Now sits just under the names, with the hours ahead below it.
+    const offset = (nowMinutes - frame.start) * MINUTE_PX;
+    grid.scrollTop = Math.max(0, offset - 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, frame.start]);
 
   async function toggleDayOff(master, masterHours) {
     if (!canSetDayOff) return;
@@ -2367,19 +2437,26 @@ function BookingsView({ data, reload, setError, onVisit }) {
         <input aria-label="Другая дата" type="date" value={date} min={TODAY} onChange={(event) => event.target.value && setDate(event.target.value)} />
       </div>
 
-      <div className="card wide day-grid-card">
+      <button className="btn wide new-booking-button" type="button" onClick={startNewBooking}>+ Новая запись</button>
+
+      {/* Its own scroll both ways, so the masters' names stay on top and the
+          hours on the left while the day is read (owner's review of
+          2026-10-26: on a phone the names left with the first swipe). */}
+      <div className="card wide day-grid-card" ref={gridRef}>
         <div className="day-grid" style={{ '--columns': masters.length }}>
           <div className="day-grid-corner" />
           {masters.map((master, index) => (
-            <button
-              className={`day-grid-head${hours[index].dayOff ? ' is-off' : ''}`}
-              key={master.id}
-              type="button"
-              onClick={() => toggleDayOff(master, hours[index])}
-            >
+            <div className={`day-grid-head${hours[index].dayOff ? ' is-off' : ''}`} key={master.id}>
               {master.name}
               <small>{hours[index].start != null ? `${minutesLabel(hours[index].start)}–${minutesLabel(hours[index].end)}` : 'выходной'}</small>
-            </button>
+              {/* A day off is its own button now: the name itself used to set
+                  it for the partner and did nothing for the desk. */}
+              {canSetDayOff ? (
+                <button className="day-off-toggle" type="button" onClick={() => toggleDayOff(master, hours[index])}>
+                  {hours[index].dayOff ? 'Вернуть день' : 'Выходной'}
+                </button>
+              ) : null}
+            </div>
           ))}
           <div className="day-grid-axis" style={{ height }}>
             {hourMarks.map((minute) => (

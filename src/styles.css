@@ -5702,3 +5702,60 @@ label {
   font-size: 14px;
   font-weight: 600;
 }
+
+/* Записи: the grid scrolls inside its card both ways, so the masters' names
+   stay pinned on top and the hours on the left (owner's review of
+   2026-10-26). The card stops short of the bottom bar, and has no left
+   padding, or the columns showed through beside the pinned hours. */
+.day-grid-card {
+  max-height: calc(100dvh - 130px - env(safe-area-inset-bottom, 0px));
+  padding-left: 0;
+  overflow: auto;
+}
+
+.day-grid {
+  grid-template-columns: 46px repeat(var(--columns), minmax(104px, 1fr));
+}
+
+.day-grid-axis span {
+  left: 8px;
+}
+
+.day-grid-corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  background: var(--surface);
+}
+
+.day-grid-head {
+  z-index: 4;
+}
+
+.day-grid-axis {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface);
+}
+
+.day-off-toggle {
+  justify-self: center;
+  margin-top: 3px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.new-booking-button {
+  min-height: 46px;
+}
+
+.booking-summary span {
+  font-weight: 600;
+}
