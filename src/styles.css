@@ -5759,3 +5759,10 @@ label {
 .booking-summary span {
   font-weight: 600;
 }
+
+/* The fine form's fields are labelled; inside a label they would inherit its
+   13px and make an iPhone zoom on tap. */
+.fine-form input,
+.fine-form select {
+  font-size: 16px;
+}

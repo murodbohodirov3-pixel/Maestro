@@ -3566,8 +3566,10 @@ const ATTENDANCE_STATUS_LABELS = {
 
 function AttendanceView({ data, reload, setError }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('attendance', 'day');
+  // No master is chosen for you (owner's review of 2026-10-26): the first
+  // one in the list used to be, and a fine went to Жавохир unnoticed.
   const [fineForm, setFineForm] = useState({
-    master: data.activeMasters[0]?.name || '',
+    master: '',
     d: TODAY,
     amount: '',
     reason: FINE_REASONS[0].value,
@@ -3666,8 +3668,16 @@ function AttendanceView({ data, reload, setError }) {
   async function addFine(event) {
     event.preventDefault();
     const amount = Number(fineForm.amount);
+    if (!fineForm.master) return setError('Выберите мастера.');
     if (!amount || amount <= 0) return setError('Введите сумму штрафа.');
     if (!fineForm.reason) return setError('Выберите причину штрафа.');
+    // The partner cannot take a fine back, so it is said in full before it
+    // is set, with a word when that master was not working that day.
+    const master = data.byName[fineForm.master];
+    const hours = master ? masterHoursOn(master, fineForm.d, data.scheduleRules, data.dayStatuses) : null;
+    const notWorking = hours && hours.start == null ? `У мастера ${fineForm.master} в этот день выходной. ` : '';
+    const reason = fineReasonLabel(fineForm.reason).toLowerCase();
+    if (!await confirmAction(`${notWorking}Штраф ${money(amount)} сум — ${fineForm.master}, ${reason}, ${displayDate(fineForm.d)}?`)) return;
     const ok = await createFine(fineForm.master, fineForm.d, amount, fineForm.reason);
     if (ok) setFineForm((current) => ({ ...current, amount: '' }));
   }
@@ -3869,14 +3879,27 @@ function AttendanceView({ data, reload, setError }) {
         ) : null}
         {fineFormOpen ? (
           <form className="fine-form" onSubmit={addFine}>
-            <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
-              {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
-            </select>
-            <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
-            <select value={fineForm.reason} onChange={(event) => setFineForm({ ...fineForm, reason: event.target.value })}>
-              {FINE_REASONS.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-            </select>
-            <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
+            <label>
+              Мастер
+              <select value={fineForm.master} onChange={(event) => setFineForm({ ...fineForm, master: event.target.value })}>
+                <option value="" disabled>Выберите мастера</option>
+                {data.activeMasters.map((master) => <option key={master.name} value={master.name}>{master.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Дата
+              <input type="date" value={fineForm.d} onChange={(event) => setFineForm({ ...fineForm, d: event.target.value })} />
+            </label>
+            <label>
+              Причина
+              <select value={fineForm.reason} onChange={(event) => setFineForm({ ...fineForm, reason: event.target.value })}>
+                {FINE_REASONS.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
+              </select>
+            </label>
+            <label>
+              Сумма
+              <MoneyInput placeholder="например, 50 000" value={fineForm.amount} onChange={(amount) => setFineForm({ ...fineForm, amount })} />
+            </label>
             <div className="fine-form-actions">
               <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Выставить штраф'}</button>
               <button className="btn ghost" type="button" onClick={() => setFineFormOpen(false)}>Отмена</button>
