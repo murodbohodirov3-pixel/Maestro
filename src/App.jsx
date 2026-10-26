@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   callLegacyApi,
   captureTelegramOAuthCode,
@@ -379,6 +379,31 @@ function useAction(setError, setMessage) {
   }
 
   return { run, busy };
+}
+
+// What an action said used to land wherever its screen put it: at the top of
+// a long page, at the foot of another card, under an open sheet. Out of sight,
+// and the 15s poll wiped an error before anyone read it, so the next move was
+// to tap again (owner's review of 2026-10-26). Every result now speaks from
+// one place above the bottom bar; a screen only says what to show.
+const NoticeContext = createContext(() => {});
+
+function useNotice() {
+  return useContext(NoticeContext);
+}
+
+function AppNotice({ error, success, onClose }) {
+  const text = error || success;
+  if (!text) return null;
+  return (
+    <div className={`app-notice ${error ? 'is-error' : 'is-success'}`} role={error ? 'alert' : 'status'}>
+      {error ? null : (
+        <svg className="app-notice-check" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+      )}
+      <span>{text}</span>
+      <button aria-label="Закрыть" type="button" onClick={onClose}>×</button>
+    </div>
+  );
 }
 
 // The fines table has always had a reason column and nothing ever wrote to it,
@@ -1704,7 +1729,7 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '' });
   const [conflict, setConflict] = useState(null);
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
 
   useEffect(() => {
@@ -1836,7 +1861,6 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
                 <button className="btn ghost" type="button" onClick={startEdit}>Изменить</button>
               </div>
             )}
-            {message ? <p className="success">{message}</p> : null}
             <div className="rows">
               {timeline.map((entry) => (entry.kind === 'visit' ? (
                 <div className="row" key={`v-${entry.visit.id}`}>
@@ -1935,10 +1959,18 @@ function bookingTimeLine(appointment) {
   return `${day} · ${start.time}–${end.time}`;
 }
 
+// «сегодня 18:00», «завтра 10:30», «28.10.2026 15:00»: what the desk tells
+// the client on the phone once a booking is made or moved.
+function bookingWhen(startsAt) {
+  const start = tashkentParts(startsAt);
+  const day = start.date === TODAY ? 'сегодня' : start.date === shiftDate(TODAY, 1) ? 'завтра' : displayDate(start.date);
+  return `${day} ${start.time}`;
+}
+
 // «Не пришёл» and «Отменить» take one more tap for the reason, no form.
 function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = null }) {
   const [mode, setMode] = useState(initialMode);
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const [savingCode, setSavingCode] = useState(null);
   // A second tap arrives before the first has re-rendered anything.
   const savingRef = useRef(false);
@@ -1994,7 +2026,6 @@ function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = n
     <div className="outcome-actions">
       {started ? <button className="btn ghost" type="button" onClick={() => setMode('no_show')}>Не пришёл</button> : null}
       <button className="btn ghost danger-ghost" type="button" onClick={() => setMode('cancel')}>Отменить</button>
-      {message ? <span className="success">{message}</span> : null}
     </div>
   );
 }
@@ -2016,7 +2047,7 @@ function MoveBooking({ data, appointment, reload, setError, onDone }) {
   });
   const [times, setTimes] = useState(null);
   const [startsAt, setStartsAt] = useState(null);
-  const { run, busy } = useAction(setError);
+  const { run, busy } = useAction(setError, useNotice());
   const days = Array.from({ length: 7 }, (_, index) => shiftDate(TODAY, index));
 
   useEffect(() => {
@@ -2031,7 +2062,11 @@ function MoveBooking({ data, appointment, reload, setError, onDone }) {
 
   async function save() {
     if (!startsAt) return setError('Выберите время.');
-    const ok = await run(() => callLegacyApi('moveBooking', { id: appointment.id, master_id: Number(masterId), starts_at: startsAt }));
+    const masterName = data.masters.find((master) => String(master.id) === String(masterId))?.name || '';
+    const ok = await run(
+      () => callLegacyApi('moveBooking', { id: appointment.id, master_id: Number(masterId), starts_at: startsAt }),
+      `Перенесено: ${appointment.client_name} · ${masterName} · ${bookingWhen(startsAt)}`,
+    );
     if (!ok) return;
     haptic('success');
     reload();
@@ -2168,7 +2203,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
   const [startsAt, setStartsAt] = useState(null);
   const [client, setClient] = useState(null);
   const [notes, setNotes] = useState('');
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const services = data.bookingServices;
   const total = serviceIds.reduce((sum, id) => sum + (Number(services.find((service) => service.id === id)?.price_uzs) || 0), 0);
@@ -2206,7 +2241,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
         client_id: client.id,
         notes: notes.trim() || null,
       }),
-      'Записан.',
+      `Записан: ${client.full_name} · ${data.masters.find((master) => String(master.id) === String(masterId))?.name || ''} · ${bookingWhen(startsAt)}`,
     );
     if (ok) {
       haptic('success');
@@ -2245,7 +2280,6 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
           <input maxLength={300} placeholder="Комментарий" value={notes} onChange={(event) => setNotes(event.target.value)} />
           {total ? <div className="stock-preview"><span>Сумма</span><strong>{money(total)} сум</strong></div> : null}
           <button className="btn" type="button" disabled={busy} onClick={save}>{busy ? 'Сохраняем…' : 'Записать'}</button>
-          {message ? <p className="success">{message}</p> : null}
         </div>
       </div>
     </div>
@@ -2572,7 +2606,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const [visitBooking, setVisitBooking] = useState(null);
   const formRef = useRef(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const [requestId, setRequestId] = useState(newRequestId);
   const { run, busy } = useAction(setError, setMessage);
 
@@ -2932,7 +2966,6 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         <button className="btn" type="submit" disabled={busy}>
           {busy ? 'Сохраняем…' : 'Добавить'}
         </button>
-        {message ? <p className="success">{message}</p> : null}
       </form>
 
       <div className="card">
@@ -3000,7 +3033,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
 
 function AdminView({ data, reload, setError }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
   const [detailLimit, setDetailLimit] = useState(50);
   const [salesListOpen, setSalesListOpen] = useState(false);
@@ -3168,7 +3201,7 @@ function AdminView({ data, reload, setError }) {
     <section className="view-grid">
       {/* An empty queue used to keep its card and a sentence saying it was
           empty. It now leaves, like the reminder on Обзор does. */}
-      {!readOnly && (queue.count || message) ? (
+      {!readOnly && queue.count ? (
       <div className="card wide approvals-card">
         <h2>На подтверждение</h2>
         {queue.count > 1 ? (
@@ -3240,7 +3273,6 @@ function AdminView({ data, reload, setError }) {
             </div>
           ))}
         />
-        {message ? <p className="success">{message}</p> : null}
       </div>
       ) : null}
 
@@ -3423,7 +3455,7 @@ function AttendanceView({ data, reload, setError }) {
     amount: '',
     reason: FINE_REASONS[0].value,
   });
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const [savingFineKey, setSavingFineKey] = useState('');
   const [savingDayOffKey, setSavingDayOffKey] = useState('');
   const [showAllDays, setShowAllDays] = useState(false);
@@ -3764,7 +3796,6 @@ function AttendanceView({ data, reload, setError }) {
           }} />
           </details>
         ) : null}
-        {message ? <p className="success">{message}</p> : null}
       </div>
     </section>
   );
@@ -3777,7 +3808,7 @@ function FinanceView({ data, reload, setError }) {
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
   const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const [offsetsOpen, setOffsetsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
@@ -3902,7 +3933,6 @@ function FinanceView({ data, reload, setError }) {
         ) : null}
       </div>
 
-      {message ? <div className="notice success wide">{message}</div> : null}
 
       <div className="card wide">
         <h2>Вложения</h2>
@@ -4195,7 +4225,7 @@ function StockView({ data, reload, setError }) {
   const canWrite = !isReadOnly(data) && data.appRole === 'owner';
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('stock', 'month');
   const [form, setForm] = useState(null);
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
 
   const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
@@ -4371,7 +4401,6 @@ function StockView({ data, reload, setError }) {
         <span className="revenue-hero-note">Товар на складе: {compactMoney(stockValue)} сум</span>
       </div>
 
-      {message && !form ? <div className="notice success wide">{message}</div> : null}
 
       {canWrite ? (
         <div className="wide stock-actions">
@@ -4419,7 +4448,6 @@ function StockView({ data, reload, setError }) {
             </div>
           ) : null}
           <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : isOwner ? 'Сохранить' : 'Отправить на подтверждение'}</button>
-          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -4461,7 +4489,6 @@ function StockView({ data, reload, setError }) {
             ))}
           </div>
           <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : 'Сохранить'}</button>
-          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -4484,7 +4511,6 @@ function StockView({ data, reload, setError }) {
           </div>
           <input maxLength={300} placeholder="Комментарий" value={writeoffForm.note} onChange={(event) => setWriteoffForm({ ...writeoffForm, note: event.target.value })} />
           <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняю…' : 'Списать'}</button>
-          {message ? <p className="success">{message}</p> : null}
         </form>
       ) : null}
 
@@ -4568,7 +4594,7 @@ function StockView({ data, reload, setError }) {
 // today and yesterday and what the owner decided. The server sends names and
 // quantities only (stockForDesk in supabase/functions/_shared/access.js).
 function DeskStockView({ data, reload, setError }) {
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
   const [saleForm, setSaleForm] = useState(emptySale);
@@ -4621,7 +4647,6 @@ function DeskStockView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
-      {message ? <div className="notice success wide">{message}</div> : null}
 
       <form className="card wide stock-form" onSubmit={submitSale}>
         <h2>Продажа</h2>
@@ -4903,7 +4928,7 @@ function PayoutsView({ data, reload, setError }) {
   const [advanceFor, setAdvanceFor] = useState(null);
   const [advanceAmount, setAdvanceAmount] = useState('');
   const [advanceNote, setAdvanceNote] = useState('');
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const week = weekOf(weekStart);
   const rows = weekPayouts({
@@ -4977,7 +5002,6 @@ function PayoutsView({ data, reload, setError }) {
         </div>
       </div>
 
-      {message ? <div className="notice success wide">{message}</div> : null}
 
       {rows.map((row) => {
         const weekPaid = row.paid > 0 && row.due === 0;
@@ -5560,7 +5584,7 @@ function MasterSchedules({ data, reload, setError }) {
   const upcoming = versions.filter((version) => version.from > TODAY);
   const [draft, setDraft] = useState(() => scheduleDraftFrom(current));
   const [from, setFrom] = useState(TODAY);
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const firstWorking = draft.find((day) => day.works);
 
@@ -5718,7 +5742,6 @@ function MasterSchedules({ data, reload, setError }) {
         />
       </label>
       <p className="hint">Дни до этой даты считаются по прежнему графику.</p>
-      {message ? <div className="notice success">{message}</div> : null}
       <button className="btn" type="submit" disabled={busy}>Сохранить график</button>
     </form>
   );
@@ -5729,7 +5752,7 @@ function MasterSchedules({ data, reload, setError }) {
 // grace for lateness and the salon's location, and the deletion log.
 function SettingsView({ data, reload, setError }) {
   const canEdit = ['owner', 'admin'].includes(data.appRole);
-  const [message, setMessage] = useState('');
+  const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
   const goal = Number(data.settings.monthly_revenue_goal) || null;
   const [goalDraft, setGoalDraft] = useState(goal ? String(goal) : '');
@@ -5794,7 +5817,6 @@ function SettingsView({ data, reload, setError }) {
 
   return (
     <section className="view-grid">
-      {message ? <div className="notice success wide">{message}</div> : null}
 
       {canEdit ? (
         <form className="card wide hero-card settings-goal" onSubmit={saveGoal}>
@@ -5908,6 +5930,11 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const loadInFlightRef = useRef(null);
   const [error, setError] = useState('');
+  // The error a failed load put up, so that the next good load takes back
+  // only its own and never an action's.
+  const loadErrorRef = useRef('');
+  const [success, setSuccess] = useState({ text: '', at: 0 });
+  const notify = useCallback((text) => setSuccess({ text: text || '', at: Date.now() }), []);
   const [loginRequired, setLoginRequired] = useState(false);
   const [lang, setLang] = useState(initialLanguage);
   // The server's language is taken once, on the first load; after that the
@@ -5964,7 +5991,9 @@ export default function App() {
   }
 
   async function loadOnce({ preserveView = true, since = null } = {}) {
-    setError('');
+    // A load no longer clears the screen's error: the 15s poll used to wipe
+    // «Сначала закройте запись» before the master had read it. An action's
+    // error stays until the next action, a new screen or ×.
     // Background polls stay silent: a toast every 15 seconds said nothing the
     // numbers updating on their own did not already say.
     if (!preserveView) setIsLoading(true);
@@ -5993,6 +6022,11 @@ export default function App() {
       setData((previous) => (
         appliedSince ? mergeWindowedData(previous, normalized, appliedSince) : normalized
       ));
+      if (loadErrorRef.current) {
+        const stale = loadErrorRef.current;
+        loadErrorRef.current = '';
+        setError((current) => (current === stale ? '' : current));
+      }
       setLoginRequired(false);
       setView((currentView) => {
         const allowed = viewIdsForUser(normalized);
@@ -6008,7 +6042,9 @@ export default function App() {
         setAccessDenied(true);
         return;
       }
-      setError(actionErrorText(loadError) || 'Не удалось загрузить данные.');
+      const text = actionErrorText(loadError) || 'Не удалось загрузить данные.';
+      loadErrorRef.current = text;
+      setError(text);
       if (String(loadError.message).includes('unauthorized')) setLoginRequired(true);
     } finally {
       setIsLoading(false);
@@ -6075,9 +6111,23 @@ export default function App() {
   const [visitDraft, setVisitDraft] = useState(null);
   const clearVisitDraft = useCallback(() => setVisitDraft(null), []);
 
+  // A «said» line fades on its own; an error waits to be read.
+  useEffect(() => {
+    if (!success.text) return undefined;
+    const timer = window.setTimeout(() => setSuccess({ text: '', at: 0 }), 4000);
+    return () => window.clearTimeout(timer);
+  }, [success]);
+
+  function closeNotice() {
+    setError('');
+    setSuccess({ text: '', at: 0 });
+  }
+
   function openView(next) {
     if (next === view) return;
     haptic('light');
+    // An error belongs to the screen it was made on.
+    setError('');
     if (next === 'settings') setPreviousView(view);
     setView(next);
     window.scrollTo({ top: 0 });
@@ -6194,16 +6244,18 @@ export default function App() {
         </nav>
       ) : null}
 
-      {error && !loginRequired ? <div className="notice error">{error}</div> : null}
-      <CurrentView
-        data={data}
-        reload={reload}
-        setError={setError}
-        setView={openView}
-        onVisit={data.appRole === 'owner' || isMaster ? startVisitFromBooking : null}
-        visitDraft={visitDraft}
-        onDraftUsed={clearVisitDraft}
-      />
+      <NoticeContext.Provider value={notify}>
+        <CurrentView
+          data={data}
+          reload={reload}
+          setError={setError}
+          setView={openView}
+          onVisit={data.appRole === 'owner' || isMaster ? startVisitFromBooking : null}
+          visitDraft={visitDraft}
+          onDraftUsed={clearVisitDraft}
+        />
+      </NoticeContext.Provider>
+      <AppNotice error={error} success={success.text} onClose={closeNotice} />
 
       {showTabbar ? (
         <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>

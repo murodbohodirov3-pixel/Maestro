@@ -5498,3 +5498,82 @@ label {
   border-color: var(--positive-ink);
   background: var(--positive-soft);
 }
+
+/* What an action said, in one place (owner's review of 2026-10-26): just above
+   the bottom bar, where the thumb and the eye already are. With a sheet open
+   the bottom belongs to the sheet's buttons, so the line moves up into the
+   dimmed strip the sheet leaves at the top. */
+.app-notice {
+  position: fixed;
+  z-index: 120;
+  right: max(12px, calc((100vw - 540px) / 2 + 12px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  left: max(12px, calc((100vw - 540px) / 2 + 12px));
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 6px 12px 16px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(11, 31, 58, 0.28);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  animation: app-notice-in 0.18s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.app.has-tabbar .app-notice {
+  bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+}
+
+.app:has(.sheet-backdrop) .app-notice {
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+}
+
+.app-notice > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.app-notice > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-size: 22px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+.app-notice.is-success {
+  background: var(--nav);
+  color: #FFFFFF;
+}
+
+.app-notice-check {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #34D399;
+}
+
+.app-notice.is-error {
+  background: var(--fine);
+  color: #FFFFFF;
+}
+
+@keyframes app-notice-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-notice {
+    animation: none;
+  }
+}
