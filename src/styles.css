@@ -5681,3 +5681,24 @@ label {
     font-weight: 600;
   }
 }
+
+/* The booking a master must close before the next visit, at the top of the
+   visit card itself (owner's review of 2026-10-26). */
+.visit-blocked {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--negative-soft);
+  color: var(--negative-ink);
+}
+
+.visit-blocked strong {
+  font-size: 15px;
+}
+
+.visit-blocked span {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}

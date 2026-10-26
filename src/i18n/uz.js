@@ -129,6 +129,7 @@ export const PHRASES = {
   'Если координаты салона заданы, отметка проверяет радиус.': 'Salon manzili belgilangan boʻlsa, belgi masofani tekshiradi.',
   'Мои записи': 'Mening yozuvlarim',
   'Закройте запись': 'Yozuvni yoping',
+  'Сначала закройте запись': 'Avval yozuvni yoping',
   'Пришёл': 'Keldi',
   'Не пришёл': 'Kelmadi',
   'Пришёл → визит': 'Keldi → tashrif',

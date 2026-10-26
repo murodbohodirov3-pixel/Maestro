@@ -2616,6 +2616,8 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const [arrivalMessage, setArrivalMessage] = useState('');
   // The booking this visit closes, when it starts from «Пришёл».
   const [visitBooking, setVisitBooking] = useState(null);
+  // The overdue booking whose «Не пришёл» reasons are open in the visit card.
+  const [closingId, setClosingId] = useState(null);
   const formRef = useRef(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
   const setMessage = useNotice();
@@ -2674,6 +2676,16 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     lateRuleFromSettings(data.settings),
   );
   const scheduledStart = scheduledStartOn(masterProfile, TODAY, data.scheduleRules);
+  // A master records no other visit while a booking of his has ended and is
+  // still open (owner's decision of 2026-10-16). He used to learn it only
+  // after filling the form in; the visit card now opens with that booking
+  // and its two buttons (owner's review of 2026-10-26).
+  const toClose = data.role === 'master' && !visitBooking
+    ? data.appointments
+      .filter((appointment) => String(appointment.master_id) === String(masterProfile?.id))
+      .filter((appointment) => isOverdueBooking(appointment, new Date(), data.settings.booking_control_since || null))
+      .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)))
+    : [];
 
   useEffect(() => {
     if (!masterName && data.activeMasters[0]?.name) setSelectedMaster(data.activeMasters[0].name);
@@ -2718,13 +2730,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     if (!masterName) return setError('Сначала выберите мастера.');
     if (!visitClient) return setError('Выберите клиента или создайте карточку.');
     if (visitClient.needs_surname) return setError(ACTION_ERROR_TEXT.client_surname_required);
-    if (data.role === 'master' && !visitBooking) {
-      const waiting = data.appointments
-        .filter((appointment) => String(appointment.master_id) === String(masterProfile?.id))
-        .filter((appointment) => isOverdueBooking(appointment, new Date(), data.settings.booking_control_since || null))
-        .sort((left, right) => String(left.starts_at).localeCompare(String(right.starts_at)));
-      if (waiting.length) return setError(unclosedText(waiting));
-    }
+    if (toClose.length) return setError(unclosedText(toClose));
 
     const payload = {
       master: masterName,
@@ -2908,7 +2914,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
             </button>
             {arrivalMessage ? <p className="success">{arrivalMessage}</p> : null}
             <p className="hint">
-              {shiftStartHint(scheduledStart, shiftStart)} Если координаты салона заданы, отметка проверяет радиус.
+              {shiftStartHint(scheduledStart, shiftStart)}
             </p>
           </>
         )}
@@ -2918,6 +2924,20 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
 
       <form className="card" onSubmit={submitSale} ref={formRef}>
         <h2>Визит</h2>
+        {toClose.length ? (
+          <div className="visit-blocked" role="status">
+            <strong>Сначала закройте запись</strong>
+            <span>{bookingTimeLine(toClose[0])} · {toClose[0].client_name}</span>
+            {closingId === toClose[0].id ? (
+              <OutcomeChooser appointment={toClose[0]} initialMode="no_show" reload={reload} setError={setError} onDone={() => setClosingId(null)} />
+            ) : (
+              <div className="outcome-actions">
+                {canRecordVisit(toClose[0]) ? <button className="btn" type="button" onClick={() => startVisit(toClose[0])}>Пришёл</button> : null}
+                <button className="btn ghost" type="button" onClick={() => setClosingId(toClose[0].id)}>Не пришёл</button>
+              </div>
+            )}
+          </div>
+        ) : null}
         {visitBooking ? (
           <div className="picker-selected visit-booking">
             <span>
@@ -2975,7 +2995,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         <button className="split-toggle" type="button" onClick={toggleSplit}>
           {split ? 'Одним способом' : 'Разделить оплату'}
         </button>
-        <button className="btn" type="submit" disabled={busy}>
+        <button className="btn" type="submit" disabled={busy || toClose.length > 0}>
           {busy ? 'Сохраняем…' : 'Добавить'}
         </button>
       </form>
