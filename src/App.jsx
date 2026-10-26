@@ -252,7 +252,7 @@ function PaymentChips({ sale }) {
   return (
     <span className="pay-chips">
       {parts.map((part) => (
-        <span className={`pay-chip ${part.key}`} key={part.key}>
+        <span className={`pay-chip is-${part.key}`} key={part.key}>
           <i className="payment-dot" aria-hidden="true" />
           {part.label}{split ? ` ${money(part.amount)}` : ''}
         </span>
@@ -2926,7 +2926,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         {split ? (
           <div className="split-amounts">
             {PAYMENT_METHODS.map(([key, label]) => (
-              <label className={`split-amount ${key}`} key={key}>
+              <label className={`split-amount is-${key}`} key={key}>
                 <span><i className="payment-dot" aria-hidden="true" />{label}</span>
                 <MoneyInput
                   aria-label={`${label}, сумма`}
@@ -2944,7 +2944,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
               {PAYMENT_METHODS.map(([value, label]) => (
                 <button
                   aria-pressed={payType === value}
-                  className={`pay-type ${value} ${payType === value ? 'on' : ''}`}
+                  className={`pay-type is-${value} ${payType === value ? 'on' : ''}`}
                   key={value}
                   type="button"
                   onClick={() => setPayType(value)}
@@ -3220,7 +3220,7 @@ function AdminView({ data, reload, setError }) {
         {queue.count > 1 ? (
           <div className="pending-mix" aria-label="Сумма на подтверждение по способам оплаты">
             {PAYMENT_METHODS.filter(([key]) => pendingMix[key] > 0).map(([key, label]) => (
-              <span className={`pending-mix-item ${key}`} key={key}>
+              <span className={`pending-mix-item is-${key}`} key={key}>
                 <i className="payment-dot" aria-hidden="true" />
                 {label}
                 <strong>{money(pendingMix[key])}</strong>
@@ -4432,7 +4432,7 @@ function StockView({ data, reload, setError }) {
             {PAYMENT_METHODS.map(([value, label]) => (
               <button
                 aria-pressed={saleForm.payment_method === value}
-                className={`pay-type ${value} ${saleForm.payment_method === value ? 'on' : ''}`}
+                className={`pay-type is-${value} ${saleForm.payment_method === value ? 'on' : ''}`}
                 key={value}
                 type="button"
                 onClick={() => setSaleForm({ ...saleForm, payment_method: value })}
@@ -4669,7 +4669,7 @@ function DeskStockView({ data, reload, setError }) {
           {PAYMENT_METHODS.map(([value, label]) => (
             <button
               aria-pressed={saleForm.payment_method === value}
-              className={`pay-type ${value} ${saleForm.payment_method === value ? 'on' : ''}`}
+              className={`pay-type is-${value} ${saleForm.payment_method === value ? 'on' : ''}`}
               key={value}
               type="button"
               onClick={() => setSaleForm({ ...saleForm, payment_method: value })}

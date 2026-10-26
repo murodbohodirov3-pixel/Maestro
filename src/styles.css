@@ -1027,33 +1027,33 @@ small {
   border-radius: 50%;
 }
 
-.pay-type.cash .payment-dot {
+.pay-type.is-cash .payment-dot {
   background: var(--pay-cash);
 }
 
-.pay-type.card .payment-dot {
+.pay-type.is-card .payment-dot {
   background: var(--pay-card);
 }
 
-.pay-type.qr .payment-dot {
+.pay-type.is-qr .payment-dot {
   background: var(--pay-qr);
 }
 
-.pay-chip.cash .payment-dot,
-.pending-mix-item.cash .payment-dot,
-.split-amount.cash .payment-dot {
+.pay-chip.is-cash .payment-dot,
+.pending-mix-item.is-cash .payment-dot,
+.split-amount.is-cash .payment-dot {
   background: var(--pay-cash);
 }
 
-.pay-chip.card .payment-dot,
-.pending-mix-item.card .payment-dot,
-.split-amount.card .payment-dot {
+.pay-chip.is-card .payment-dot,
+.pending-mix-item.is-card .payment-dot,
+.split-amount.is-card .payment-dot {
   background: var(--pay-card);
 }
 
-.pay-chip.qr .payment-dot,
-.pending-mix-item.qr .payment-dot,
-.split-amount.qr .payment-dot {
+.pay-chip.is-qr .payment-dot,
+.pending-mix-item.is-qr .payment-dot,
+.split-amount.is-qr .payment-dot {
   background: var(--pay-qr);
 }
 
@@ -1080,17 +1080,17 @@ small {
   font-variant-numeric: tabular-nums;
 }
 
-.pay-chip.cash {
+.pay-chip.is-cash {
   border-color: color-mix(in srgb, var(--pay-cash) 40%, var(--line));
   background: color-mix(in srgb, var(--pay-cash) 8%, var(--surface));
 }
 
-.pay-chip.card {
+.pay-chip.is-card {
   border-color: color-mix(in srgb, var(--pay-card) 40%, var(--line));
   background: color-mix(in srgb, var(--pay-card) 8%, var(--surface));
 }
 
-.pay-chip.qr {
+.pay-chip.is-qr {
   border-color: color-mix(in srgb, var(--pay-qr) 40%, var(--line));
   background: color-mix(in srgb, var(--pay-qr) 8%, var(--surface));
 }
@@ -1169,19 +1169,19 @@ small {
   text-underline-offset: 3px;
 }
 
-.pay-type.cash.on {
+.pay-type.is-cash.on {
   border-color: var(--pay-cash);
   background: color-mix(in srgb, var(--pay-cash) 8%, var(--surface));
   color: var(--pay-cash);
 }
 
-.pay-type.card.on {
+.pay-type.is-card.on {
   border-color: var(--pay-card);
   background: color-mix(in srgb, var(--pay-card) 8%, var(--surface));
   color: var(--pay-card);
 }
 
-.pay-type.qr.on {
+.pay-type.is-qr.on {
   border-color: var(--pay-qr);
   background: color-mix(in srgb, var(--pay-qr) 14%, var(--surface));
   color: var(--pay-qr);
