@@ -5766,3 +5766,10 @@ label {
 .fine-form select {
   font-size: 16px;
 }
+
+/* The expense form's labelled fields keep a phone-sized font (16px), or an
+   iPhone zooms in on tap. */
+.expense-form input,
+.expense-form select {
+  font-size: 16px;
+}

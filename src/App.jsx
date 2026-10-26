@@ -3947,7 +3947,9 @@ function FinanceView({ data, reload, setError }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
   const [tab, setTab] = useState('ishxona');
   const [form, setForm] = useState({ date: TODAY, section: 'ishxona', name: '', qty: '', amount_uzs: '', usd_rate: localStorage.getItem('usdRate') || '12200', minus_from: '' });
-  const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '500', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
+  // The rent offset starts with no sum (owner's review of 2026-10-26): 500 USD
+  // stood there ready, and one stray «Сохранить» wrote 6,1 млн.
+  const [offsetForm, setOffsetForm] = useState({ date: TODAY, owner: 'jamshid', amount_usd: '', usd_rate: localStorage.getItem('usdRate') || '12200', note: '' });
   const setMessage = useNotice();
   const [offsetsOpen, setOffsetsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -4151,27 +4153,51 @@ function FinanceView({ data, reload, setError }) {
       )}
 
       {readOnly ? null : addOpen ? (
-      <form className="card wide" onSubmit={addExpense}>
+      <form className="card wide expense-form" onSubmit={addExpense}>
         <div className="section-heading">
           <h2>Добавить расход</h2>
           <button className="link-button" type="button" onClick={() => setAddOpen(false)}>Закрыть</button>
         </div>
-        <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
-        <select value={form.section} onChange={(event) => setForm({ ...form, section: event.target.value })}>
-          <option value="ishxona">Салон</option>
-          <option value="murod">Мурод</option>
-          <option value="jamshid">Жамшид</option>
-        </select>
-        <input placeholder="Наименование" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-        <input placeholder="Количество" value={form.qty} onChange={(event) => setForm({ ...form, qty: event.target.value })} />
-        <MoneyInput placeholder="Сумма" value={form.amount_uzs} onChange={(amount_uzs) => setForm({ ...form, amount_uzs })} />
-        <MoneyInput placeholder="Курс USD" value={form.usd_rate} onChange={(usd_rate) => setForm({ ...form, usd_rate })} />
-        {form.section === 'ishxona' ? (
-          <select value={form.minus_from} onChange={(event) => setForm({ ...form, minus_from: event.target.value })}>
-            <option value="">— нет —</option>
+        {/* Every field had only grey text inside it, gone once typed into, and
+            the remembered dollar rate stood unnamed under the sum (owner's
+            review of 2026-10-26). Short labels, as on Склад; no hints. */}
+        <label>
+          Дата
+          <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} />
+        </label>
+        <label>
+          Кто платил
+          <select value={form.section} onChange={(event) => setForm({ ...form, section: event.target.value })}>
+            <option value="ishxona">Салон</option>
             <option value="murod">Мурод</option>
             <option value="jamshid">Жамшид</option>
           </select>
+        </label>
+        <label>
+          Наименование
+          <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+        </label>
+        <label>
+          Количество
+          <input value={form.qty} onChange={(event) => setForm({ ...form, qty: event.target.value })} />
+        </label>
+        <label>
+          Сумма, сум
+          <MoneyInput value={form.amount_uzs} onChange={(amount_uzs) => setForm({ ...form, amount_uzs })} />
+        </label>
+        <label>
+          Курс $
+          <MoneyInput value={form.usd_rate} onChange={(usd_rate) => setForm({ ...form, usd_rate })} />
+        </label>
+        {form.section === 'ishxona' ? (
+          <label>
+            Списать с вложений
+            <select value={form.minus_from} onChange={(event) => setForm({ ...form, minus_from: event.target.value })}>
+              <option value="">ни с кого</option>
+              <option value="murod">Мурод</option>
+              <option value="jamshid">Жамшид</option>
+            </select>
+          </label>
         ) : null}
         <button className="btn" type="submit" disabled={busy}>{busy ? 'Сохраняем…' : 'Добавить расход'}</button>
       </form>
