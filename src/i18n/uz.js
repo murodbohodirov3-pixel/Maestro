@@ -212,6 +212,8 @@ export const PHRASES = {
   'Выплачено': 'Toʻlangan',
   'выплачено': 'toʻlangan',
   'Аванс больше заработка': 'Avans daromaddan koʻp',
+  'Долг по авансу': 'Avans qarzi',
+  'Выплачено больше': 'Ortiqcha toʻlangan',
   'К выплате': 'Toʻlanadi',
   'К выплате ·': 'Toʻlanadi ·',
 
@@ -661,6 +663,8 @@ export const TEMPLATES = {
   'Не удалось выполнить: {0}': 'Bajarib boʻlmadi: {0}',
   'Расход {0} сум сохранён.': 'Xarajat {0} soʻm saqlandi.',
   'Записан: {0} · {1} · {2}': 'Yozildi: {0} · {1} · {2}',
+  'Штраф {0} не удержан: заработка не было': '{0} jarima ushlanmadi: daromad boʻlmadi',
+  'Штраф {0} не удержан: заработка не хватило': '{0} jarima ushlanmadi: daromad yetmadi',
   'Перенесено: {0} · {1} · {2}': 'Koʻchirildi: {0} · {1} · {2}',
   'Выручка за {0}': '{0} tushumi',
   'Штрафы за {0}': '{0} jarimalari',

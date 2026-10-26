@@ -5136,6 +5136,13 @@ label {
   color: var(--fine);
 }
 
+/* A fine the week could not cover: said, not subtracted, so the lines still add up. */
+.payout-lines span.payout-note {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .payout-due {
   display: flex;
   align-items: baseline;

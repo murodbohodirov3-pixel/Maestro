@@ -4941,6 +4941,33 @@ function MasterReviewsView({ setError }) {
   );
 }
 
+// A week's lines that add up to what is due (owner's review of 2026-10-26).
+// A fine is withheld only from what the week earned (masterWeek); the rest of
+// it used to vanish without a word while the red total blamed the advance.
+function PayoutLines({ row, dueLabel = 'К выплате' }) {
+  const withheld = Math.min(row.fines, Math.max(0, row.earned));
+  const notWithheld = row.fines - withheld;
+  return (
+    <>
+      <div className="payout-lines">
+        <span>Заработал<b>{money(row.earned)}</b></span>
+        {withheld ? <span>Штрафы<b className="danger">−{money(withheld)}</b></span> : null}
+        {notWithheld ? (
+          <span className="payout-note">
+            {`Штраф ${money(notWithheld)} не удержан: ${row.earned > 0 ? 'заработка не хватило' : 'заработка не было'}`}
+          </span>
+        ) : null}
+        {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
+        {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
+      </div>
+      <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
+        <span>{row.due < 0 ? (row.advances ? 'Долг по авансу' : 'Выплачено больше') : dueLabel}</span>
+        <strong>{money(Math.abs(row.due))}</strong>
+      </div>
+    </>
+  );
+}
+
 function PayoutsView({ data, reload, setError }) {
   const isOwner = data.appRole === 'owner';
   const thisWeek = weekStartOf(TODAY);
@@ -5031,16 +5058,7 @@ function PayoutsView({ data, reload, setError }) {
               <strong>{row.master.name}</strong>
               {weekPaid ? <span className="date-badge is-positive">выплачено</span> : null}
             </div>
-            <div className="payout-lines">
-              <span>Заработал<b>{money(row.earned)}</b></span>
-              {row.fines ? <span>Штрафы<b className="danger">−{money(row.fines)}</b></span> : null}
-              {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
-              {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
-            </div>
-            <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
-              <span>{row.due < 0 ? 'Аванс больше заработка' : 'К выплате'}</span>
-              <strong>{money(Math.abs(row.due))}</strong>
-            </div>
+            <PayoutLines row={row} />
             {row.advanceRows.length || row.payoutRows.length ? (
               <div className="payout-history">
                 {row.advanceRows.map((advance) => (
@@ -5099,16 +5117,7 @@ function MyWeek({ data, master }) {
         <strong>Неделя · {weekLabel(week)}</strong>
         {row.paid > 0 && row.due === 0 ? <span className="date-badge is-positive">выплачено</span> : null}
       </div>
-      <div className="payout-lines">
-        <span>Заработал<b>{money(row.earned)}</b></span>
-        {row.fines ? <span>Штрафы<b className="danger">−{money(row.fines)}</b></span> : null}
-        {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
-        {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
-      </div>
-      <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
-        <span>{row.due < 0 ? 'Аванс больше заработка' : 'К выплате в воскресенье'}</span>
-        <strong>{money(Math.abs(row.due))}</strong>
-      </div>
+      <PayoutLines row={row} dueLabel="К выплате в воскресенье" />
     </div>
   );
 }
