@@ -5994,3 +5994,49 @@ a:focus-visible {
 .master-sheet:focus {
   outline: none;
 }
+
+/* Pay a master is still to get once the owner confirms the visits. */
+.pending-pay {
+  margin: 4px 0 0;
+  color: var(--pending-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* On the dark earnings card the amber is a light one. */
+.master-earnings .pending-pay {
+  color: #F5C97A;
+}
+
+/* A split payment against the booking's price. */
+.split-left {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+/* The partner's «Не закрыто»: names to know, nothing to press. */
+.unclosed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--fine) 45%, var(--line));
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.unclosed-chip b {
+  color: var(--fine);
+}
+
+.unclosed-note {
+  display: block;
+  margin-top: 8px;
+  color: var(--negative-ink);
+  font-size: 13px;
+}

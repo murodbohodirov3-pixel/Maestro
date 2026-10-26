@@ -2485,7 +2485,11 @@ function BookingsView({ data, reload, setError, onVisit }) {
         <div className="card wide unclosed-card">
           <strong>Не закрыто</strong>
           <div className="unclosed-chips">
-            {unclosed.map((row) => (
+            {unclosed.map((row) => (data.appRole === 'partner' ? (
+              // The partner could only mark «Не пришёл» there; closing with a
+              // visit is the master's (owner's review of 2026-10-26).
+              <span className="unclosed-chip" key={row.master.id}>{row.master.name} <b>{row.count}</b></span>
+            ) : (
               <button
                 key={row.master.id}
                 type="button"
@@ -2493,8 +2497,9 @@ function BookingsView({ data, reload, setError, onVisit }) {
               >
                 {row.master.name} <b>{row.count}</b>
               </button>
-            ))}
+            )))}
           </div>
+          {data.appRole === 'partner' ? <small className="unclosed-note">Закрывает мастер</small> : null}
         </div>
       ) : null}
       <div className="wide day-chips">
@@ -2814,6 +2819,10 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   };
   const fineTotal = totalFines(visibleFines);
   const pay = masterNetPay(grossMasterPayForSales(visibleSales, masterProfile), fineTotal);
+  const pendingPay = Math.round(grossMasterPayForSales(
+    masterSales.filter((sale) => isPendingOwnerApproval(sale) && inRange(rowDate(sale), range.from, range.to)),
+    masterProfile,
+  ));
   const attendanceToday = data.attendance.find((item) => item.master === masterName && rowDate(item) === TODAY);
   const shiftStart = shiftStartFor(
     masterProfile,
@@ -3115,6 +3124,14 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
               </label>
             ))}
             <p className="split-total">Одна продажа на <strong>{money(splitTotal)} сум</strong></p>
+            {/* «Пришёл» knows the booking's price; what is left to place is said. */}
+            {visitBooking?.price_uzs && splitTotal !== Number(visitBooking.price_uzs) ? (
+              <p className="split-left">
+                {splitTotal < Number(visitBooking.price_uzs)
+                  ? `По записи ${money(visitBooking.price_uzs)} сум · осталось ${money(Number(visitBooking.price_uzs) - splitTotal)}`
+                  : `По записи ${money(visitBooking.price_uzs)} сум · больше на ${money(splitTotal - Number(visitBooking.price_uzs))}`}
+              </p>
+            ) : null}
           </div>
         ) : (
           <>
@@ -3174,6 +3191,9 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         <SectionHeading label={data.role === 'master' ? 'Мой заработок' : 'Заработок мастера'} range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(pay)} <small>сум заработано</small></div>
+        {/* A visit waiting for the owner counts nowhere yet, so the figure
+            did not move after «Добавить» (owner's review of 2026-10-26). */}
+        {pendingPay ? <p className="pending-pay">Ещё {money(pendingPay)} сум ждёт подтверждения</p> : null}
         <div className="tiles">
           {/* The rate is already in the header next to the master's name, and it
               does not change from one period to the next. A tile for it took the
@@ -4836,7 +4856,7 @@ function StockView({ data, reload, setError }) {
 function DeskStockView({ data, reload, setError }) {
   const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
-  const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
+  const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null, amountTyped: false };
   const [saleForm, setSaleForm] = useState(emptySale);
   const [saleRequestId, setSaleRequestId] = useState(newRequestId);
 
@@ -4851,6 +4871,19 @@ function DeskStockView({ data, reload, setError }) {
   const saleAmount = Number(saleForm.amount) || 0;
   const mySales = [...data.productSales]
     .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')));
+  // The price was typed from memory and «× 2» did not double it (owner's
+  // review of 2026-10-26): the desk's own last sale of the product gives the
+  // price per piece, times the quantity, until a sum is typed by hand.
+  const lastUnitPrice = (productId) => {
+    const last = mySales.find((sale) => String(sale.product_id) === String(productId)
+      && sale.status !== 'rejected' && Number(sale.qty) > 0 && Number(sale.amount) > 0);
+    return last ? Math.round(Number(last.amount) / Number(last.qty)) : 0;
+  };
+  const priced = (form) => {
+    if (form.amountTyped) return form;
+    const unit = lastUnitPrice(form.product_id);
+    return { ...form, amount: unit ? String(unit * (Number(form.qty) || 0)) : '' };
+  };
   const shelf = [...products].sort((left, right) => (
     Number(qtyOf(right) > 0) - Number(qtyOf(left) > 0)
     || String(left.name).localeCompare(String(right.name), 'ru')
@@ -4893,16 +4926,16 @@ function DeskStockView({ data, reload, setError }) {
         <ProductPicker
           options={inStockOptions}
           value={saleForm.product_id}
-          onChange={(id) => setSaleForm({ ...saleForm, product_id: id })}
+          onChange={(id) => setSaleForm(priced({ ...saleForm, product_id: id }))}
         />
         <div className="settings-pair">
           <label>
             Количество
-            <input type="number" inputMode="numeric" min="1" step="1" value={saleForm.qty} onChange={(event) => setSaleForm({ ...saleForm, qty: event.target.value })} />
+            <input type="number" inputMode="numeric" min="1" step="1" value={saleForm.qty} onChange={(event) => setSaleForm(priced({ ...saleForm, qty: event.target.value }))} />
           </label>
           <label>
             Сумма
-            <MoneyInput placeholder="сум" value={saleForm.amount} onChange={(value) => setSaleForm({ ...saleForm, amount: value })} />
+            <MoneyInput placeholder="сум" value={saleForm.amount} onChange={(value) => setSaleForm({ ...saleForm, amount: value, amountTyped: Boolean(value) })} />
           </label>
         </div>
         <div className="pay-types">
@@ -5206,6 +5239,10 @@ function PayoutsView({ data, reload, setError }) {
     payouts: data.payouts,
     week,
   });
+  // The owner pays one master after another and presses «Выплатил»; a master
+  // with nothing left to pay goes to the bottom, so the next one to pay is
+  // always on top (owner's decision of 2026-10-26).
+  const ordered = [...rows.filter((row) => row.due > 0), ...rows.filter((row) => row.due <= 0)];
   const totalDue = rows.reduce((sum, row) => sum + Math.max(0, row.due), 0);
   const totalAdvances = rows.reduce((sum, row) => sum + row.advances, 0);
   const totalPaid = rows.reduce((sum, row) => sum + row.paid, 0);
@@ -5270,7 +5307,7 @@ function PayoutsView({ data, reload, setError }) {
       </div>
 
 
-      {rows.map((row) => {
+      {ordered.map((row) => {
         const weekPaid = row.paid > 0 && row.due === 0;
         return (
           <div className="card payout-card" key={row.master.id}>
@@ -5323,6 +5360,10 @@ function PayoutsView({ data, reload, setError }) {
 function MyWeek({ data, master }) {
   if (!master) return null;
   const week = weekOf(TODAY);
+  const weekPending = Math.round(grossMasterPayForSales(
+    data.sales.filter((sale) => sale.master === master.name && isPendingOwnerApproval(sale) && inRange(rowDate(sale), week.from, week.to)),
+    master,
+  ));
   const row = masterWeek({
     master,
     week,
@@ -5338,6 +5379,7 @@ function MyWeek({ data, master }) {
         {row.paid > 0 && row.due === 0 ? <span className="date-badge is-positive">выплачено</span> : null}
       </div>
       <PayoutLines row={row} dueLabel="К выплате в воскресенье" />
+      {weekPending ? <p className="pending-pay">Ещё {money(weekPending)} сум ждёт подтверждения</p> : null}
     </div>
   );
 }

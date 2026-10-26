@@ -431,6 +431,7 @@ export const PHRASES = {
   'Координаты вручную': 'Koordinatalarni qoʻlda kiritish',
   'Удалить аванс': 'Avansni oʻchirish',
   'Удалить выплату': 'Toʻlovni oʻchirish',
+  'Закрывает мастер': 'Barber yopadi',
   'Сколько выдать — в «Выплатах» →': 'Qancha berish — «Toʻlovlar»da →',
 
   // Settings
@@ -700,6 +701,9 @@ export const TEMPLATES = {
   'Не удалось выполнить: {0}': 'Bajarib boʻlmadi: {0}',
   'Расход {0} сум сохранён.': 'Xarajat {0} soʻm saqlandi.',
   'Записан: {0} · {1} · {2}': 'Yozildi: {0} · {1} · {2}',
+  'Ещё {0} сум ждёт подтверждения': 'Yana {0} soʻm tasdiqlanishini kutmoqda',
+  'По записи {0} сум · осталось {1}': 'Yozuv boʻyicha {0} soʻm · {1} qoldi',
+  'По записи {0} сум · больше на {1}': 'Yozuv boʻyicha {0} soʻm · {1} ortiq',
   'на складе {0}': 'omborda {0}',
   'Отклонить оплату: {0}, {1} сум?': 'Toʻlov rad etilsinmi: {0}, {1} soʻm?',
   'Отклонить продажу «{0}» на {1} сум?': '«{0}» sotuvi ({1} soʻm) rad etilsinmi?',
