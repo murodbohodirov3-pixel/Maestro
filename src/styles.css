@@ -6374,6 +6374,7 @@ a:focus-visible {
 
 .duty-viewer {
   gap: 10px;
+  background: rgba(0, 0, 0, 0.9);
   align-content: center;
   color: #FFFFFF;
   font-size: 13px;
@@ -6398,4 +6399,208 @@ a:focus-visible {
   color: var(--pending-ink);
   font-size: 13px;
   font-weight: 600;
+}
+
+/* Duty zones (2026-10-26): a photo of each zone in every window. */
+.duty-zones {
+  display: grid;
+  gap: 8px;
+}
+
+.duty-zones-title {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.duty-zone {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.duty-zone.is-done {
+  border-color: color-mix(in srgb, var(--cash) 30%, var(--line));
+  background: var(--positive-soft);
+}
+
+.duty-zone.is-refused {
+  border-color: color-mix(in srgb, var(--fine) 35%, var(--line));
+  background: var(--negative-soft);
+}
+
+.duty-zone-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.duty-zone-text strong {
+  font-size: 15px;
+}
+
+.duty-zone-text span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.duty-zone-text .duty-zone-reason {
+  color: var(--negative-ink);
+  font-weight: 600;
+}
+
+.duty-zone-ok {
+  color: var(--positive-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.duty-zone .duty-photo-button {
+  width: 100%;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.duty-day-windows {
+  display: grid;
+  gap: 14px;
+}
+
+.duty-day-window {
+  display: grid;
+  gap: 8px;
+}
+
+.duty-day-window-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.duty-day-window-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.duty-day-window.is-fined .duty-day-window-head span,
+.duty-day-window.is-missed .duty-day-window-head span {
+  color: var(--negative-ink);
+  font-weight: 600;
+}
+
+.duty-day-window.is-done .duty-day-window-head span {
+  color: var(--positive-ink);
+}
+
+.duty-day-window .duty-photos {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.duty-refused {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--negative-soft);
+  color: var(--negative-ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.duty-viewer .duty-viewer-reason {
+  max-width: 480px;
+  color: #FFD9D4;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* A zone in up to three photos (2026-10-26). */
+.duty-shots {
+  display: flex;
+  gap: 8px;
+}
+
+.duty-shot {
+  position: relative;
+  width: 72px;
+  height: 96px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.duty-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.duty-shot button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(11, 31, 58, 0.72);
+  color: #FFFFFF;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.duty-zone-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.duty-zone-actions .btn {
+  width: 100%;
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.duty-photo-thumb {
+  position: relative;
+}
+
+.duty-photo-count {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 12px;
+  background: rgba(11, 31, 58, 0.78);
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.duty-viewer-strip {
+  display: flex;
+  max-width: 100%;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+
+.duty-viewer-strip img {
+  flex: 0 0 auto;
+  max-width: min(86vw, 520px);
+  max-height: 72vh;
+  border-radius: var(--radius-control);
+  scroll-snap-align: center;
 }

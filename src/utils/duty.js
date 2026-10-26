@@ -30,13 +30,19 @@ export function worksOn(duty, day, masterId) {
   return (duty?.working?.[day] || []).some((id) => String(id) === String(masterId));
 }
 
+// When a window's photos are due: its photo hour (owner's decision of
+// 2026-10-26: the first hour of each window), or the window as a whole.
+export function photoUntil(window) {
+  return window?.photo_until || window?.ends_at;
+}
+
 // A window as the screen says it, at a moment: done (a photo), fined, open
-// now, missed (ended with no photo, the fine still on its way) or later.
+// now, missed (its photo hour over with no photo, the fine on its way) or later.
 export function windowStatus(window, nowMs = Date.now()) {
   if (window?.photo_at) return 'done';
   if (window?.fined) return 'fined';
   const starts = new Date(window?.starts_at).getTime();
-  const ends = new Date(window?.ends_at).getTime();
+  const ends = new Date(photoUntil(window)).getTime();
   if (nowMs >= ends) return 'missed';
   if (nowMs >= starts) return 'open';
   return 'later';
@@ -46,10 +52,10 @@ export function openWindow(windows = [], nowMs = Date.now()) {
   return windows.find((window) => windowStatus(window, nowMs) === 'open') || null;
 }
 
-// The window the clock is in, photo or not.
+// The window whose photo hour the clock is in, photo or not.
 export function currentWindow(windows = [], nowMs = Date.now()) {
   return windows.find((window) => (
-    nowMs >= new Date(window.starts_at).getTime() && nowMs < new Date(window.ends_at).getTime()
+    nowMs >= new Date(window.starts_at).getTime() && nowMs < new Date(photoUntil(window)).getTime()
   )) || null;
 }
 

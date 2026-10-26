@@ -445,6 +445,35 @@ async function tellDutySwapAnswer(answer: Record<string, unknown>) {
   if (accepted) await messageOwners(dutySwapOwnerNotice({ fromName: answer.from_name, toName: answer.to_name, day: answer.day }));
 }
 
+// Is a zone clean on its photos? Asked of duty-photo-check in the Maestro AI
+// project, where the Anthropic key lives (owner's decision of 2026-10-26).
+// Not configured, unreachable or unsure: unchecked, and the zone counts.
+const DUTY_CHECK_URL = Deno.env.get('DUTY_CHECK_URL') || '';
+const DUTY_CHECK_SECRET = Deno.env.get('DUTY_CHECK_SECRET') || '';
+
+type DutyVerdict = { checked: boolean; shows_zone?: boolean; clean?: boolean; reason_ru?: string; reason_uz?: string; model?: string };
+
+async function checkDutyPhotos(images: string[], zone: string, checklist: string): Promise<DutyVerdict> {
+  if (!DUTY_CHECK_URL || !DUTY_CHECK_SECRET) return { checked: false };
+  try {
+    const response = await fetch(DUTY_CHECK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-duty-check-secret': DUTY_CHECK_SECRET },
+      body: JSON.stringify({ images, zone, checklist }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const verdict = await response.json().catch(() => null) as DutyVerdict | null;
+    if (!response.ok || !verdict?.checked) {
+      console.warn('[maestro-api] duty check unchecked', response.status, (verdict as { reason?: string } | null)?.reason ?? '');
+      return { checked: false };
+    }
+    return verdict;
+  } catch (error) {
+    console.warn('[maestro-api] duty check unreachable', String(error));
+    return { checked: false };
+  }
+}
+
 // A JPEG from the app, as base64; anything else is refused.
 function dutyPhotoBytes(image: unknown) {
   const text = String(image ?? '');
@@ -885,32 +914,63 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'addDutyPhoto') {
-      const phash = String(payload.phash ?? '').toLowerCase();
-      const bytes = dutyPhotoBytes(payload.image);
-      if (!bytes || !/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
-      const shot = Number(payload.shot_at);
-      const shotAt = Number.isFinite(shot) && shot > 1_500_000_000_000 && shot < 4_000_000_000_000
-        ? new Date(shot).toISOString()
-        : null;
-      const sha = toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer)));
-      const path = `${tashkentDate()}/${myMasterId}-${crypto.randomUUID()}.jpg`;
-      const { data: result, error } = await sb.rpc('maestro_add_duty_photo', {
+      // A zone sent as one to three photos and judged together (owner's
+      // decisions of 2026-10-26).
+      const zone = String(payload.zone ?? '');
+      const sent = Array.isArray(payload.photos) ? payload.photos : [];
+      if (!/^[a-z_]{2,20}$/.test(zone) || sent.length < 1 || sent.length > 3) return json({ error: 'invalid_duty_photo' }, 400);
+      const photos: { image: string; bytes: Uint8Array; phash: string; sha256: string; shot_at: string | null; storage_path: string }[] = [];
+      for (const item of sent) {
+        const bytes = dutyPhotoBytes(item?.image);
+        const phash = String(item?.phash ?? '').toLowerCase();
+        if (!bytes || !/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
+        const shot = Number(item?.shot_at);
+        photos.push({
+          image: String(item.image),
+          bytes,
+          phash,
+          sha256: toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer))),
+          shot_at: Number.isFinite(shot) && shot > 1_500_000_000_000 && shot < 4_000_000_000_000 ? new Date(shot).toISOString() : null,
+          storage_path: `${tashkentDate()}/${myMasterId}-${zone}-${crypto.randomUUID()}.jpg`,
+        });
+      }
+      const described = photos.map(({ sha256, phash, shot_at, storage_path, bytes }) => ({ sha256, phash, shot_at, storage_path, bytes: bytes.length }));
+
+      // Refused before anyone looks at it: no check is paid for a zone that
+      // could not count anyway.
+      const precheck = await sb.rpc('maestro_duty_photo_problem', { p_master_id: myMasterId, p_zone: zone, p_photos: described });
+      if (precheck.error) return json({ error: precheck.error.message }, 500);
+      const problem = (precheck.data ?? [])[0]?.problem_code;
+      if (problem) return json({ ok: false, error: problem }, ['duty_photo_done', 'duty_photo_repeat'].includes(problem) ? 409 : 400);
+
+      const zoneRow = await sb.from('duty_zones').select('name_ru, checklist_ru').eq('id', zone).maybeSingle();
+      if (zoneRow.error) return json({ error: zoneRow.error.message }, 500);
+      const verdict = await checkDutyPhotos(photos.map((photo) => photo.image), zoneRow.data?.name_ru ?? zone, zoneRow.data?.checklist_ru ?? '');
+      const accepted = !verdict.checked || Boolean(verdict.shows_zone && verdict.clean);
+      const { data: result, error } = await sb.rpc('maestro_add_duty_attempt', {
         p_master_id: myMasterId,
-        p_storage_path: path,
-        p_sha256: sha,
-        p_phash: phash,
-        p_bytes: bytes.length,
-        p_shot_at: shotAt,
+        p_zone: zone,
+        p_photos: described,
+        p_accepted: accepted,
+        p_reason_ru: accepted ? null : verdict.reason_ru,
+        p_reason_uz: accepted ? null : verdict.reason_uz,
+        p_checked_by: verdict.checked ? verdict.model : 'unchecked',
       });
       if (error) return json({ error: error.message }, 500);
       if (!result?.ok) return json(result, ['duty_photo_done', 'duty_photo_repeat'].includes(result?.error) ? 409 : 400);
-      // The row first, so two taps cannot both pass; the file after it, and
-      // the row goes again if the file does not land.
-      const uploaded = await sb.storage.from('duty-photos').upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
-      if (uploaded.error) {
-        console.error('[maestro-api] duty photo upload', uploaded.error.message);
-        await sb.from('duty_photos').delete().eq('storage_path', path);
-        return json({ error: 'duty_photo_upload_failed' }, 502);
+      // The rows first, so two taps cannot both count; the files after them,
+      // and the attempt goes again if a file does not land. A refused zone is
+      // kept too, for the owner to see what was sent.
+      const landed: string[] = [];
+      for (const photo of photos) {
+        const uploaded = await sb.storage.from('duty-photos').upload(photo.storage_path, photo.bytes, { contentType: 'image/jpeg', upsert: false });
+        if (uploaded.error) {
+          console.error('[maestro-api] duty photo upload', uploaded.error.message);
+          if (landed.length) await sb.storage.from('duty-photos').remove(landed);
+          await sb.from('duty_attempts').delete().eq('id', result.attempt_id);
+          return json({ error: 'duty_photo_upload_failed' }, 502);
+        }
+        landed.push(photo.storage_path);
       }
       return json(result);
     }
@@ -919,23 +979,27 @@ Deno.serve(async (req) => {
       if (appUserResult.data.role !== 'owner' && !isPartner) return json({ error: 'forbidden' }, 403);
       const day = String(payload.day ?? '');
       if (!isValidIsoDate(day) || day < tashkentDate(-31) || day > tashkentDate(14)) return json({ error: 'invalid_duty_day' }, 400);
-      const [windows, photos, fines] = await Promise.all([
+      const [windows, attempts, fines] = await Promise.all([
         sb.rpc('maestro_duty_windows', { p_day: day }),
-        sb.from('duty_photos').select('id, master_id, window_starts_at, window_ends_at, taken_at, storage_path').eq('day', day).order('window_starts_at'),
+        sb.from('duty_attempts')
+          .select('id, master_id, zone, status, reason_ru, reason_uz, window_starts_at, taken_at, duty_photos(id, storage_path)')
+          .eq('day', day).order('taken_at'),
         sb.from('fines').select('id, master_id, amount, duty_window').eq('auto', 'duty').eq('d', day),
       ]);
-      const failed = windows.error || photos.error || fines.error;
+      const failed = windows.error || attempts.error || fines.error;
       if (failed) return json({ error: failed.message }, 500);
-      const paths = (photos.data ?? []).map((photo: { storage_path: string }) => photo.storage_path);
+      type AttemptRow = Record<string, unknown> & { duty_photos: { id: number; storage_path: string }[] | null };
+      const rows = (attempts.data ?? []) as AttemptRow[];
+      const paths = rows.flatMap((attempt) => (attempt.duty_photos ?? []).map((photo) => photo.storage_path));
       const signed = paths.length ? await sb.storage.from('duty-photos').createSignedUrls(paths, 60 * 60) : { data: [], error: null };
       if (signed.error) return json({ error: signed.error.message }, 500);
       const urlOf = new Map((signed.data ?? []).map((item: { path: string | null; signedUrl: string | null }) => [item.path, item.signedUrl]));
       return json({
         day,
         windows: windows.data ?? [],
-        photos: (photos.data ?? []).map(({ storage_path, ...photo }: { storage_path: string } & Record<string, unknown>) => ({
-          ...photo,
-          url: urlOf.get(storage_path) ?? null,
+        attempts: rows.map(({ duty_photos, ...attempt }) => ({
+          ...attempt,
+          photos: (duty_photos ?? []).map((photo) => ({ id: photo.id, url: urlOf.get(photo.storage_path) ?? null })),
         })),
         fines: fines.data ?? [],
       });

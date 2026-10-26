@@ -98,6 +98,7 @@ import {
   myDuty,
   nextWindow,
   openWindow,
+  photoUntil,
   rosterChanges,
   rosterOn,
   swapCandidates,
@@ -355,6 +356,7 @@ const ACTION_ERROR_TEXT = {
   duty_not_today: 'Сегодня дежурите не вы.',
   duty_no_window: 'Сейчас фото не нужно — дождитесь своего времени.',
   duty_photo_done: 'Фото за это время уже есть.',
+  duty_photo_closed: 'Час для фото этого окна прошёл — ждите следующего окна.',
   duty_photo_old: 'Это старое фото. Сфотографируйте салон сейчас.',
   duty_photo_repeat: 'Это фото уже присылали. Сфотографируйте салон заново.',
   invalid_duty_photo: 'Не удалось прочитать фото. Попробуйте ещё раз.',
@@ -370,11 +372,14 @@ const ACTION_ERROR_TEXT = {
   invalid_duty_roster: 'Проверьте график дежурств.',
   duty_day_out_of_range: 'Прошедшие дни дежурств не меняются.',
   invalid_duty_day: 'Фото дежурных хранятся 30 дней.',
+  invalid_duty_zone: 'Такой зоны нет — обновите экран.',
 };
 
 function actionErrorText(error) {
   const code = String(error?.details?.error || error?.message || '');
   if (code === 'bookings_to_close') return unclosedText(error.details?.bookings);
+  // The check found the zone dirty: what to fix, in its words.
+  if (code === 'duty_photo_refused') return `Не принято: ${error.details?.reason || ''}`;
   if (ACTION_ERROR_TEXT[code]) return ACTION_ERROR_TEXT[code];
   if (code.startsWith('unauthorized')) return 'Сессия истекла. Откройте приложение через Telegram заново.';
   if (/Failed to fetch|NetworkError|network/i.test(code)) {
@@ -5454,8 +5459,9 @@ function dutyDayTitle(day) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+// A window by its photo hour: «14:00–15:00» for the window 14:00–16:00.
 function dutyWindowLabel(window) {
-  return `${appointmentTime(window.starts_at)}–${appointmentTime(window.ends_at)}`;
+  return `${appointmentTime(window.starts_at)}–${appointmentTime(photoUntil(window))}`;
 }
 
 const DUTY_STATUS_TEXT = {
@@ -5473,16 +5479,17 @@ function DutyTrialNote({ duty }) {
   return <p className="duty-trial">{`Пробная неделя. Штрафы начнутся с ${dutyDateLabel(duty.since, 'ru')}.`}</p>;
 }
 
-function DutyWindows({ windows, now }) {
+function DutyWindows({ windows, now, zoneCount = 0 }) {
   if (!windows.length) return null;
   return (
     <ol className="duty-windows">
       {windows.map((window) => {
         const status = windowStatus(window, now);
+        const done = (window.zones_done || []).length;
         return (
           <li className={`duty-window is-${status}`} key={window.starts_at}>
             <strong>{dutyWindowLabel(window)}</strong>
-            <span>{DUTY_STATUS_TEXT[status]}</span>
+            <span>{status === 'open' && zoneCount ? `сейчас · ${done} из ${zoneCount}` : DUTY_STATUS_TEXT[status]}</span>
           </li>
         );
       })}
@@ -5557,12 +5564,12 @@ async function prepareDutyPhoto(file) {
 }
 
 // The camera, straight away where the phone allows it.
-function DutyPhotoButton({ busy, onPick, label = 'Сфотографировать салон' }) {
+function DutyPhotoButton({ busy, disabled = false, onPick, label = 'Сфотографировать', busyLabel = 'Готовлю фото…', ghost = false }) {
   const inputRef = useRef(null);
   return (
     <>
-      <button className="btn duty-photo-button" type="button" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? 'Отправляю фото…' : label}
+      <button className={`btn duty-photo-button${ghost ? ' ghost' : ''}`} type="button" disabled={busy || disabled} onClick={() => inputRef.current?.click()}>
+        {busy ? busyLabel : label}
       </button>
       <input
         ref={inputRef}
@@ -5602,7 +5609,7 @@ function DutyTodayCard({ data, onOpen }) {
         <small>Дежурный сегодня</small>
         <strong>{today ? dutyMasterName(duty, today.master_id) : '—'}</strong>
         <span className={fined ? 'is-negative' : ''}>{line}</span>
-        {open && !open.photo_at ? <span className="duty-card-now">{`Ждём фото до ${appointmentTime(open.ends_at)}`}</span> : null}
+        {open && !open.photo_at ? <span className="duty-card-now">{`Ждём фото до ${appointmentTime(photoUntil(open))}`}</span> : null}
       </span>
       {onOpen ? (
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
@@ -5655,9 +5662,16 @@ function MyDuty({ data, reload, setError }) {
   const { run, busy } = useAction(setError, setMessage);
   const [asking, setAsking] = useState(null);
   const closeAsking = useCallback(() => setAsking(null), []);
+  // A zone takes up to three photos before it is sent (owner's decision of
+  // 2026-10-26): what is ready per zone, the zone whose photo is being
+  // prepared, and the zone being checked.
+  const [drafts, setDrafts] = useState({});
+  const [preparingZone, setPreparingZone] = useState(null);
+  const [sendingZone, setSendingZone] = useState(null);
   const duty = data.duty;
   const masterId = data.byName[data.me]?.id;
   if (!duty || !masterId) return null;
+  const zones = duty.zones || [];
 
   const today = rosterOn(duty, duty.today);
   const mine = myDuty(duty, masterId, duty.today, now);
@@ -5672,12 +5686,54 @@ function MyDuty({ data, reload, setError }) {
   const ahead = mine.days.filter((row) => !row.starts_at || now < new Date(row.starts_at).getTime());
   const nameOf = (id) => dutyMasterName(duty, id);
 
-  async function sendPhoto(file) {
+  async function addShot(zone, file) {
+    setPreparingZone(zone.id);
+    try {
+      const shot = await prepareDutyPhoto(file);
+      setDrafts((current) => ({
+        ...current,
+        [zone.id]: [...(current[zone.id] || []), { ...shot, key: `${Date.now()}-${Math.random()}` }].slice(0, 3),
+      }));
+    } catch (error) {
+      setError(actionErrorText(error));
+    } finally {
+      setPreparingZone(null);
+    }
+  }
+
+  function dropShot(zone, key) {
+    setDrafts((current) => ({ ...current, [zone.id]: (current[zone.id] || []).filter((shot) => shot.key !== key) }));
+  }
+
+  // A zone's photos, judged together: counted, or refused with what to fix
+  // (owner's decision of 2026-10-26: a dirty zone is not counted until it is
+  // sent again). The photos are spent either way, unless they never arrived.
+  async function sendZone(zone) {
+    const shots = drafts[zone.id] || [];
+    if (!shots.length) return;
+    setSendingZone(zone.id);
+    let unsent = false;
     const ok = await run(async () => {
-      const photo = await prepareDutyPhoto(file);
-      await callLegacyApi('addDutyPhoto', photo);
-    }, 'Фото принято.');
-    if (ok) haptic('success');
+      let result;
+      try {
+        result = await callLegacyApi('addDutyPhoto', {
+          zone: zone.id,
+          photos: shots.map(({ image, phash, shot_at }) => ({ image, phash, shot_at })),
+        });
+      } catch (error) {
+        unsent = /Failed to fetch|NetworkError|network/i.test(String(error?.message)) || error?.details?.error === 'duty_photo_upload_failed';
+        throw error;
+      }
+      if (result?.accepted === false) {
+        registerNames([[result.reason_ru, result.reason_uz]]);
+        const refused = new Error('duty_photo_refused');
+        refused.details = { error: 'duty_photo_refused', reason: result.reason_ru };
+        throw refused;
+      }
+    }, `Фото приняты: ${zone.name_ru}.`);
+    setSendingZone(null);
+    if (!unsent) setDrafts((current) => ({ ...current, [zone.id]: [] }));
+    haptic(ok ? 'success' : 'error');
     reload();
   }
 
@@ -5723,9 +5779,58 @@ function MyDuty({ data, reload, setError }) {
         {onDutyToday ? (
           <>
             <p className="big-line">Сегодня дежурите вы</p>
-            <DutyWindows windows={windows} now={now} />
-            {current && !current.photo_at ? (
-              <DutyPhotoButton busy={busy} onPick={sendPhoto} />
+            <DutyWindows windows={windows} now={now} zoneCount={zones.length} />
+            {current && !current.photo_at && zones.length ? (
+              <div className="duty-zones">
+                <span className="duty-zones-title">{`Фото за ${dutyWindowLabel(current)}`}</span>
+                {zones.map((zone) => {
+                  const done = (current.zones_done || []).includes(zone.id);
+                  const refused = current.zones_rejected?.[zone.id];
+                  const shots = drafts[zone.id] || [];
+                  const sending = sendingZone === zone.id;
+                  return (
+                    <div className={`duty-zone${done ? ' is-done' : refused && !shots.length ? ' is-refused' : ''}`} key={zone.id}>
+                      <div className="duty-zone-text">
+                        <strong>{zone.name_ru}</strong>
+                        <span>{zone.checklist_ru}</span>
+                        {refused && !done ? <span className="duty-zone-reason">{`Не принято: ${refused.reason_ru}`}</span> : null}
+                      </div>
+                      {done ? (
+                        <span className="duty-zone-ok">фото приняты</span>
+                      ) : (
+                        <>
+                          {shots.length ? (
+                            <div className="duty-shots">
+                              {shots.map((shot) => (
+                                <span className="duty-shot" key={shot.key}>
+                                  <img alt="" src={`data:image/jpeg;base64,${shot.image}`} />
+                                  <button aria-label="Убрать фото" disabled={sending} type="button" onClick={() => dropShot(zone, shot.key)}>×</button>
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="duty-zone-actions">
+                            {shots.length < 3 ? (
+                              <DutyPhotoButton
+                                busy={preparingZone === zone.id}
+                                disabled={busy || Boolean(preparingZone)}
+                                ghost={shots.length > 0 || Boolean(refused)}
+                                label={shots.length ? 'Ещё фото' : refused ? 'Переснять' : 'Сфотографировать'}
+                                onPick={(file) => addShot(zone, file)}
+                              />
+                            ) : null}
+                            {shots.length ? (
+                              <button className="btn" disabled={busy || Boolean(preparingZone)} type="button" onClick={() => sendZone(zone)}>
+                                {sending ? 'Проверяю фото…' : `Отправить (${shots.length})`}
+                              </button>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <p className="hint">{doneLine}</p>
             )}
@@ -5786,8 +5891,9 @@ function MasterDutyView({ data, reload, setError }) {
   );
 }
 
-// A day's photos for the owner and the partner, by window, with the fines.
-function DutyDayPhotos({ day, refreshKey, setError }) {
+// A day's photos for the owner and the partner: each window with a photo per
+// zone, its fine, and the photos the check refused, with why.
+function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
   const now = useNow();
   const [result, setResult] = useState(null);
   const [opened, setOpened] = useState(null);
@@ -5796,54 +5902,82 @@ function DutyDayPhotos({ day, refreshKey, setError }) {
     let alive = true;
     callLegacyApi('dutyDay', { day })
       .then((answer) => { if (alive) setResult(answer); })
-      .catch((error) => { if (alive) { setResult({ windows: [], photos: [], fines: [] }); setError(actionErrorText(error)); } });
+      .catch((error) => { if (alive) { setResult({ windows: [], attempts: [], fines: [] }); setError(actionErrorText(error)); } });
     return () => { alive = false; };
   }, [day, refreshKey, setError]);
 
   if (!result) return <p className="hint">Загружаю фото…</p>;
-  const photos = result.photos || [];
+  const attempts = result.attempts || [];
   const fines = result.fines || [];
-  const photoOf = (window) => photos.find((photo) => photo.window_starts_at === window.starts_at)
-    || photos.find((photo) => new Date(photo.window_starts_at).getTime() === new Date(window.starts_at).getTime());
-  const fineOf = (window) => fines.find((fine) => new Date(fine.duty_window).getTime() === new Date(window.starts_at).getTime());
+  const sameMoment = (left, right) => new Date(left).getTime() === new Date(right).getTime();
+  const fineOf = (window) => fines.find((fine) => sameMoment(fine.duty_window, window.starts_at));
+  const zoneName = (id) => zones.find((zone) => zone.id === id)?.name_ru || '';
   const windows = result.windows || [];
-  if (!windows.length && !photos.length) return <p className="hint">В этот день дежурного не было.</p>;
+  if (!windows.length && !attempts.length) return <p className="hint">В этот день дежурного не было.</p>;
 
   return (
     <>
-      <div className="duty-photos">
+      <div className="duty-day-windows">
         {windows.map((window) => {
-          const photo = photoOf(window);
+          const inWindow = attempts.filter((attempt) => sameMoment(attempt.window_starts_at, window.starts_at));
+          const counted = (zone) => inWindow.find((attempt) => attempt.zone === zone.id && attempt.status === 'accepted');
+          const refused = inWindow.filter((attempt) => attempt.status === 'rejected');
           const fine = fineOf(window);
+          const complete = zones.length > 0 && zones.every((zone) => counted(zone));
           // Not over yet: nothing is missing.
-          const status = windowStatus({ ...window, photo_at: photo?.taken_at, fined: Boolean(fine) }, now);
+          const status = windowStatus({ ...window, photo_at: complete ? window.ends_at : null, fined: Boolean(fine) }, now);
           return (
-            <div className="duty-photo" key={window.starts_at}>
-              {photo?.url ? (
-                <button className="duty-photo-thumb" type="button" onClick={() => setOpened(photo)}>
-                  <img alt={`Фото ${dutyWindowLabel(window)}`} loading="lazy" src={photo.url} />
+            <div className={`duty-day-window is-${status}`} key={window.starts_at}>
+              <div className="duty-day-window-head">
+                <strong>{dutyWindowLabel(window)}</strong>
+                <span>{fine ? `штраф ${money(fine.amount)}` : DUTY_STATUS_TEXT[status]}</span>
+              </div>
+              <div className="duty-photos">
+                {zones.map((zone) => {
+                  const attempt = counted(zone);
+                  const cover = attempt?.photos?.[0];
+                  return (
+                    <div className="duty-photo" key={zone.id}>
+                      {cover?.url ? (
+                        <button className="duty-photo-thumb" type="button" onClick={() => setOpened(attempt)}>
+                          <img alt={`${zone.name_ru}, ${dutyWindowLabel(window)}`} loading="lazy" src={cover.url} />
+                          {attempt.photos.length > 1 ? <b className="duty-photo-count">{attempt.photos.length}</b> : null}
+                        </button>
+                      ) : (
+                        <span className={`duty-photo-empty is-${status}`}>
+                          {status === 'open' ? 'ждём фото' : status === 'later' ? 'позже' : 'нет фото'}
+                        </span>
+                      )}
+                      <span>{zone.name_ru}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {refused.map((attempt) => (
+                <button className="duty-refused" key={attempt.id} type="button" onClick={() => setOpened(attempt)}>
+                  {`Не принято · ${zoneName(attempt.zone)} · ${appointmentTime(attempt.taken_at)}: ${attempt.reason_ru || ''}`}
                 </button>
-              ) : (
-                <span className={`duty-photo-empty is-${status}`}>
-                  {fine ? `штраф ${money(fine.amount)}` : status === 'open' ? 'ждём фото' : status === 'later' ? 'позже' : 'нет фото'}
-                </span>
-              )}
-              <span>{dutyWindowLabel(window)}</span>
+              ))}
             </div>
           );
         })}
       </div>
-      {opened ? <DutyPhotoViewer photo={opened} onClose={closeOpened} /> : null}
+      {opened ? <DutyPhotoViewer attempt={opened} zoneName={zoneName(opened.zone)} onClose={closeOpened} /> : null}
     </>
   );
 }
 
-function DutyPhotoViewer({ photo, onClose }) {
+// A zone's photos at full size, side by side, with when they came and, for a
+// refused sending, why.
+function DutyPhotoViewer({ attempt, zoneName = '', onClose }) {
   useTelegramBack(onClose);
   return (
     <div className="modal-backdrop duty-viewer" onClick={onClose} role="dialog" aria-modal="true" aria-label="Фото дежурного">
-      <img alt="Фото дежурного" src={photo.url} />
-      <span>{`Отправлено в ${appointmentTime(photo.taken_at)}`}</span>
+      <div className="duty-viewer-strip">
+        {(attempt.photos || []).map((photo) => <img alt="Фото дежурного" key={photo.id} src={photo.url} />)}
+      </div>
+      <span>{zoneName ? `${zoneName} · отправлено в ${appointmentTime(attempt.taken_at)}` : `Отправлено в ${appointmentTime(attempt.taken_at)}`}</span>
+      {attempt.status === 'rejected' ? <span className="duty-viewer-reason">{`Не принято: ${attempt.reason_ru || ''}`}</span> : null}
     </div>
   );
 }
@@ -5870,7 +6004,11 @@ function DutyView({ data, reload, setError }) {
   const valueOf = (day) => (Object.prototype.hasOwnProperty.call(edits, day) ? edits[day] : String(rosterOn(duty, day)?.master_id ?? ''));
   const changes = rosterChanges(duty, Object.fromEntries(days.filter((day) => day >= today).map((day) => [day, valueOf(day)])));
   const photoDays = Array.from({ length: 7 }, (_, index) => addDaysIso(today, -index));
-  const todayDone = windowsDone(duty.windows || []);
+  // Today's photos reload as each zone is sent, not only when a window
+  // closes: the count of counted and refused zones in each window.
+  const todayPhotos = (duty.windows || [])
+    .map((window) => `${(window.zones_done || []).length}.${Object.keys(window.zones_rejected || {}).length}`)
+    .join(',');
   const swaps = (duty.swaps || []).filter((swap) => swap.status === 'pending' || swap.status === 'accepted');
 
   async function save() {
@@ -5931,7 +6069,7 @@ function DutyView({ data, reload, setError }) {
             </button>
           ))}
         </div>
-        <DutyDayPhotos day={photoDay} refreshKey={photoDay === today ? todayDone : 0} setError={setError} />
+        <DutyDayPhotos day={photoDay} zones={duty.zones || []} refreshKey={photoDay === today ? todayPhotos : 0} setError={setError} />
       </div>
 
       {swaps.length ? (
@@ -6886,6 +7024,12 @@ export default function App() {
       const result = await callLegacyApi('load', since ? { since } : {});
       const normalized = normalizeData(result);
       registerNames(normalized.bookingServices.map((service) => [service.name_ru, service.name_uz]));
+      // Duty zones and the check's reasons come in both languages.
+      registerNames([
+        ...(normalized.duty?.zones || []).flatMap((zone) => [[zone.name_ru, zone.name_uz], [zone.checklist_ru, zone.checklist_uz]]),
+        ...(normalized.duty?.windows || []).flatMap((window) => Object.values(window.zones_rejected || {})
+          .map((refusal) => [refusal.reason_ru, refusal.reason_uz])),
+      ]);
       registerData(normalized.products.map((product) => product.name));
       if (!langSettledRef.current && normalized.lang) {
         langSettledRef.current = true;

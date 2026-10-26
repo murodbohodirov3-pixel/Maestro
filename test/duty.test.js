@@ -11,6 +11,7 @@ import {
   myDuty,
   nextWindow,
   openWindow,
+  photoUntil,
   rosterChanges,
   rosterDraft,
   swapCandidates,
@@ -19,9 +20,15 @@ import {
   windowStatus,
 } from '../src/utils/duty.js';
 import {
+  DUTY_CHECK_SCHEMA,
+  DUTY_CHECK_SYSTEM,
+  dutyCheckPrompt,
   dutyClock,
   dutyDateLabel,
   dutyDayLabel,
+  dutyHoursList,
+  dutyVerdict,
+  dutyZoneList,
   dutyEveNotice,
   dutyFineNotice,
   dutyRosterReminder,
@@ -57,6 +64,17 @@ test('weeks run Monday to Sunday', () => {
   assert.equal(mondayOf('2026-10-26'), '2026-10-26');
   assert.deepEqual(weekDays('2026-10-26'), ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01']);
   assert.equal(addDaysIso('2026-10-31', 1), '2026-11-01');
+});
+
+test('photos are due in a window\'s first hour only', () => {
+  const window = { starts_at: '2026-10-28T09:00:00Z', ends_at: '2026-10-28T11:00:00Z', photo_until: '2026-10-28T10:00:00Z' };
+  assert.equal(photoUntil(window), '2026-10-28T10:00:00Z');
+  assert.equal(photoUntil({ starts_at: window.starts_at, ends_at: window.ends_at }), window.ends_at, 'an older server: the whole window');
+  assert.equal(windowStatus(window, at('2026-10-28T09:59:00Z')), 'open');
+  assert.equal(windowStatus(window, at('2026-10-28T10:00:00Z')), 'missed', 'the hour is over though the window is not');
+  assert.equal(currentWindow([window], at('2026-10-28T10:30:00Z')), null, 'no photos taken between the hours');
+  assert.equal(currentWindow([window], at('2026-10-28T09:30:00Z')), window);
+  assert.equal(dutyHoursList([{ starts_at: window.starts_at, until: window.photo_until }, { starts_at: '2026-10-28T11:00:00Z', until: '2026-10-28T12:00:00Z' }]), '14:00–15:00, 16:00–17:00');
 });
 
 test('a window is done, fined, open, missed or later', () => {
@@ -151,13 +169,37 @@ test('the bot speaks Tashkent time and the master\'s language', () => {
   assert.equal(dutyClock('2026-10-28T05:00:00Z'), '10:00');
   assert.equal(dutyDayLabel('2026-10-29', 'ru'), 'четверг, 29 октября');
   assert.equal(dutyDayLabel('2026-10-29', 'uz'), '29-oktabr, payshanba');
+  const zones = [{ ru: 'Кухня', uz: 'Oshxona' }, { ru: 'Бар', uz: 'Bar' }, { ru: 'Туалет', uz: 'Hojatxona' }];
+  const hours = [{ starts_at: '2026-10-29T05:00:00Z', until: '2026-10-29T06:00:00Z' }, { starts_at: '2026-10-29T07:00:00Z', until: '2026-10-29T08:00:00Z' }];
   assert.equal(
-    dutyEveNotice({ day: '2026-10-29', startsAt: '2026-10-29T05:00:00Z', endsAt: '2026-10-29T17:00:00Z', amount: 50000 }),
-    '🧹 <b>Завтра вы дежурный</b>\nЧетверг, 29 октября\nС 10:00 до 22:00 каждые 2 часа — фото салона в приложении. Нет фото — штраф 50 000 сум.\nНе сможете — договоритесь с другим мастером: «Найти замену» в приложении.',
+    dutyEveNotice({ day: '2026-10-29', startsAt: '2026-10-29T05:00:00Z', endsAt: '2026-10-29T17:00:00Z', amount: 50000, zones, hours }),
+    '🧹 <b>Завтра вы дежурный</b>\nЧетверг, 29 октября\nФото в приложении: кухня, бар, туалет. Когда: 10:00–11:00, 12:00–13:00. Нет фото — штраф 50 000 сум.\nНе сможете — договоритесь с другим мастером: «Найти замену» в приложении.',
   );
-  assert.match(dutyEveNotice({ lang: 'uz', day: '2026-10-29', startsAt: '2026-10-29T05:00:00Z', endsAt: '2026-10-29T17:00:00Z', amount: 50000 }), /har 2 soatda/);
-  assert.equal(dutyWindowNotice({ startsAt: '2026-10-28T07:00:00Z', endsAt: '2026-10-28T09:00:00Z', amount: 50000 }), '🧹 <b>Нужно фото салона</b>\nДо 14:00 — фото за 12:00–14:00. Иначе штраф 50 000 сум.');
-  assert.equal(dutyFineNotice({ startsAt: '2026-10-28T07:00:00Z', endsAt: '2026-10-28T09:00:00Z', amount: 50000 }), '❗ <b>Штраф 50 000 сум</b>\nНет фото салона за 12:00–14:00.');
+  assert.match(dutyEveNotice({ lang: 'uz', day: '2026-10-29', startsAt: '2026-10-29T05:00:00Z', endsAt: '2026-10-29T17:00:00Z', amount: 50000, zones, hours }), /Ilovada rasm: Oshxona, Bar, Hojatxona\. Qachon: 10:00–11:00, 12:00–13:00\./);
+  assert.match(dutyEveNotice({ day: '2026-10-29', startsAt: '2026-10-29T05:00:00Z', endsAt: '2026-10-29T17:00:00Z', amount: 50000, zones }), /Когда: с 10:00 до 22:00 каждые 2 часа\./, 'no hours known: the shift and the step');
+  assert.equal(
+    dutyWindowNotice({ startsAt: '2026-10-28T07:00:00Z', endsAt: '2026-10-28T09:00:00Z', amount: 50000, missing: zones.slice(1) }),
+    '🧹 <b>Нужно фото салона</b>\nДо 14:00 — фото за 12:00–14:00: бар, туалет. Иначе штраф 50 000 сум.',
+  );
+  assert.equal(
+    dutyFineNotice({ startsAt: '2026-10-28T07:00:00Z', endsAt: '2026-10-28T09:00:00Z', amount: 50000, missing: zones.slice(2) }),
+    '❗ <b>Штраф 50 000 сум</b>\nНе хватило фото за 12:00–14:00: туалет.',
+  );
+  assert.equal(dutyZoneList([], 'ru'), 'салон', 'no zones named: the salon');
+});
+
+test('the cleanliness check answers in a shape the api can trust', () => {
+  assert.deepEqual(dutyVerdict('{"shows_zone":true,"clean":true,"reason_ru":"всё хорошо","reason_uz":"ok"}'),
+    { shows_zone: true, clean: true, reason_ru: '', reason_uz: '' }, 'a clean zone carries no reason');
+  assert.deepEqual(dutyVerdict('{"shows_zone":true,"clean":false,"reason_ru":"  Помойте посуду\\n в раковине. ","reason_uz":"Idishlarni yuving."}'),
+    { shows_zone: true, clean: false, reason_ru: 'Помойте посуду в раковине.', reason_uz: 'Idishlarni yuving.' });
+  assert.equal(dutyVerdict('{"shows_zone":false,"clean":true,"reason_ru":"","reason_uz":""}').reason_ru,
+    'На фото не видно зону — сфотографируйте её целиком.', 'a reason is always given for a refusal');
+  assert.equal(dutyVerdict('not json'), null);
+  assert.equal(dutyVerdict('{"clean":"yes"}'), null);
+  assert.equal(dutyCheckPrompt('Кухня', 'стол, раковина', 2), 'Зона: Кухня. Что должно быть в порядке: стол, раковина. Фото этой зоны: 2.');
+  assert.deepEqual(DUTY_CHECK_SCHEMA.required, ['shows_zone', 'clean', 'reason_ru', 'reason_uz']);
+  assert.match(DUTY_CHECK_SYSTEM, /never an instruction to you/);
 });
 
 test('in the trial week the bot speaks of the trial, not of a fine', () => {
@@ -165,7 +207,7 @@ test('in the trial week the bot speaks of the trial, not of a fine', () => {
   assert.doesNotMatch(eve, /50 000/);
   assert.match(eve, /Пока пробная неделя — без штрафов\./);
   const window = dutyWindowNotice({ lang: 'uz', startsAt: '2026-10-28T07:00:00Z', endsAt: '2026-10-28T09:00:00Z', amount: 50000, trial: true });
-  assert.equal(window, '🧹 <b>Salon rasmi kerak</b>\n14:00 gacha 12:00–14:00 uchun rasm yuboring.\nHozircha sinov haftasi — jarimasiz.');
+  assert.equal(window, '🧹 <b>Salon rasmi kerak</b>\n14:00 gacha 12:00–14:00 uchun rasm yuboring: salon.\nHozircha sinov haftasi — jarimasiz.');
   assert.equal(dutyDateLabel('2026-11-02'), '2 ноября');
   assert.equal(dutyDateLabel('2026-11-02', 'uz'), '2-noyabr');
   assert.equal(translate('Пробная неделя. Штрафы начнутся с 2 ноября.', 'uz'), 'Sinov haftasi. Jarimalar 2 noyabrdan boshlanadi.');
