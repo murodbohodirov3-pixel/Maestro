@@ -55,7 +55,7 @@ import {
   rowDate,
 } from './utils/loadWindow.js';
 import { pluralRu } from './utils/plural.js';
-import { applyLanguage, registerNames, tr } from './i18n/index.js';
+import { applyLanguage, registerData, registerNames, tr } from './i18n/index.js';
 import { masterWeek, weekOf, weekPayouts, weekStartOf } from './utils/payouts.js';
 import { checkClientName, checkLastName, NAME_PART_MAX } from '../supabase/functions/_shared/clientName.js';
 import { scannedAgo } from '../supabase/functions/_shared/mirror.js';
@@ -2080,11 +2080,13 @@ function OutcomeChooser({ appointment, reload, setError, onDone, initialMode = n
   );
 }
 
-// «Сегодня», «Завтра», then «Пт 23».
+// «Сегодня», «Завтра», then «Пт 23». The weekday is a text of its own: as
+// one string «Ср 28» stayed Russian in Uzbek (owner's review of 2026-10-26).
 function dayChipLabel(day, index) {
   if (index === 0) return 'Сегодня';
   if (index === 1) return 'Завтра';
-  return `${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7]} ${Number(day.slice(8))}`;
+  const weekday = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][(new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7];
+  return <>{weekday} {Number(day.slice(8))}</>;
 }
 
 // Another time or another master for an open booking (owner's request of
@@ -4103,7 +4105,7 @@ function FinanceView({ data, reload, setError }) {
             <div className="expense-biggest-track" aria-hidden="true">
               <i style={{ width: `${Math.min(100, biggestShare)}%` }} />
             </div>
-            <span>{Math.round(biggestShare)}% всех расходов {period === 'month' ? 'месяца' : 'периода'}</span>
+            <span>{`${Math.round(biggestShare)}% всех расходов ${period === 'month' ? 'месяца' : 'периода'}`}</span>
           </div>
         ) : null}
         {offsetIncome ? (
@@ -4755,30 +4757,31 @@ function StockView({ data, reload, setError }) {
           empty="За этот период движения не было."
           render={(item) => {
             const { row } = item;
-            const name = `${nameOf(row.product_id)} × ${row.qty}`;
+            // The kind is a text of its own: joined with a product named in
+            // Russian («Масло для бороды») the whole line stayed Russian in Uzbek.
             let title;
             let details;
             let amount;
             let status = null;
             if (item.kind === 'receipt') {
-              title = `Приход · ${name}`;
+              title = 'Приход';
               details = `${money(row.unit_cost)} за шт. · ${RECEIPT_PAYER_LABELS[row.paid_by] || row.paid_by}`;
               amount = money(row.total_cost);
             } else if (item.kind === 'sale') {
-              title = `Продажа · ${name}`;
+              title = 'Продажа';
               details = `${PAYMENT_LABELS[row.payment_method] || '—'}${row.status === 'rejected' ? '' : ` · маржа ${signedMoney(productSaleMargin(row))}`}`;
               amount = money(row.amount);
               if (row.status === 'pending') status = <span className="approval pending">Ждёт подтверждения</span>;
               if (row.status === 'rejected') status = <span className="approval rejected">Отклонено</span>;
             } else {
-              title = `Списание · ${name}`;
+              title = 'Списание';
               details = `${WRITEOFF_REASON_LABELS[row.reason] || row.reason}${row.note ? ` · ${row.note}` : ''}`;
               amount = '—';
             }
             return (
               <div className={`row stock-move is-${item.kind}${row.status === 'rejected' ? ' is-rejected' : ''}`} key={`${item.kind}-${row.id}`}>
                 <div>
-                  <strong>{title}</strong>
+                  <strong>{title} · {nameOf(row.product_id)} × {row.qty}</strong>
                   <span>{displayDate(item.date)} · {details}</span>
                   {status}
                 </div>
@@ -6248,6 +6251,7 @@ export default function App() {
       const result = await callLegacyApi('load', since ? { since } : {});
       const normalized = normalizeData(result);
       registerNames(normalized.bookingServices.map((service) => [service.name_ru, service.name_uz]));
+      registerData(normalized.products.map((product) => product.name));
       if (!langSettledRef.current && normalized.lang) {
         langSettledRef.current = true;
         setLang(normalized.lang);

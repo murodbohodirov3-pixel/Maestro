@@ -54,6 +54,15 @@ function byWords(text) {
 // Names the base keeps in both languages, such as services (name_ru and
 // name_uz), registered as the data arrives.
 const NAMES = new Map();
+// Texts that are data and stay as written, such as products named in Russian
+// («Масло для бороды Proraso»): a sentence around them is still translated.
+const DATA = new Set();
+
+export function registerData(texts) {
+  for (const text of texts) {
+    if (text && CYRILLIC.test(text)) DATA.add(String(text).trim());
+  }
+}
 
 export function registerNames(pairs) {
   for (const [ru, uz] of pairs) {
@@ -63,6 +72,7 @@ export function registerNames(pairs) {
 
 function translateCore(text, depth = 0) {
   if (NAMES.has(text)) return NAMES.get(text);
+  if (DATA.has(text)) return text;
   if (Object.prototype.hasOwnProperty.call(PHRASES, text)) return PHRASES[text];
   // A booking's services are their names joined with « + ».
   if (text.includes(' + ')) {
@@ -75,13 +85,20 @@ function translateCore(text, depth = 0) {
       if (!match) continue;
       const values = [];
       template.order.forEach((slot, index) => { values[slot] = match[index + 1]; });
+      const kept = [];
       const result = template.uz.replace(/\{(\d+)\}/g, (_, slot) => {
         const value = values[Number(slot)] ?? '';
+        if (DATA.has(value.trim())) {
+          kept.push(value);
+          return value;
+        }
         return CYRILLIC.test(value) ? (translateCore(value.trim(), depth + 1) ?? value) : value;
       });
       // A part it could not translate is data (an expense «Вода для клиентов»
       // is not «{0} клиентов»): try the next way instead of half of each.
-      if (!RUSSIAN_WORD.test(result)) return result;
+      // Registered data is not counted as Russian left behind.
+      const rest = kept.reduce((left, value) => left.replace(value, ''), result);
+      if (!RUSSIAN_WORD.test(rest)) return result;
     }
     const joined = bySegments(text, depth);
     if (joined != null) return joined;
