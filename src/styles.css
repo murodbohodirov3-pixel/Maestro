@@ -5784,3 +5784,48 @@ label {
     font-size: 16px !important;
   }
 }
+
+/* Расходы: the sum stays on the right of every row, a purchase for Склад
+   included (owner's review of 2026-10-26). */
+.row.expense-row {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.row.expense-row > div:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+/* «Крупнейшая статья»: the name gives way, the sum is never cut. */
+.expense-biggest-head strong {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.expense-biggest-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A masked number never breaks in the middle. */
+.row span.no-wrap {
+  display: inline;
+  white-space: nowrap;
+}
+
+.settings-coordinates summary {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-coordinates[open] summary {
+  margin-bottom: 8px;
+}

@@ -830,6 +830,7 @@ function CountUp({ value, format = money }) {
 // `invert` is for money going out: more spending is the bad direction.
 function DeltaChip({ current, previous, inProgress, invert = false }) {
   if (!previous && !current) return null;
+  if (!previous) return <span className="delta-chip flat">новое</span>;
   const change = percentageDifference(current, previous);
   if (inProgress && current <= previous) return null;
   const better = invert ? change < 0 : change > 0;
@@ -1016,7 +1017,7 @@ function MastersOfMonth({ rows, comparisonRange, inProgress, onOpen }) {
 const TREND_METRICS = [
   { key: 'revenue', label: 'Выручка', unit: 'млн сум', bar: (value) => (value / 1_000_000).toFixed(1).replace('.', ','), full: (value) => `${money(value)} сум` },
   { key: 'profit', label: 'Прибыль', unit: 'млн сум', bar: (value) => (value / 1_000_000).toFixed(1).replace('.', ','), full: (value) => `${money(value)} сум` },
-  { key: 'clients', label: 'Клиенты', unit: 'клиентов', bar: (value) => String(Math.round(value)), full: (value) => `${Math.round(value)} клиентов` },
+  { key: 'clients', label: 'Клиенты', unit: 'клиентов', bar: (value) => String(Math.round(value)), full: (value) => `${Math.round(value)} ${pluralRu(Math.round(value), 'клиент', 'клиента', 'клиентов')}` },
   { key: 'newClients', label: 'Новые', unit: 'новых клиентов', bar: (value) => String(Math.round(value)), full: (value) => `${Math.round(value)} новых` },
 ];
 
@@ -1351,12 +1352,13 @@ function OverviewView({ data, reload, setError, setView }) {
   const pendingSales = getPendingSales(data.sales);
 
   // The month tiles all compare against the same days, named once under them.
-  const versusPriorMonth = (current, previous) => (
+  const versusPriorMonth = (current, previous, format = money) => (
     priorMonthRange
-      ? { ...comparisonToPrevious(current, previous, priorMonthRange, money, { inProgress: monthInProgress }), hint: null }
+      ? { ...comparisonToPrevious(current, previous, priorMonthRange, format, { inProgress: monthInProgress }), hint: null }
       : {}
   );
-  const profitVersusPriorMonth = versusPriorMonth(profitFor(compareRange), priorMonthRange ? profitFor(priorMonthRange) : 0);
+  // «17,7 млн · было 3 322 500» mixed two ways of writing money in one tile.
+  const profitVersusPriorMonth = versusPriorMonth(profitFor(compareRange), priorMonthRange ? profitFor(priorMonthRange) : 0, compactMoney);
   const forecast = monthForecast(countedSales, TODAY);
   const signals = attentionSignals({ sales: countedSales, masters: data.masters, today: TODAY });
   const series = monthlySeries({
@@ -1442,7 +1444,7 @@ function OverviewView({ data, reload, setError, setView }) {
           label="Постоянные"
           value={shareText(monthMix.returningShare)}
           {...(priorMonthRange ? shareComparison(compareMix.returningShare, priorMix.returningShare, priorMonthRange) : {})}
-          hint={monthMix.labelledClients ? `${monthMix.returningClients} из ${monthMix.labelledClients} клиентов` : null}
+          hint={monthMix.labelledClients ? `${monthMix.returningClients} из ${monthMix.labelledClients} ${pluralRu(monthMix.labelledClients, 'клиента', 'клиентов', 'клиентов')}` : null}
         />
       </div>
       {priorMonthRange ? (
@@ -2682,7 +2684,7 @@ function MyBookings({ data, masterId, reload, setError, onVisit }) {
 
   return (
     <div className="card my-bookings">
-      <h2>Мои записи</h2>
+      <h2>{data.role === 'master' ? 'Мои записи' : 'Записи мастера'}</h2>
       <div className="rows">
         {mine.map((appointment) => {
           const overdue = isOverdueBooking(appointment, new Date(), controlSince);
@@ -2692,7 +2694,7 @@ function MyBookings({ data, masterId, reload, setError, onVisit }) {
             <div className={`row my-booking${overdue ? ' is-overdue' : ''}`} key={appointment.id}>
               <div>
                 <strong>{bookingTimeLine(appointment)} · {appointment.client_name}</strong>
-                <span>{appointment.service_name} · {appointment.client_phone || 'без номера'}</span>
+                <span>{appointment.service_name} · <span className="no-wrap">{appointment.client_phone || 'без номера'}</span></span>
                 {overdue ? <span className="approval rejected">Закройте запись</span> : null}
                 {chooser?.id === appointment.id ? (
                   <OutcomeChooser appointment={appointment} initialMode={chooser.mode} reload={reload} setError={setError} onDone={() => setChooser(null)} />
@@ -3022,13 +3024,13 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
                 ? `Опоздал на ${minutesLate(attendanceToday.arrived || attendanceToday.arrived_at, shiftStart)} мин`
                 : 'Вовремя'}
             </p>
-            <button className="btn ghost" type="button" onClick={resetArrival} disabled={busy}>{busy ? 'Сохраняю…' : 'Изменить'}</button>
+            <button className="btn ghost" type="button" onClick={resetArrival} disabled={busy}>{busy ? 'Сохраняю…' : 'Убрать отметку'}</button>
             {arrivalMessage ? <p className="success">{arrivalMessage}</p> : null}
           </>
         ) : (
           <>
             <button className="btn" type="button" onClick={markArrival} disabled={busy || arriving || !masterName}>
-              {busy ? 'Отмечаю…' : arriving ? 'Проверяем место…' : 'Я пришёл'}
+              {busy ? 'Отмечаю…' : arriving ? 'Проверяем место…' : data.role === 'master' ? 'Я пришёл' : 'Отметить приход'}
             </button>
             {arrivalMessage ? <p className="success">{arrivalMessage}</p> : null}
             <p className="hint">
@@ -3143,7 +3145,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
       {data.role === 'master' ? <MyWeek data={data} master={masterProfile} /> : null}
 
       <div className="card wide hero-card master-earnings">
-        <SectionHeading label="Мой заработок" range={range} />
+        <SectionHeading label={data.role === 'master' ? 'Мой заработок' : 'Заработок мастера'} range={range} />
         <PeriodPicker period={period} setPeriod={setPeriod} customFrom={customFrom} setCustomFrom={setCustomFrom} customTo={customTo} setCustomTo={setCustomTo} />
         <div className="hero">{money(pay)} <small>сум заработано</small></div>
         <div className="tiles">
@@ -3151,7 +3153,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
               does not change from one period to the next. A tile for it took the
               space of a figure that moves. */}
           <Tile label="Выручка" value={money(revenue)} />
-          <Tile label="Штрафы" value={`-${money(fineTotal)}`} danger />
+          <Tile label="Штрафы" value={fineTotal ? `−${money(fineTotal)}` : '0'} danger={fineTotal > 0} />
           <Tile label="Клиентов" value={visibleClients} />
           <Tile label="Средний чек" value={averageCheck(revenue, visibleClients)} />
         </div>
@@ -3270,6 +3272,7 @@ function AdminView({ data, reload, setError, setView }) {
   // since February, to change one row. A decision now refreshes only the recent
   // window it can affect.
   async function setSaleApproval(sale, status) {
+    if (status === 'rejected' && !await confirmAction(`Отклонить оплату: ${sale.master}, ${money(saleTotal(sale))} сум?`)) return;
     setDeciding({ id: sale.id, status });
     try {
       await run(
@@ -3287,6 +3290,7 @@ function AdminView({ data, reload, setError, setView }) {
   }
 
   async function setGoodsApproval(sale, status) {
+    if (status === 'rejected' && !await confirmAction(`Отклонить продажу «${productName(sale.product_id)}» на ${money(sale.amount)} сум?`)) return;
     setDeciding({ id: `goods-${sale.id}`, status });
     try {
       await run(
@@ -3406,7 +3410,7 @@ function AdminView({ data, reload, setError, setView }) {
                 <span>
                   {sale.client_id && isOwner ? (
                     <button className="master-name-button" type="button" onClick={() => setOpenClient(sale.client_id)}>{sale.client_name}</button>
-                  ) : sale.client_name || `клиентов ${clients(sale)}`}
+                  ) : sale.client_name || `${clients(sale)} ${pluralRu(clients(sale), 'клиент', 'клиента', 'клиентов')}`}
                   {' · '}{clientType(sale)}
                 </span>
                 {sale.client_no_phone && !sale.is_guest ? <span className="approval rejected">без номера</span> : null}
@@ -3497,7 +3501,7 @@ function AdminView({ data, reload, setError, setView }) {
                       {master.name === topMasterName ? <span className="master-top-mark" aria-label="Лидер по выручке" title="Лидер по выручке">★</span> : null}
                     </div>
                     <small>
-                      {clientMix.clients} клиентов
+                      {clientMix.clients} {pluralRu(clientMix.clients, 'клиент', 'клиента', 'клиентов')}
                       {clientMix.unlabeled ? ` · тип не указан: ${clientMix.unlabeled}` : ''}
                     </small>
                     {/* The split is repeated here on purpose: on a phone the
@@ -3569,7 +3573,7 @@ function AdminView({ data, reload, setError, setView }) {
                   <span>
                     {sale.client_id && isOwner ? (
                       <button className="master-name-button" type="button" onClick={() => setOpenClient(sale.client_id)}>{sale.client_name}</button>
-                    ) : sale.client_name || `клиентов: ${clients(sale)}`}
+                    ) : sale.client_name || `${clients(sale)} ${pluralRu(clients(sale), 'клиент', 'клиента', 'клиентов')}`}
                     {' · '}{clientType(sale)}
                   </span>
                 </div>
@@ -4100,7 +4104,8 @@ function FinanceView({ data, reload, setError }) {
           <div className="expense-biggest">
             <div className="expense-biggest-head">
               <span>Крупнейшая статья</span>
-              <strong>{biggestExpense.name || 'без названия'} · {compactMoney(biggestExpense.amount_uzs)}</strong>
+              {/* The name gives way; the sum is never cut. */}
+              <strong><span className="expense-biggest-name">{biggestExpense.name || 'без названия'}</span> · {compactMoney(biggestExpense.amount_uzs)}</strong>
             </div>
             <div className="expense-biggest-track" aria-hidden="true">
               <i style={{ width: `${Math.min(100, biggestShare)}%` }} />
@@ -4168,15 +4173,15 @@ function FinanceView({ data, reload, setError }) {
           ].map(([value, label]) => <button className={tab === value ? 'on' : ''} key={value} type="button" onClick={() => setTab(value)}>{label}</button>)}
         </div>
         <div className="section-total">
-          <span>За выбранный период: {visibleExpenses.length} записей</span>
+          <span>За выбранный период: {visibleExpenses.length} {pluralRu(visibleExpenses.length, 'запись', 'записи', 'записей')}</span>
           <strong>{money(visibleExpenseTotal)} сум</strong>
         </div>
         <Rows rows={visibleExpenses} empty="Записей за период нет." render={(expense) => (
-          <div className="row" key={expense.id}>
+          <div className="row expense-row" key={expense.id}>
             <div>
               <strong>{expense.name}{expense.category === 'stock' && expense.qty ? ` × ${expense.qty}` : ''}</strong>
               <span>
-                {rowDate(expense, 'date')} · {expense.minus_from ? `минус ${EXPENSE_SECTION_LABELS[expense.minus_from] || expense.minus_from}` : EXPENSE_SECTION_LABELS[expense.section] || expense.section}
+                {displayDate(rowDate(expense, 'date'))} · {expense.minus_from ? `минус ${EXPENSE_SECTION_LABELS[expense.minus_from] || expense.minus_from}` : EXPENSE_SECTION_LABELS[expense.section] || expense.section}
                 {expense.category === 'stock' ? ' · закупка для склада' : ''}
               </span>
             </div>
@@ -4343,7 +4348,7 @@ function FinanceView({ data, reload, setError }) {
 // app never called them, so "кто это удалил" had no answer anywhere.
 const PRODUCT_CATEGORIES = [['care', 'Уход'], ['drinks', 'Напитки'], ['other', 'Другое']];
 const PRODUCT_CATEGORY_LABELS = Object.fromEntries(PRODUCT_CATEGORIES);
-const RECEIPT_PAYERS = [['ishxona', 'Салон'], ['murod', 'Мурод'], ['jamshid', 'Жамшид'], ['opening', 'Уже был']];
+const RECEIPT_PAYERS = [['ishxona', 'Салон'], ['murod', 'Мурод'], ['jamshid', 'Жамшид'], ['opening', 'Начальный остаток']];
 const RECEIPT_PAYER_LABELS = { ishxona: 'из денег салона', murod: 'деньги Мурода', jamshid: 'деньги Жамшида', opening: 'начальный остаток' };
 const WRITEOFF_REASONS = [['used', 'В работу'], ['gift', 'Угостили'], ['damaged', 'Испорчен'], ['recount', 'Пересчёт']];
 const WRITEOFF_REASON_LABELS = Object.fromEntries(WRITEOFF_REASONS);
@@ -4457,7 +4462,7 @@ function StockView({ data, reload, setError }) {
   const inStockOptions = recent
     .map((product) => levelOf(product.id))
     .filter((row) => row && row.qty > 0)
-    .map((row) => ({ product: row.product, hint: `осталось ${row.qty}` }));
+    .map((row) => ({ product: row.product, hint: `на складе ${row.qty}` }));
   const receiptOptions = recent.map((product) => {
     const row = levelOf(product.id);
     return { product, hint: row ? `на складе ${row.qty}` : '' };
@@ -4813,7 +4818,7 @@ function DeskStockView({ data, reload, setError }) {
   const nameOf = (id) => products.find((product) => String(product.id) === String(id))?.name || 'Товар';
   const inStockOptions = productsByRecentUse(products, [], data.productSales)
     .filter((product) => qtyOf(product) > 0)
-    .map((product) => ({ product, hint: `осталось ${qtyOf(product)}` }));
+    .map((product) => ({ product, hint: `на складе ${qtyOf(product)}` }));
   const selected = products.find((product) => String(product.id) === String(saleForm.product_id)) || null;
   const saleQty = Number(saleForm.qty) || 0;
   const saleAmount = Number(saleForm.amount) || 0;
@@ -5056,6 +5061,14 @@ function ReviewsView({ data, setError }) {
 
   return (
     <section className="view-grid">
+      {waiting.length ? (
+        <div className="card wide">
+          <h2>Отзывы ждут одобрения</h2>
+          <Rows rows={waiting} empty="" render={(review) => (
+            <ReviewRow key={review.id} review={review} masterName={nameOf(review.master_id)} actions={decisionButtons(review)} />
+          )} />
+        </div>
+      ) : null}
       <div className="card wide">
         <h2>Оценки мастеров</h2>
         {loading ? <p className="hint">Загружаем…</p> : ratings.length ? (
@@ -5073,14 +5086,6 @@ function ReviewsView({ data, setError }) {
           </div>
         ) : <p className="hint">Оценок пока нет.</p>}
       </div>
-      {waiting.length ? (
-        <div className="card wide">
-          <h2>Отзывы ждут одобрения</h2>
-          <Rows rows={waiting} empty="" render={(review) => (
-            <ReviewRow key={review.id} review={review} masterName={nameOf(review.master_id)} actions={decisionButtons(review)} />
-          )} />
-        </div>
-      ) : null}
       <div className="card wide">
         <h2>Последние оценки</h2>
         <Rows rows={reviews.slice(0, 60)} empty={loading ? '' : 'Оценок пока нет.'} render={(review) => (
@@ -5492,7 +5497,7 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
           const isSelected = selectedDay === day;
           return (
             <g
-              aria-label={`${displayDate(day)}: ${totals[day].clients} клиентов, выручка ${money(totals[day].revenue)} сум${previousDays[index] ? `; ${displayDate(previousDays[index])}: ${previousClientCounts[index]} клиентов, ${money(previousValues[index])} сум` : ''}`}
+              aria-label={`${displayDate(day)}: ${totals[day].clients} ${pluralRu(totals[day].clients, 'клиент', 'клиента', 'клиентов')}, выручка ${money(totals[day].revenue)} сум${previousDays[index] ? `; ${displayDate(previousDays[index])}: ${previousClientCounts[index]} ${pluralRu(previousClientCounts[index], 'клиент', 'клиента', 'клиентов')}, ${money(previousValues[index])} сум` : ''}`}
               className={`chart-bar ${isSelected ? 'selected' : ''}`}
               key={day}
               onClick={() => setSelectedDay((current) => current === day ? null : day)}
@@ -5946,7 +5951,6 @@ function MasterSchedules({ data, reload, setError }) {
           Часы {SCHEDULE_WEEKDAYS.find(([iso]) => iso === firstWorking.iso)[1]} — на все рабочие дни
         </button>
       ) : null}
-      <p className="hint">Нажмите на день, чтобы сделать его выходным или рабочим. Разовый выходной на дату ставится в «Команде».</p>
 
       <label>
         Действует с
@@ -5958,7 +5962,6 @@ function MasterSchedules({ data, reload, setError }) {
           onChange={(event) => setFrom(event.target.value)}
         />
       </label>
-      <p className="hint">Дни до этой даты считаются по прежнему графику.</p>
       <button className="btn" type="submit" disabled={busy}>Сохранить график</button>
     </form>
   );
@@ -6068,7 +6071,6 @@ function SettingsView({ data, reload, setError }) {
               onChange={(event) => setSettings({ ...settings, late_grace_minutes: event.target.value })}
             />
           </label>
-          <p className="hint">Опоздание считается от начала смены мастера по его графику плюс эти минуты: смена с 10:00 и допуск 10 — опоздание после 10:10.</p>
           <label>
             Штраф за опоздание
             <MoneyInput value={settings.late_fine_amount} onChange={(value) => setSettings({ ...settings, late_fine_amount: value })} />
@@ -6078,27 +6080,20 @@ function SettingsView({ data, reload, setError }) {
             <MoneyInput value={settings.no_mark_fine_amount} onChange={(value) => setSettings({ ...settings, no_mark_fine_amount: value })} />
           </label>
           <label>Радиус отметки, м<input type="number" value={settings.salon_radius} onChange={(event) => setSettings({ ...settings, salon_radius: event.target.value })} /></label>
-          <div className="settings-pair">
-            <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
-            <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
-          </div>
           <button className="btn ghost" type="button" onClick={useMyLocation}>Задать место салона по моему положению</button>
+          <details className="settings-coordinates">
+            <summary>Координаты вручную</summary>
+            <div className="settings-pair">
+              <label>Широта<input type="number" step="any" value={settings.salon_lat} onChange={(event) => setSettings({ ...settings, salon_lat: event.target.value })} /></label>
+              <label>Долгота<input type="number" step="any" value={settings.salon_lng} onChange={(event) => setSettings({ ...settings, salon_lng: event.target.value })} /></label>
+            </div>
+          </details>
           <button className="btn" type="submit" disabled={busy}>Сохранить</button>
         </form>
       ) : null}
 
       {data.appRole === 'owner' ? <DeletionLog setError={setError} /> : null}
 
-      <div className="card wide settings-card">
-        <h2>Оформление</h2>
-        <div className="settings-row">
-          <span>
-            <strong>Тема «Банк»</strong>
-            <small>светлая: тёмно-синий и изумруд</small>
-          </span>
-          <i className="settings-swatch" aria-hidden="true" />
-        </div>
-      </div>
     </section>
   );
 }
