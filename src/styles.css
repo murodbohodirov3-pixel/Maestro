@@ -5587,3 +5587,90 @@ label {
     animation: none;
   }
 }
+
+/* По мастерам on a phone (owner's review of 2026-10-26): the earnings column
+   ran off the right edge with nothing saying the table scrolls. Each master
+   is a two-line row now: name and clients on the left, revenue over
+   earnings on the right, each named. */
+.master-cell-label {
+  display: none;
+}
+
+.payout-total-link {
+  justify-self: start;
+  margin-top: 10px;
+}
+
+@media (max-width: 560px) {
+  .master-table-wrap {
+    overflow-x: visible;
+  }
+
+  .master-table,
+  .master-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .master-table thead tr {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .master-table thead th {
+    padding: 0 0 6px;
+    border: 0;
+  }
+
+  .master-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .master-table tbody td,
+  .master-top-row td,
+  .master-top-row td:first-child,
+  .master-top-row td:last-child {
+    display: block;
+    padding: 0;
+    border: 0;
+    text-align: right;
+  }
+
+  .master-table tbody td:first-child {
+    grid-row: 1 / span 2;
+    text-align: left;
+  }
+
+  .master-table tbody td:first-child small {
+    font-size: 13px;
+    white-space: normal;
+  }
+
+  .master-table tbody td:nth-child(3) {
+    margin-top: 6px;
+  }
+
+  .master-table tbody td .master-metric-value {
+    display: inline;
+  }
+
+  /* Earnings move with revenue by the master's percent; the revenue line
+     already carries the change. */
+  .master-table tbody td:nth-child(3) .master-period-change {
+    display: none;
+  }
+
+  .master-cell-label {
+    display: inline;
+    margin-right: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+}

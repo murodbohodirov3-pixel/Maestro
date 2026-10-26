@@ -3043,7 +3043,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   );
 }
 
-function AdminView({ data, reload, setError }) {
+function AdminView({ data, reload, setError, setView }) {
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('money', 'month');
   const setMessage = useNotice();
   const [masterSort, setMasterSort] = useState({ key: 'revenue', direction: 'desc' });
@@ -3368,14 +3368,16 @@ function AdminView({ data, reload, setError }) {
                         comparison. Its own line, or the name column grows to
                         fit it and pushes the revenue off the screen. */}
                     {clientMix.clients ? (
-                      <small>новых {clientMix.newClients} · постоянных {clientMix.returningClients}</small>
+                      <small>новых&nbsp;{clientMix.newClients} · постоянных&nbsp;{clientMix.returningClients}</small>
                     ) : null}
                   </td>
                   <td>
+                    <small className="master-cell-label">Выручка</small>
                     <span className="master-metric-value">{money(masterRevenue)} сум</span>
                     {priorRange ? <MasterMetricComparison current={compareRevenue} previous={masterPreviousRevenue} inProgress={inProgress} isNew={isNew} /> : null}
                   </td>
                   <td>
+                    <small className="master-cell-label">Заработал</small>
                     <strong className="master-metric-value">{money(pay)} сум</strong>
                     {priorRange && !isNew ? <MasterMetricComparison current={comparePay} previous={previousPay} inProgress={inProgress} /> : null}
                   </td>
@@ -3384,7 +3386,13 @@ function AdminView({ data, reload, setError }) {
             </tbody>
           </table>
         </div>
-        <div className="payout-total"><span>Итого выплатить мастерам</span><strong>{money(totalMasterPayout)} сум</strong></div>
+        {/* It said «Итого выплатить мастерам», but it is the period's gross
+            earnings; what to hand over, after fines, advances and what was
+            already paid, is on «Выплаты» (owner's review of 2026-10-26). */}
+        <div className="payout-total"><span>Мастера заработали за период</span><strong>{money(totalMasterPayout)} сум</strong></div>
+        {['owner', 'partner'].includes(data.appRole) && setView ? (
+          <button className="link-button payout-total-link" type="button" onClick={() => setView('payouts')}>Сколько выдать — в «Выплатах» →</button>
+        ) : null}
       </div>
 
       {/* Every sale of the month, one per row, used to sit open under the

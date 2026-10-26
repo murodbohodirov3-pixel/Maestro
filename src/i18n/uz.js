@@ -397,7 +397,8 @@ export const PHRASES = {
   'Аренда, USD': 'Ijara, USD',
   'Курс USD': 'USD kursi',
   'Например: аренда за июль': 'Masalan: iyul uchun ijara',
-  'Итого выплатить мастерам': 'Barberlarga jami toʻlanadi',
+  'Мастера заработали за период': 'Barberlar davr ichida ishlab topdi',
+  'Сколько выдать — в «Выплатах» →': 'Qancha berish — «Toʻlovlar»da →',
 
   // Settings
   'Оформление': 'Koʻrinish',
