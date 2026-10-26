@@ -392,6 +392,41 @@ function useNotice() {
   return useContext(NoticeContext);
 }
 
+// Android's back button closed the whole app while a sheet was open, and a
+// half-made booking with it (owner's review of 2026-10-26). Whatever is open
+// on top registers how to close itself; Telegram's «Назад» takes one step.
+const backHandlers = [];
+
+function syncBackButton() {
+  const button = window.Telegram?.WebApp?.BackButton;
+  if (!button) return;
+  try {
+    if (backHandlers.length) button.show();
+    else button.hide();
+  } catch {
+    // An old client without the button keeps its own behaviour.
+  }
+}
+
+function goBackOneStep() {
+  backHandlers[backHandlers.length - 1]?.current?.();
+}
+
+function useTelegramBack(onBack, active = true) {
+  const handler = useRef(onBack);
+  handler.current = onBack;
+  useEffect(() => {
+    if (!active) return undefined;
+    backHandlers.push(handler);
+    syncBackButton();
+    return () => {
+      const index = backHandlers.lastIndexOf(handler);
+      if (index >= 0) backHandlers.splice(index, 1);
+      syncBackButton();
+    };
+  }, [active]);
+}
+
 function AppNotice({ error, success, onClose }) {
   const text = error || success;
   if (!text) return null;
@@ -1074,6 +1109,7 @@ function MonthlyTrend({ series, forecast }) {
 // Everything about one master on one screen: this month against the same days
 // of the last, and the months before it.
 function MasterSheet({ data, master, onClose }) {
+  useTelegramBack(onClose);
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     const previousOverflow = document.body.style.overflow;
@@ -1736,6 +1772,7 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
 // The owner's view of one client: the whole number, how to reach him, and
 // every visit — when, at what time, to which master, for how much.
 function ClientSheet({ clientId, onClose, setError, reload }) {
+  useTelegramBack(onClose);
   // The card shown; a merge moves it to the card that stays.
   const [currentId, setCurrentId] = useState(clientId);
   const [card, setCard] = useState(null);
@@ -2116,6 +2153,7 @@ function MoveBooking({ data, appointment, reload, setError, onDone, onCancel }) 
 }
 
 function BookingSheet({ data, appointment, reload, setError, onClose, onVisit }) {
+  useTelegramBack(onClose);
   const isOwner = data.appRole === 'owner';
   const canMove = ['owner', 'admin', 'partner'].includes(data.appRole);
   const [moving, setMoving] = useState(false);
@@ -2244,6 +2282,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
     if (dirty && !await confirmAction('Закрыть без записи? Выбранное не сохранится.')) return;
     onClose();
   }
+  useTelegramBack(leave);
 
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') leave(); };
@@ -6140,7 +6179,31 @@ export default function App() {
     } catch {
       // Older clients ignore the colours; nothing else depends on them.
     }
+    // Opened at full height, and a swipe down while scrolling a list no
+    // longer folds the app away (owner's review of 2026-10-26).
+    try {
+      telegram?.expand?.();
+      if (telegram?.isVersionAtLeast?.('7.7')) telegram.disableVerticalSwipes?.();
+    } catch {
+      // Older clients: the app opens and swipes as before.
+    }
+    const button = telegram?.BackButton;
+    try {
+      button?.onClick?.(goBackOneStep);
+    } catch {
+      return undefined;
+    }
+    return () => {
+      try {
+        button?.offClick?.(goBackOneStep);
+      } catch {
+        // Nothing to undo on an old client.
+      }
+    };
   }, []);
+
+  // From Настройки, «Назад» returns to the screen it was opened from.
+  useTelegramBack(() => openView(previousView), view === 'settings');
 
   // A refresh asked for while another was running used to be dropped. After a
   // tap that kept the row just confirmed on screen: the 15s poll in flight had

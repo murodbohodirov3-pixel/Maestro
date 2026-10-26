@@ -5773,3 +5773,14 @@ label {
 .expense-form select {
   font-size: 16px;
 }
+
+/* Every field at 16px on a touch screen (owner's review of 2026-10-26): below
+   that an iPhone zooms the page on tap and does not zoom back. Labelled
+   fields in Настройки and on Склад inherited the labels' 13px. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
