@@ -853,6 +853,7 @@ export const TEMPLATES = {
   'Отправить ({0})': 'Yuborish ({0})',
   'Не принято: {0}': 'Qabul qilinmadi: {0}',
   'Не принято · {0} · {1}: {2}': 'Qabul qilinmadi · {0} · {1}: {2}',
+  'Переснято · {0} · {1}: {2}': 'Qayta suratga olindi · {0} · {1}: {2}',
   'Фото за {0}': '{0} uchun rasmlar',
   'сейчас · {0} из {1}': 'hozir · {1} tadan {0}',
   '{0} · отправлено в {1}': '{0} · {1} da yuborilgan',

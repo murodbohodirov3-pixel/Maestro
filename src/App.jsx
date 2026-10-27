@@ -5892,7 +5892,9 @@ function MasterDutyView({ data, reload, setError }) {
 }
 
 // A day's photos for the owner and the partner: each window with a photo per
-// zone, its fine, and the photos the check refused, with why.
+// zone, its fine, and the photos the check refused, with why. A refusal whose
+// zone was retaken and counted is history, said quietly; one still missing is
+// a problem, in red (owner, 2026-10-28).
 function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
   const now = useNow();
   const [result, setResult] = useState(null);
@@ -5901,7 +5903,11 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
   useEffect(() => {
     let alive = true;
     callLegacyApi('dutyDay', { day })
-      .then((answer) => { if (alive) setResult(answer); })
+      .then((answer) => {
+        // The day's reasons, retaken zones' too, come in both languages.
+        registerNames((answer?.attempts || []).filter((attempt) => attempt.reason_ru).map((attempt) => [attempt.reason_ru, attempt.reason_uz]));
+        if (alive) setResult(answer);
+      })
       .catch((error) => { if (alive) { setResult({ windows: [], attempts: [], fines: [] }); setError(actionErrorText(error)); } });
     return () => { alive = false; };
   }, [day, refreshKey, setError]);
@@ -5921,7 +5927,10 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
         {windows.map((window) => {
           const inWindow = attempts.filter((attempt) => sameMoment(attempt.window_starts_at, window.starts_at));
           const counted = (zone) => inWindow.find((attempt) => attempt.zone === zone.id && attempt.status === 'accepted');
-          const refused = inWindow.filter((attempt) => attempt.status === 'rejected');
+          const retaken = (attempt) => Boolean(counted({ id: attempt.zone }));
+          const refused = inWindow
+            .filter((attempt) => attempt.status === 'rejected')
+            .sort((left, right) => Number(retaken(left)) - Number(retaken(right)));
           const fine = fineOf(window);
           const complete = zones.length > 0 && zones.every((zone) => counted(zone));
           // Not over yet: nothing is missing.
@@ -5954,8 +5963,8 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
                 })}
               </div>
               {refused.map((attempt) => (
-                <button className="duty-refused" key={attempt.id} type="button" onClick={() => setOpened(attempt)}>
-                  {`Не принято · ${zoneName(attempt.zone)} · ${appointmentTime(attempt.taken_at)}: ${attempt.reason_ru || ''}`}
+                <button className={`duty-refused${retaken(attempt) ? ' is-retaken' : ''}`} key={attempt.id} type="button" onClick={() => setOpened(attempt)}>
+                  {`${retaken(attempt) ? 'Переснято' : 'Не принято'} · ${zoneName(attempt.zone)} · ${appointmentTime(attempt.taken_at)}: ${attempt.reason_ru || ''}`}
                 </button>
               ))}
             </div>

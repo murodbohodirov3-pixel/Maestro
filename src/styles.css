@@ -6512,6 +6512,12 @@ a:focus-visible {
   text-align: left;
 }
 
+/* Refused, then retaken and counted: history, not a problem (2026-10-28). */
+.duty-refused.is-retaken {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
 .duty-viewer .duty-viewer-reason {
   max-width: 480px;
   color: #FFD9D4;
