@@ -129,8 +129,8 @@
 | `CLIENT_BOT_WEBHOOK_SECRET` | Секрет вебхука `@MaestroBarberia_bot`, другая случайная строка |
 | `BOOKING_CRON_SECRET` | Секрет для pg_cron и служебных действий; то же значение в Vault под именем `booking_cron_secret` |
 | `BOOKING_IP_SALT` | Соль для хеша IP |
-| `BOOKING_SITE_ORIGINS` | `https://maestro-booking.vercel.app,http://localhost:5181` |
-| `BOOKING_SITE_URL` | `https://maestro-booking.vercel.app`, ссылка в сообщениях бота |
+| `BOOKING_SITE_ORIGINS` | `https://maestro-booking.vercel.app,https://maestrobarberia.uz` (старый адрес остаётся: на него ведут QR на наклейках) |
+| `BOOKING_SITE_URL` | `https://maestrobarberia.uz` (с 27.10.2026), ссылка в сообщениях бота |
 
 ## Служебные действия бота
 

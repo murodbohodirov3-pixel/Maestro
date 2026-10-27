@@ -78,7 +78,7 @@ const WEBHOOK_SECRETS: Record<Bot, string> = {
   staff: Deno.env.get('BOOKING_BOT_WEBHOOK_SECRET') || '',
 };
 const CRON_SECRET = Deno.env.get('BOOKING_CRON_SECRET') || '';
-const SITE = Deno.env.get('BOOKING_SITE_URL') || 'https://maestro-booking.vercel.app';
+const SITE = Deno.env.get('BOOKING_SITE_URL') || 'https://maestrobarberia.uz';
 const APP_URL = Deno.env.get('MAESTRO_APP_URL') || 'https://maestro-pied-two.vercel.app';
 const WEBHOOK_URL = `${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
