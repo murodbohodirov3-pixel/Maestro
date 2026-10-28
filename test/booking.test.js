@@ -134,6 +134,19 @@ test('the bot writes the date in the client\'s language, in Tashkent time', () =
   const lines = bookingLines({ startsAt: '2026-10-15T13:00:00Z', masterName: 'Жавохир', serviceName: 'Мужская стрижка', price: 150000 }, 'ru');
   assert.match(lines, /💈 Мастер: Жавохир/);
   assert.match(lines, /150 000 сум/);
+  assert.match(bookingLines({ startsAt: '2026-10-15T13:00:00Z', masterName: 'Javohir', serviceName: 'Erkaklar soch turmagi', price: null }, 'uz'), /💈 Barber: Javohir/);
+});
+
+// Owner's rule of 2026-10-28: in Uzbek a client reads «barber», as on the
+// booking site, never «usta».
+test('the clients\' bot calls a master «barber» in Uzbek, never «usta»', () => {
+  const texts = Object.entries(botText('uz')).flatMap(([key, value]) => {
+    const text = typeof value === 'function' ? value('X', 'Y') : value;
+    return [text].flat().map((line) => [key, line]);
+  });
+  texts.push(['description', CLIENT_BOT_PROFILE.uz.description], ['short', CLIENT_BOT_PROFILE.uz.short]);
+  for (const [key, text] of texts) assert.doesNotMatch(text, /usta/i, key);
+  assert.equal(botText('uz').master, 'Barber');
 });
 
 test('a known number is shown masked, and staff messages carry the client in full', () => {
