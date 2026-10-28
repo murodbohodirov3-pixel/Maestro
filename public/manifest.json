@@ -8,23 +8,29 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#F5EFE6",
-  "theme_color": "#C9A876",
+  "background_color": "#1B1919",
+  "theme_color": "#C7C8C4",
   "orientation": "portrait",
   "categories": ["business", "productivity"],
   "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/icons/icon-192.png",
+      "src": "/icons/maestro-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "/icons/maestro-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maestro-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

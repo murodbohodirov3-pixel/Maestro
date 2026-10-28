@@ -6896,7 +6896,7 @@ function LoginGate({ error }) {
   return (
     <main className="login-gate">
       <div className="login-card">
-        <img src="/icons/icon-192.png" alt="Maestro" />
+        <img src="/icons/maestro-192.png" alt="Maestro" />
         <h1>Maestro</h1>
         <p>Откройте приложение через Telegram, чтобы войти в учёт салона.</p>
         <a className="btn login-primary" href={TELEGRAM_BOT_LINK} rel="noreferrer" target="_blank">
@@ -6919,7 +6919,7 @@ function AccessDenied() {
   return (
     <main className="login-gate">
       <div className="login-card">
-        <img src="/icons/icon-192.png" alt="Maestro" />
+        <img src="/icons/maestro-192.png" alt="Maestro" />
         <h1>Maestro</h1>
         <p>Это приложение для сотрудников салона. Вашего Telegram нет в списке.</p>
         {telegramId ? <p className="hint">Ваш Telegram ID: {telegramId}</p> : null}

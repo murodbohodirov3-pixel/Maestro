@@ -1,8 +1,9 @@
 // Bump on every change to the app shell — the activate handler drops caches
 // under any other name. v10: the boot splash moved into index.html, so the
 // cached '/' entry served to offline clients still had the old loader.
-const CACHE_NAME = 'maestro-pwa-v10';
-const APP_SHELL = ['/', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
+// v11: the icons are the new round logo under new names (2026-10-28).
+const CACHE_NAME = 'maestro-pwa-v11';
+const APP_SHELL = ['/', '/manifest.json', '/icons/maestro-192.png', '/icons/maestro-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
