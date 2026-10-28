@@ -6966,9 +6966,10 @@ export default function App() {
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
     try {
-      // The top edge of the salon photo behind the glass.
-      telegram?.setHeaderColor?.('#C7C8C4');
-      telegram?.setBackgroundColor?.('#C7C8C4');
+      // The top edge of the page as drawn: the salon photo under its light
+      // fade (theme-color in index.html and the page ground in styles.css).
+      telegram?.setHeaderColor?.('#D4D2CC');
+      telegram?.setBackgroundColor?.('#D4D2CC');
     } catch {
       // Older clients ignore the colours; nothing else depends on them.
     }

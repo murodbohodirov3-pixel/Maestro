@@ -6635,8 +6635,17 @@ a:focus-visible {
   background:
     linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
     url("/glass-bg.jpg") center / cover no-repeat,
-    #C7C8C4;
+    #8A7D6F;
   pointer-events: none;
+}
+
+/* The page's own ground is the colour of the photo's top edge as drawn:
+   an iPhone home-screen app paints the strip under its clock with it (and
+   with theme-color in index.html), and the old light ground showed there as
+   a white band (owner, 2026-10-28). */
+html,
+body {
+  background: #D4D2CC;
 }
 
 /* The header becomes the reel's top bar: one capsule, buttons as white discs. */
