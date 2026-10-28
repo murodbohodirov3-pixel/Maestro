@@ -26,6 +26,13 @@
 - [ ] Verify one real two-turn owner-bot dialogue (`/today`, then a follow-up) and confirm Telegram webhook delivery; public health already reports all server features configured.
 - [ ] Run the first approved Reels job through the local Higgsfield Pro worker, then install it as a background Windows task.
 
+### «Barber», not «usta», in Uzbek client texts (owner's rule, 2026-10-28)
+
+- [x] Clients' bot texts and its profile in `supabase/functions/_shared/bookingCore.js` (confirmation, reminders, cancellation, QR, rating); guard test in `test/booking.test.js`.
+- [ ] After merge, with the owner's approval: deploy `booking-bot`, then call it with `{"action":"set_profile"}` so @MaestroBarberia_bot's description changes.
+- [ ] Booking-page service descriptions still say «usta» in the database (`booking_services.description_uz` of `mens_haircut`, `kids_haircut_under_14`, from `docs/release-2026-10/service_descriptions_2026-10-22.sql`): needs its own reviewed update.
+- [ ] Staff app: «Оценки мастеров» → «Ustalar baholari» (`src/i18n/uz.js`) is the one «usta» left; everything else there already says «barber». Owner to decide.
+
 ### Maestro AI client administrator
 
 - [x] Stage 1: inspect and map the live Maestro, Supabase, Telegram, and Vercel paths without changing production data.

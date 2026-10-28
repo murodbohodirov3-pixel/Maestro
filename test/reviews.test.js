@@ -55,7 +55,7 @@ test('the QR text asks for the rating and no longer speaks of a mirror', () => {
   assert.equal(botText('ru').mirrorAskContact('Жавохир'),
     'Ваш мастер сегодня — Жавохир. Нажмите «Поделиться номером» внизу, а после стрижки, пожалуйста, оцените работу мастера.');
   assert.equal(botText('uz').mirrorAskContact('Javohir'),
-    'Bugungi ustangiz — Javohir. Pastdagi «Raqamni yuborish» tugmasini bosing, soch olingandan keyin esa, iltimos, ustaning ishini baholang.');
+    'Bugungi barberingiz — Javohir. Pastdagi «Raqamni yuborish» tugmasini bosing, soch olingandan keyin esa, iltimos, barberning ishini baholang.');
   for (const lang of ['ru', 'uz']) {
     for (const [key, value] of Object.entries(botText(lang))) {
       if (!key.startsWith('mirror')) continue;
