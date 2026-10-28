@@ -6610,3 +6610,355 @@ a:focus-visible {
   border-radius: var(--radius-control);
   scroll-snap-align: center;
 }
+
+/* ── «Стекло» (проба, 2026-10-28) ────────────────────────────────────────
+   The look of the owner's reel: frosted panels over the salon, blurred.
+   One layer, scoped to `.is-glass` (on every role's `.app`) so it reads as
+   a block and lands over everything above it.
+   The photo is blurred in the file, so the panels need no live blur: only
+   the bottom bar, which floats over moving content, blurs what is under it. */
+.app.is-glass {
+  --muted: #44526A;
+  --glass: rgba(255, 255, 255, 0.6);
+  --glass-line: rgba(255, 255, 255, 0.72);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 10px 30px rgba(56, 38, 20, 0.12);
+  --glass-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
+  isolation: isolate;
+}
+
+.app.is-glass::before {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
+    url("/glass-bg.jpg") center / cover no-repeat,
+    #C7C8C4;
+  pointer-events: none;
+}
+
+/* The header becomes the reel's top bar: one capsule, buttons as white discs. */
+.app.is-glass .app-header {
+  padding: 14px 0;
+}
+
+.app.is-glass .app-header-row {
+  padding: 7px 7px 7px 18px;
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: var(--glass-shadow);
+}
+
+.app.is-glass .lang-button,
+.app.is-glass .gear-button {
+  border-color: transparent;
+  background: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(56, 38, 20, 0.12);
+}
+
+/* White is what turns to glass: a card painted with `--surface` becomes
+   frosted, one with a colour of its own (waiting, navy, red) keeps it. */
+.app.is-glass .view-grid {
+  --surface: var(--glass);
+}
+
+.app.is-glass .card,
+.app.is-glass .tile {
+  border-color: var(--glass-line);
+  box-shadow: var(--glass-shadow);
+}
+
+/* A sheet sits over the page, not in it: it stays solid. */
+.app.is-glass .modal-backdrop {
+  --surface: #FFFFFF;
+}
+
+.app.is-glass .modal-backdrop .card {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+/* Only the switches inside a screen; Команда's sections keep their own look. */
+.app.is-glass .view-grid .seg button.on {
+  background: #FFFFFF;
+}
+
+.app.is-glass .hero-card {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: linear-gradient(155deg, rgba(24, 64, 132, 0.9) 0%, rgba(11, 42, 91, 0.93) 48%, rgba(7, 28, 66, 0.95) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 16px 36px rgba(11, 31, 70, 0.3);
+}
+
+.app.is-glass .approvals-card {
+  background: rgba(255, 246, 222, 0.82);
+}
+
+.app.is-glass .pending-banner {
+  border-color: rgba(243, 223, 174, 0.9);
+  background: rgba(255, 246, 222, 0.8);
+  box-shadow: var(--glass-shadow);
+}
+
+.app.is-glass .view-grid .seg {
+  background: rgba(255, 255, 255, 0.42);
+}
+
+/* On navy the switch keeps its dark track. */
+.app.is-glass .view-grid .hero-card .seg {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Windows: frosted, lighter than the page, over a warm dim. The page behind
+   holds still while one is open, so the blur under it is drawn once. Photos
+   of the duty keep their dark viewer. */
+.app.is-glass .modal-backdrop:not(.duty-viewer) {
+  background: rgba(28, 20, 12, 0.42);
+}
+
+.app.is-glass .modal-backdrop .master-sheet {
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(248, 246, 242, 0.86);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 -12px 40px rgba(28, 20, 12, 0.25);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app.is-glass .modal-backdrop .master-sheet {
+    background: #F8F6F2;
+  }
+}
+
+/* Before the app and outside it: the same salon behind the coin and the
+   sign-in card. */
+.loading-splash,
+.login-gate {
+  background:
+    linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
+    url("/glass-bg.jpg") center / cover no-repeat,
+    #C7C8C4;
+}
+
+.login-card {
+  border-color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 10px 30px rgba(56, 38, 20, 0.12);
+}
+
+.app.is-glass .master-rank-bar {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.app.is-glass .signal {
+  border-color: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.app.is-glass .signal.bad {
+  border-color: color-mix(in srgb, var(--fine) 28%, transparent);
+  background: color-mix(in srgb, var(--fine) 9%, rgba(255, 255, 255, 0.6));
+}
+
+.app.is-glass .signal.good {
+  border-color: color-mix(in srgb, var(--cash) 28%, transparent);
+  background: color-mix(in srgb, var(--cash) 9%, rgba(255, 255, 255, 0.6));
+}
+
+.app.is-glass .trend-column {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.app.is-glass .view-grid > .hint {
+  color: #2E3A4E;
+}
+
+/* The navy card is navy glass: the salon shows through it faintly. On the
+   big revenue cards the navy is a layer of its own, so it can sweep in. */
+.app.is-glass .revenue-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.app.is-glass .revenue-hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(155deg, rgba(24, 64, 132, 0.9) 0%, rgba(11, 42, 91, 0.93) 48%, rgba(7, 28, 66, 0.95) 100%);
+}
+
+.app.is-glass .revenue-hero-inset,
+.app.is-glass .revenue-hero-goal-track {
+  background: rgba(2, 12, 34, 0.38);
+}
+
+/* The bottom bar: light glass, and the blue of the open section is one pill
+   that slides from tab to tab. */
+.app.is-glass .tabbar {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 12px 32px rgba(40, 28, 16, 0.22);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app.is-glass .tabbar {
+    background: rgba(250, 248, 245, 0.95);
+  }
+}
+
+/* The label turns white as the pill arrives under it, not before. */
+.app.is-glass .tabbar button {
+  z-index: 1;
+  color: #3B475C;
+  transition: color 0.2s var(--glass-ease) 0.06s;
+}
+
+.app.is-glass .tabbar button.on {
+  background: transparent;
+  color: #FFFFFF;
+}
+
+/* Its position is set on it directly (App: tabbar-pill), so a switch
+   restyles the pill alone; a transition, so a quick second tap retargets
+   it from where it is. */
+.app.is-glass .tabbar-pill {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: calc((100% - 16px - (var(--tabs) - 1) * 4px) / var(--tabs));
+  border-radius: 16px;
+  background: var(--accent);
+  box-shadow: 0 6px 16px rgba(30, 78, 216, 0.35);
+  transition: transform 0.3s var(--glass-ease);
+}
+
+/* Entering a section, as in the reel: the empty panels come up one after
+   another, then what is in them clears from a blur. The whole of it plays
+   the first time a section opens in a session (`is-first`); after that a
+   switch is a quick fade, because the owner opens these tens of times a day.
+   `backwards` holds the start through the delay and leaves nothing behind. */
+.app.is-glass .view-grid > * { --glass-step: 6; }
+.app.is-glass .view-grid > :nth-child(1) { --glass-step: 0; }
+.app.is-glass .view-grid > :nth-child(2) { --glass-step: 1; }
+.app.is-glass .view-grid > :nth-child(3) { --glass-step: 2; }
+.app.is-glass .view-grid > :nth-child(4) { --glass-step: 3; }
+.app.is-glass .view-grid > :nth-child(5) { --glass-step: 4; }
+.app.is-glass .view-grid > :nth-child(6) { --glass-step: 5; }
+
+.app.is-glass .view-grid > .tiles > .tile:nth-child(n+3) { --glass-row: 1; }
+.app.is-glass .view-grid > .tiles > .tile:nth-child(n+5) { --glass-row: 2; }
+
+.app.is-glass .view-grid > :is(.card, .pending-banner),
+.app.is-glass .view-grid > .tiles > .tile {
+  --glass-delay: calc((var(--glass-step, 0) + var(--glass-row, 0)) * 50ms);
+  animation: glass-panel-in 0.32s var(--glass-ease) backwards;
+  animation-delay: var(--glass-delay);
+}
+
+.app.is-glass .view-grid > :is(.card, .pending-banner) > *,
+.app.is-glass .view-grid > .tiles > .tile > * {
+  animation: glass-content-in 0.3s var(--glass-ease) backwards;
+  animation-delay: calc(var(--glass-delay) + 120ms);
+}
+
+/* White figures wait for the navy under them. */
+.app.is-glass .view-grid > .revenue-hero > * {
+  animation-delay: calc(var(--glass-delay) + 200ms);
+}
+
+/* The navy fills the hero from its corner, like the reel's green card. */
+.app.is-glass .revenue-hero::before {
+  animation: glass-sweep 0.48s var(--glass-ease) backwards;
+  animation-delay: var(--glass-delay);
+}
+
+.app.is-glass .revenue-hero-bar-column i {
+  animation: bar-grow 0.5s var(--glass-ease) backwards;
+  animation-delay: calc(var(--glass-delay) + 240ms + var(--i, 0) * 45ms);
+}
+
+.app.is-glass .master-rank-bar i,
+.app.is-glass .revenue-hero-goal-fill {
+  transform-origin: left;
+  animation: glass-bar-x 0.5s var(--glass-ease) backwards;
+  animation-delay: calc(var(--glass-delay) + 260ms);
+}
+
+/* A section seen before: the panels fade up together, nothing sweeps or
+   grows again, and no blur. */
+.app.is-glass:not(.is-first) .view-grid > :is(.card, .pending-banner),
+.app.is-glass:not(.is-first) .view-grid > .tiles > .tile {
+  animation: glass-fade-up 0.2s var(--glass-ease) backwards;
+  animation-delay: calc(min(var(--glass-step, 0), 3) * 30ms);
+}
+
+.app.is-glass:not(.is-first) .view-grid > :is(.card, .pending-banner) > *,
+.app.is-glass:not(.is-first) .view-grid > .tiles > .tile > *,
+.app.is-glass:not(.is-first) .revenue-hero::before,
+.app.is-glass:not(.is-first) .revenue-hero-bar-column i,
+.app.is-glass:not(.is-first) .master-rank-bar i,
+.app.is-glass:not(.is-first) .revenue-hero-goal-fill {
+  animation: none;
+}
+
+@keyframes glass-panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes glass-content-in {
+  from { opacity: 0; filter: blur(4px); }
+  to { opacity: 1; filter: none; }
+}
+
+@keyframes glass-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes glass-sweep {
+  from { clip-path: circle(0% at 0% 0%); }
+  to { clip-path: circle(150% at 0% 0%); }
+}
+
+@keyframes glass-bar-x {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+
+@keyframes glass-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Reduced motion: the panels still fade in, nothing moves, blurs or grows. */
+@media (prefers-reduced-motion: reduce) {
+  .app.is-glass .view-grid > :is(.card, .pending-banner),
+  .app.is-glass .view-grid > .tiles > .tile,
+  .app.is-glass:not(.is-first) .view-grid > :is(.card, .pending-banner),
+  .app.is-glass:not(.is-first) .view-grid > .tiles > .tile {
+    animation: glass-fade 0.2s ease-out backwards;
+    animation-delay: 0s;
+  }
+
+  .app.is-glass .view-grid > :is(.card, .pending-banner) > *,
+  .app.is-glass .view-grid > .tiles > .tile > *,
+  .app.is-glass .revenue-hero::before,
+  .app.is-glass .revenue-hero-bar-column i,
+  .app.is-glass .master-rank-bar i,
+  .app.is-glass .revenue-hero-goal-fill {
+    animation: none;
+  }
+
+  .app.is-glass .tabbar-pill {
+    transition: none;
+  }
+}

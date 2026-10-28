@@ -11,6 +11,8 @@
 - [x] Comparisons use finished days only (`comparisonRanges`); "Подробнее" removed from Обзор; fines in the master card; clearer returning-clients tile; Новые/Постоянные columns removed from the master table.
 - [x] Attendance register: every master has a status every day (`attendanceGrid`/`attendanceTotals`); masters see sales the owner rejected in the last 7 days until they acknowledge them; "Ишхона" shown as "Салон".
 - [x] «Банк» design ported (2026-09-29): tokens, Onest/Unbounded, header with gear, bottom tab bar (Главная · Продажи · Расходы · Команда), Настройки (goal, shift/salon, deletion log), navy hero cards, ranking without crown, Команда with register, fines summary and master list, navy master earnings card.
+- [x] «Стекло» (2026-10-28, from the owner's reel «Glassy Dashboard V2»): frosted panels over the blurred salon (`public/glass-bg.jpg`, a frame of the walkthrough video), navy kept; every role, windows, loading and sign-in. Sections enter as in the reel the first time per session (panels, then contents clear from a blur; navy sweeps the revenue card; bars grow), later a short fade; the tab bar's pill slides. Replace the background with the photographer's salon photo when it comes.
+- [ ] «Стекло» on real phones: the owner's and a master's cheaper Android (backdrop blur under the tab bar and in windows; if it lags, drop the blur and keep the translucency).
 - [ ] Polish pass after the owner uses it on his phone (tell apart what he wants changed).
   - [x] Masters list removed from Команда: it repeated «Мастера месяца» on Главная, which opens the same master card.
   - [x] A master who started after the comparison window shows «новый мастер» instead of "+100% · было 0" (Главная, Продажи, master card).

@@ -839,11 +839,16 @@ function shareComparison(current, previous, comparisonRange) {
 // A figure runs up to its value the first time the app shows one, and glides
 // to a new value when the data refreshes. It used to run 0.9 s from zero on
 // every visit to a tab, so a half-counted «18 645 051» was what the owner
-// read (owner's review of 2026-10-26): once a session now, in 0.2 s, and
-// from then on it opens at its value. Honors reduced motion.
+// read (owner's review of 2026-10-26): once a session now, and from then on
+// it opens at its value. Under «Стекло» (2026-10-28) the figure is still
+// blurred for its first quarter second, so the run waits for it to clear and
+// takes half a second, long enough to be seen. Honors reduced motion.
 let countUpPlayed = false;
 
-function useCountUp(value, duration = 200) {
+// Sections that have played their entrance this session.
+const enteredViews = new Set();
+
+function useCountUp(value, duration = 520, delay = 240) {
   const target = Number(value) || 0;
   const [shown, setShown] = useState(() => (countUpPlayed ? target : 0));
   const fromRef = useRef(countUpPlayed ? target : 0);
@@ -857,10 +862,12 @@ function useCountUp(value, duration = 200) {
       return undefined;
     }
     const from = fromRef.current;
-    const start = performance.now();
+    // Only a run from zero waits; a refresh glides at once.
+    const wait = from === 0 ? delay : 0;
+    const start = performance.now() + wait;
     let frame;
     const tick = (now) => {
-      const progress = Math.min(1, (now - start) / duration);
+      const progress = Math.max(0, Math.min(1, (now - start) / duration));
       const eased = 1 - (1 - progress) ** 3;
       const next = from + (target - from) * eased;
       fromRef.current = next;
@@ -875,12 +882,12 @@ function useCountUp(value, duration = 200) {
       cancelAnimationFrame(frame);
       fromRef.current = target;
       setShown(target);
-    }, duration + 120);
+    }, wait + duration + 120);
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(settle);
     };
-  }, [target, duration]);
+  }, [target, duration, delay]);
 
   return shown;
 }
@@ -940,10 +947,10 @@ function RevenueHero({ monthRevenue, compare, compareRange, prior, priorRange, i
       ) : null}
 
       <div className="revenue-hero-bars" aria-label="Выручка по месяцам">
-        {months.map((row) => {
+        {months.map((row, index) => {
           const ghost = row.isCurrent && forecast ? forecast.revenue : 0;
           return (
-            <div className={`revenue-hero-bar ${row.isCurrent ? 'is-current' : ''}`} key={row.key}>
+            <div className={`revenue-hero-bar ${row.isCurrent ? 'is-current' : ''}`} key={row.key} style={{ '--i': index }}>
               <span className="revenue-hero-bar-value">{barValue(row.revenue)}</span>
               <span className="revenue-hero-bar-column">
                 {ghost ? <i className="revenue-hero-bar-ghost" style={{ height: `${(ghost / peak) * 100}%` }} /> : null}
@@ -6959,8 +6966,9 @@ export default function App() {
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
     try {
-      telegram?.setHeaderColor?.('#F4F6F9');
-      telegram?.setBackgroundColor?.('#F4F6F9');
+      // The top edge of the salon photo behind the glass.
+      telegram?.setHeaderColor?.('#C7C8C4');
+      telegram?.setBackgroundColor?.('#C7C8C4');
     } catch {
       // Older clients ignore the colours; nothing else depends on them.
     }
@@ -7140,6 +7148,13 @@ export default function App() {
     ? masterDutyAttention(data.duty, data.byName[data.me]?.id, data.duty.today, Date.now())
     : 0;
 
+  // Which section is showing its first entrance of the session (see
+  // firstEntrance below); it counts as entered once it has been on screen.
+  const entranceRef = useRef({ view: null, first: false });
+  useEffect(() => {
+    if (!isLoading) enteredViews.add(view);
+  }, [view, isLoading]);
+
   // «Пришёл → визит» on a booking opens the owner's Рабочий день with the
   // visit filled in.
   const [visitDraft, setVisitDraft] = useState(null);
@@ -7214,6 +7229,13 @@ export default function App() {
   const isFrontDesk = data.role === 'frontdesk';
   // A bar with one button is not navigation.
   const showTabbar = !isFrontDesk && navItems.length > 1;
+  const activeNavIndex = navItems.findIndex((item) => item.views.includes(view));
+  // Under glass a section's full entrance plays once a session; the answer is
+  // fixed when the section opens, so a refresh mid-entrance cannot change it.
+  if (entranceRef.current.view !== view) {
+    entranceRef.current = { view, first: !enteredViews.has(view) };
+  }
+  const firstEntrance = entranceRef.current.first;
   const masterProfile = isMaster ? data.byName[data.me] : null;
   const title = isMaster
     ? (data.me || 'Maestro')
@@ -7229,7 +7251,7 @@ export default function App() {
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
-    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''}`}>
+    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''} is-glass${firstEntrance ? ' is-first' : ''}`}>
       <header className="app-header">
         {view === 'settings' ? (
           <button className="back-button" type="button" onClick={() => openView(previousView)}>
@@ -7295,6 +7317,10 @@ export default function App() {
 
       {showTabbar ? (
         <nav className="tabbar" aria-label="Разделы" style={{ '--tabs': navItems.length }}>
+          {/* One pill slides to the open section. */}
+          {activeNavIndex >= 0 ? (
+            <i className="tabbar-pill" aria-hidden="true" style={{ transform: `translateX(calc(${activeNavIndex} * (100% + 4px)))` }} />
+          ) : null}
           {navItems.map((item) => {
             const active = item.views.includes(view);
             const badge = item.id === 'sales' ? pendingSalesCount : item.id === 'myduty' ? dutyBadge : 0;
