@@ -106,6 +106,7 @@ import {
   windowsDone,
   windowStatus,
   worksOn,
+  zonesFor,
 } from './utils/duty.js';
 import { dutyDateLabel, dutyDayLabel } from '../supabase/functions/_shared/duty.js';
 import {
@@ -5486,17 +5487,18 @@ function DutyTrialNote({ duty }) {
   return <p className="duty-trial">{`Пробная неделя. Штрафы начнутся с ${dutyDateLabel(duty.since, 'ru')}.`}</p>;
 }
 
-function DutyWindows({ windows, now, zoneCount = 0 }) {
+function DutyWindows({ windows, now, zones = [] }) {
   if (!windows.length) return null;
   return (
     <ol className="duty-windows">
       {windows.map((window) => {
         const status = windowStatus(window, now);
         const done = (window.zones_done || []).length;
+        const owed = zonesFor(zones, window).length;
         return (
           <li className={`duty-window is-${status}`} key={window.starts_at}>
             <strong>{dutyWindowLabel(window)}</strong>
-            <span>{status === 'open' && zoneCount ? `сейчас · ${done} из ${zoneCount}` : DUTY_STATUS_TEXT[status]}</span>
+            <span>{status === 'open' && owed ? `сейчас · ${done} из ${owed}` : DUTY_STATUS_TEXT[status]}</span>
           </li>
         );
       })}
@@ -5685,6 +5687,7 @@ function MyDuty({ data, reload, setError }) {
   const onDutyToday = today && String(today.master_id) === String(masterId);
   const windows = onDutyToday ? duty.windows || [] : [];
   const current = currentWindow(windows, now);
+  const currentZones = zonesFor(zones, current);
   const next = nextWindow(windows, now);
   const doneLine = current
     ? (next ? `Фото за ${dutyWindowLabel(current)} есть. Следующее с ${appointmentTime(next.starts_at)}` : `Фото за ${dutyWindowLabel(current)} есть`)
@@ -5786,11 +5789,11 @@ function MyDuty({ data, reload, setError }) {
         {onDutyToday ? (
           <>
             <p className="big-line">Сегодня дежурите вы</p>
-            <DutyWindows windows={windows} now={now} zoneCount={zones.length} />
-            {current && !current.photo_at && zones.length ? (
+            <DutyWindows windows={windows} now={now} zones={zones} />
+            {current && !current.photo_at && currentZones.length ? (
               <div className="duty-zones">
                 <span className="duty-zones-title">{`Фото за ${dutyWindowLabel(current)}`}</span>
-                {zones.map((zone) => {
+                {currentZones.map((zone) => {
                   const done = (current.zones_done || []).includes(zone.id);
                   const refused = current.zones_rejected?.[zone.id];
                   const shots = drafts[zone.id] || [];
@@ -5939,7 +5942,8 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
             .filter((attempt) => attempt.status === 'rejected')
             .sort((left, right) => Number(retaken(left)) - Number(retaken(right)));
           const fine = fineOf(window);
-          const complete = zones.length > 0 && zones.every((zone) => counted(zone));
+          const owed = zonesFor(zones, window);
+          const complete = owed.length > 0 && owed.every((zone) => counted(zone));
           // Not over yet: nothing is missing.
           const status = windowStatus({ ...window, photo_at: complete ? window.ends_at : null, fined: Boolean(fine) }, now);
           return (
@@ -5949,7 +5953,7 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
                 <span>{fine ? `штраф ${money(fine.amount)}` : DUTY_STATUS_TEXT[status]}</span>
               </div>
               <div className="duty-photos">
-                {zones.map((zone) => {
+                {owed.map((zone) => {
                   const attempt = counted(zone);
                   const cover = attempt?.photos?.[0];
                   return (

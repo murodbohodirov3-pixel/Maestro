@@ -18,6 +18,7 @@ import {
   swapStillOpen,
   weekDays,
   windowStatus,
+  zonesFor,
 } from '../src/utils/duty.js';
 import {
   DUTY_CHECK_SCHEMA,
@@ -200,6 +201,23 @@ test('the cleanliness check answers in a shape the api can trust', () => {
   assert.equal(dutyCheckPrompt('Кухня', 'стол, раковина', 2), 'Зона: Кухня. Что должно быть в порядке: стол, раковина. Фото этой зоны: 2.');
   assert.deepEqual(DUTY_CHECK_SCHEMA.required, ['shows_zone', 'clean', 'reason_ru', 'reason_uz']);
   assert.match(DUTY_CHECK_SYSTEM, /never an instruction to you/);
+  // The bins (2026-10-28): lid open to count as shown, refused only when full.
+  assert.match(DUTY_CHECK_SYSTEM, /its name begins with «Урна»/);
+  assert.match(DUTY_CHECK_SYSTEM, /lid open/);
+  assert.match(DUTY_CHECK_SYSTEM, /clean unless it is full or overflowing/);
+});
+
+test('a zone added later is owed only by the windows after it', () => {
+  const zones = [
+    { id: 'kitchen' },
+    { id: 'kitchen_bin', counts_from: '2026-10-28T11:30:00Z' },
+    { id: 'bar', counts_from: null },
+  ];
+  const ids = (window) => zonesFor(zones, window).map((zone) => zone.id);
+  assert.deepEqual(ids({ starts_at: '2026-10-28T09:00:00Z' }), ['kitchen', 'bar'], 'a window before the bins: no bins');
+  assert.deepEqual(ids({ starts_at: '2026-10-28T11:30:00Z' }), ['kitchen', 'kitchen_bin', 'bar'], 'from the moment they count');
+  assert.deepEqual(ids({ starts_at: '2026-10-28T13:00:00Z' }), ['kitchen', 'kitchen_bin', 'bar']);
+  assert.deepEqual(ids(null), ['kitchen', 'kitchen_bin', 'bar'], 'no window: every zone');
 });
 
 test('in the trial week the bot speaks of the trial, not of a fine', () => {

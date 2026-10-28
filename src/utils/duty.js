@@ -67,6 +67,15 @@ export function windowsDone(windows = []) {
   return windows.filter((window) => window.photo_at).length;
 }
 
+// The zones a window owes: a zone added later (`counts_from`, the bins of
+// 2026-10-28) is not owed by windows that began before it, as in
+// maestro_duty_zones_missing.
+export function zonesFor(zones = [], window) {
+  if (!window) return zones;
+  const starts = new Date(window.starts_at).getTime();
+  return zones.filter((zone) => !zone.counts_from || new Date(zone.counts_from).getTime() <= starts);
+}
+
 // Whom a master may ask to take his day: every other active master, those who
 // work that day first, each marked whether he works it.
 export function swapCandidates(duty, day, selfId) {
