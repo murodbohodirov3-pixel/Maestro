@@ -21,7 +21,9 @@
          the whole download. Must stay self-contained: styles.css has not
          loaded at this point, so no CSS variables and no external assets.
          Visually identical to .loading-emblem in src/styles.css, which takes
-         over once React mounts. Change both together. -->
+         over once React mounts. Change both together. The salon photo is the
+         one exception to «no assets»: 10 KB from this host, and until it
+         arrives the screen is its average colour. -->
     <style>
       #boot-splash {
         position: fixed;
@@ -31,8 +33,9 @@
         inset: 0;
         place-items: center;
         background:
-          radial-gradient(circle at 50% 48%, rgba(30, 78, 216, 0.12), transparent 32%),
-          #f4f6f9;
+          linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
+          url("/glass-bg.jpg") center / cover no-repeat,
+          #8a7d6f;
         transition: opacity 0.25s ease-out;
       }
 
