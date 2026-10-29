@@ -11,6 +11,7 @@ Project instructions for Codex agents working on Maestro Barberia.
 - Active runtime path: `src/main.jsx` renders `src/App.jsx`; frontend data calls go through `src/lib/legacyApi.js` to the `api` Edge Function.
 - The former parallel page modules and browser-direct Supabase client were removed. Do not recreate or connect direct table CRUD from the frontend.
 - Supabase local assets are under `supabase/`.
+- Two looks (2026-10-29): «Стекло» (light, everyone's default) and «Вечер» (smoked glass at dusk, the owner's reel V5). Each person switches with the sun/moon button in the header; the choice stays on the phone (`localStorage.maestroTheme`, `src/utils/theme.js`), not on the server. «Вечер» is the `is-evening` class on `<html>`, set in `index.html` before the first frame and by `applyTheme` in `App.jsx`, which also paints Telegram's header and theme-color with the look's top edge. Its styles are one block at the end of `src/styles.css` over the «Стекло» block; a new screen must read well in both.
 - Restoration source of truth: legacy single-file app `Maestro-main/index.html` version `v14` and the live Supabase Edge Function `api`.
 - The current restoration goal is near 1:1 behavior parity with the old HTML app while keeping React/Vite as the frontend shell.
 
