@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Maestro Barberia</title>
-    <meta name="theme-color" content="#D4D2CC" />
+    <meta name="theme-color" content="#63676F" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -29,7 +29,7 @@
          home-screen app paints the strip under its clock with it. */
       html,
       body {
-        background: #d4d2cc;
+        background: #63676f;
       }
 
       #boot-splash {
@@ -40,9 +40,10 @@
         inset: 0;
         place-items: center;
         background:
-          linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
+          linear-gradient(180deg, rgba(40, 46, 60, 0.62) 0%, rgba(60, 50, 52, 0.2) 38%, rgba(40, 26, 18, 0.28) 60%, rgba(14, 10, 10, 0.78) 100%),
+          radial-gradient(140% 40% at 50% 50%, rgba(255, 170, 96, 0.62), rgba(255, 130, 70, 0.16) 55%, rgba(255, 130, 70, 0) 76%),
           url("/glass-bg.jpg") center / cover no-repeat,
-          #8a7d6f;
+          #241e1a;
         transition: opacity 0.25s ease-out;
       }
 

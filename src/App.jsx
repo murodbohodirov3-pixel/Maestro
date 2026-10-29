@@ -6970,10 +6970,10 @@ export default function App() {
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
     try {
-      // The top edge of the page as drawn: the salon photo under its light
-      // fade (theme-color in index.html and the page ground in styles.css).
-      telegram?.setHeaderColor?.('#D4D2CC');
-      telegram?.setBackgroundColor?.('#D4D2CC');
+      // The top edge of the page as drawn: the salon at dusk under its fade
+      // (theme-color in index.html and the page ground in styles.css).
+      telegram?.setHeaderColor?.('#63676F');
+      telegram?.setBackgroundColor?.('#63676F');
     } catch {
       // Older clients ignore the colours; nothing else depends on them.
     }
@@ -7256,7 +7256,7 @@ export default function App() {
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
-    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''} is-glass${firstEntrance ? ' is-first' : ''}`}>
+    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''} is-glass is-evening${firstEntrance ? ' is-first' : ''}`}>
       <header className="app-header">
         {view === 'settings' ? (
           <button className="back-button" type="button" onClick={() => openView(previousView)}>
