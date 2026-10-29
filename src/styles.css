@@ -6971,3 +6971,319 @@ body {
     transition: none;
   }
 }
+
+/* ── «Вечер» (проба V5, 2026-10-29) ─────────────────────────────────────
+   The owner's second reel, «Glassy Dashboard V5»: smoked glass over the
+   room at dusk, white type, colour only in small doses (blue for what is
+   active, green and red for direction, yellow for what waits). It is a
+   layer over «Стекло», switched on by `is-evening` on `.app`; taking the
+   class away brings «Стекло» back as it was. Formulas and data untouched. */
+.app.is-glass.is-evening {
+  --ink: #F5F3F0;
+  --muted: rgba(240, 236, 230, 0.62);
+  --line: rgba(255, 255, 255, 0.12);
+  --line-soft: rgba(255, 255, 255, 0.08);
+  --surface: rgba(58, 55, 62, 0.46);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --brass: #3D82F2;
+  --brass-soft: rgba(61, 130, 242, 0.16);
+  --accent: #4C8DF6;
+  --hero-muted: rgba(240, 236, 230, 0.62);
+  --hero-inset: rgba(0, 0, 0, 0.26);
+  --hero-bar: rgba(255, 255, 255, 0.24);
+  --hero-ghost: rgba(255, 255, 255, 0.3);
+  --cash: #5FD49A;
+  --positive-soft: rgba(52, 199, 120, 0.18);
+  --positive-ink: #7BE3A8;
+  --card: #4C8DF6;
+  --qr: #A78BFA;
+  --pay-cash: #5FD49A;
+  --pay-card: #4C8DF6;
+  --pay-qr: #A78BFA;
+  --fine: #FF7B7B;
+  --negative-soft: rgba(255, 92, 92, 0.16);
+  --negative-ink: #FF9E9E;
+  --pending: #E9A93A;
+  --pending-bg: rgba(233, 169, 58, 0.16);
+  --pending-line: rgba(233, 169, 58, 0.36);
+  --pending-ink: #F5CC80;
+  --glass: rgba(58, 55, 62, 0.46);
+  --glass-line: rgba(255, 255, 255, 0.12);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.32);
+  color: var(--ink);
+  /* Native time and date fields draw their icons and pickers dark-side too. */
+  color-scheme: dark;
+}
+
+/* The room at dusk: the same salon, dimmed, with the last light of the
+   window low in the middle of the screen, as behind the reel's panels. */
+.app.is-glass.is-evening::before,
+.loading-splash,
+.login-gate {
+  background:
+    linear-gradient(180deg, rgba(40, 46, 60, 0.62) 0%, rgba(60, 50, 52, 0.2) 38%, rgba(40, 26, 18, 0.28) 60%, rgba(14, 10, 10, 0.78) 100%),
+    radial-gradient(140% 40% at 50% 50%, rgba(255, 170, 96, 0.62), rgba(255, 130, 70, 0.16) 55%, rgba(255, 130, 70, 0) 76%),
+    url("/glass-bg.jpg") center / cover no-repeat,
+    #241E1A;
+}
+
+/* The page ground is the top edge of the dusk as drawn, for the strip under
+   an iPhone's clock (theme-color in index.html, Telegram's header in App). */
+html,
+body {
+  background: #63676F;
+}
+
+/* The sign-in stands outside `.app`, so it takes the evening's colours here. */
+.login-gate {
+  --ink: #F5F3F0;
+  --muted: rgba(240, 236, 230, 0.66);
+  --brass: #3D82F2;
+  --fine: #FF7B7B;
+}
+
+.login-card {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(30, 27, 32, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.login-card .btn.ghost {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Top bar: a dark capsule, its buttons round smoked discs. */
+.app.is-glass.is-evening .app-header-row {
+  border-color: var(--glass-line);
+  background: rgba(24, 22, 27, 0.52);
+}
+
+.app.is-glass.is-evening .lang-button,
+.app.is-glass.is-evening .gear-button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+/* Switches as in the reel's Week · Month · Year: the chosen one a white pill. */
+.app.is-glass.is-evening .seg,
+.app.is-glass.is-evening .view-grid .seg,
+.app.is-glass.is-evening .view-grid .hero-card .seg {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app.is-glass.is-evening .seg button.on,
+.app.is-glass.is-evening .view-grid .seg button.on {
+  background: rgba(255, 255, 255, 0.94);
+  color: #17151B;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.app.is-glass.is-evening .date-badge {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Fields: dark wells. */
+.app.is-glass.is-evening input,
+.app.is-glass.is-evening select {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--ink);
+}
+
+.app.is-glass.is-evening input::placeholder {
+  color: rgba(240, 236, 230, 0.45);
+}
+
+/* Buttons: blue for the act, glass for the rest. */
+.app.is-glass.is-evening .btn {
+  background: var(--brass);
+  color: #FFFFFF;
+  box-shadow: 0 6px 18px rgba(61, 130, 242, 0.3);
+}
+
+.app.is-glass.is-evening .btn.ghost {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+/* What waits for the owner: amber glass. */
+.app.is-glass.is-evening .pending-banner,
+.app.is-glass.is-evening .approvals-card {
+  border-color: var(--pending-line);
+  background: rgba(70, 48, 16, 0.5);
+}
+
+.app.is-glass.is-evening .pending-banner-count {
+  color: #1C1408;
+}
+
+/* The navy cards turn to smoked glass; the revenue card keeps the reel's
+   chart: grey glass columns, the current one blue and lit. */
+.app.is-glass.is-evening .hero-card,
+.app.is-glass.is-evening .revenue-hero::before {
+  border-color: var(--glass-line);
+  background: linear-gradient(160deg, rgba(44, 40, 48, 0.62), rgba(22, 20, 25, 0.62));
+}
+
+.app.is-glass.is-evening .hero-card {
+  box-shadow: var(--glass-shadow);
+}
+
+.app.is-glass.is-evening .revenue-hero {
+  border: 1px solid var(--glass-line);
+  background: transparent;
+  box-shadow: var(--glass-shadow);
+}
+
+.app.is-glass.is-evening .revenue-hero-bar {
+  color: rgba(240, 236, 230, 0.55);
+}
+
+.app.is-glass.is-evening .revenue-hero-bar.is-current {
+  color: #FFFFFF;
+}
+
+.app.is-glass.is-evening .revenue-hero-bar.is-current .revenue-hero-bar-fill {
+  background: linear-gradient(180deg, #6FA4FF, #3D7EF0);
+  box-shadow: 0 0 22px rgba(76, 141, 246, 0.55);
+}
+
+.app.is-glass.is-evening .revenue-hero-goal-fill {
+  background: linear-gradient(90deg, #3D7EF0, #6FA4FF);
+}
+
+.app.is-glass.is-evening .revenue-hero-goal-marker {
+  background: #7BE3A8;
+}
+
+.app.is-glass.is-evening .delta-chip.flat {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Small figures: a coloured mark at the corner, as the reel's icon chips. */
+.app.is-glass.is-evening .overview-kpis .tile {
+  position: relative;
+}
+
+.app.is-glass.is-evening .overview-kpis .tile::after {
+  content: "";
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kpi, #4C8DF6);
+  box-shadow: 0 0 10px var(--kpi, #4C8DF6);
+}
+
+.app.is-glass.is-evening .overview-kpis .tile:nth-child(4n+1) { --kpi: #5FD49A; }
+.app.is-glass.is-evening .overview-kpis .tile:nth-child(4n+2) { --kpi: #4C8DF6; }
+.app.is-glass.is-evening .overview-kpis .tile:nth-child(4n+3) { --kpi: #E9A93A; }
+.app.is-glass.is-evening .overview-kpis .tile:nth-child(4n+4) { --kpi: #A78BFA; }
+
+.app.is-glass.is-evening .master-rank-bar,
+.app.is-glass.is-evening .trend-column {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app.is-glass.is-evening .master-rank-bar i {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.app.is-glass.is-evening .master-rank-bar i.is-leader,
+.app.is-glass.is-evening .master-rank-number.is-leader {
+  background: var(--accent);
+}
+
+.app.is-glass.is-evening .leader-tag {
+  border-color: rgba(76, 141, 246, 0.6);
+  background: rgba(76, 141, 246, 0.16);
+  color: #9CC1FF;
+}
+
+.app.is-glass.is-evening .trend-fill {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.app.is-glass.is-evening .trend-bar.is-current .trend-fill,
+.app.is-glass.is-evening .trend-bar.is-selected .trend-fill {
+  background: linear-gradient(180deg, #6FA4FF, #3D7EF0);
+  box-shadow: 0 0 18px rgba(76, 141, 246, 0.45);
+}
+
+.app.is-glass.is-evening .trend-bar.is-negative .trend-fill {
+  background: var(--fine);
+}
+
+.app.is-glass.is-evening .trend-ghost,
+.app.is-glass.is-evening .revenue-hero-bar-ghost {
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app.is-glass.is-evening .signal {
+  border-color: var(--glass-line);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app.is-glass.is-evening .signal.bad {
+  border-color: rgba(255, 123, 123, 0.3);
+  background: rgba(255, 92, 92, 0.1);
+}
+
+.app.is-glass.is-evening .signal.good {
+  border-color: rgba(95, 212, 154, 0.3);
+  background: rgba(52, 199, 120, 0.1);
+}
+
+.app.is-glass.is-evening .view-grid > .hint {
+  color: rgba(240, 236, 230, 0.7);
+}
+
+/* The bottom bar: smoked glass, the open section a white pill like the
+   reel's side rail. */
+.app.is-glass.is-evening .tabbar {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(22, 20, 25, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 14px 36px rgba(0, 0, 0, 0.45);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app.is-glass.is-evening .tabbar {
+    background: rgba(22, 20, 25, 0.95);
+  }
+}
+
+.app.is-glass.is-evening .tabbar button {
+  color: rgba(240, 236, 230, 0.62);
+}
+
+.app.is-glass.is-evening .tabbar button.on {
+  color: #17151B;
+}
+
+.app.is-glass.is-evening .tabbar-pill {
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* Windows: dark sheets over a deeper dim. */
+.app.is-glass.is-evening .modal-backdrop {
+  --surface: #221F25;
+}
+
+.app.is-glass.is-evening .modal-backdrop:not(.duty-viewer) {
+  background: rgba(6, 5, 8, 0.55);
+}
+
+.app.is-glass.is-evening .modal-backdrop .master-sheet {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(30, 27, 33, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 -12px 40px rgba(0, 0, 0, 0.45);
+}
