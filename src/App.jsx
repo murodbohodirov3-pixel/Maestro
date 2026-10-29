@@ -23,6 +23,7 @@ import {
   totalQr,
   totalSalesAmount,
 } from './utils/calculations.js';
+import { nextTheme, normalizeTheme, THEME_KEY, themeTopColor } from './utils/theme.js';
 import {
   attendanceGrid,
   attendanceTotals,
@@ -718,6 +719,38 @@ function rememberLanguage(lang) {
     localStorage.setItem(LANG_KEY, lang);
   } catch {
     // The server keeps it anyway.
+  }
+}
+
+// «Стекло» or «Вечер» (src/utils/theme.js): what this phone chose last.
+function initialTheme() {
+  try {
+    return normalizeTheme(localStorage.getItem(THEME_KEY));
+  } catch {
+    return normalizeTheme(null);
+  }
+}
+
+function rememberTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // No storage: the look holds until the app is closed.
+  }
+}
+
+// The look is a class on <html>, so the splash and the sign-in, which stand
+// outside `.app`, wear it too; Telegram's header and the strip under an
+// iPhone's clock take its top edge.
+function applyTheme(theme) {
+  const color = themeTopColor(theme);
+  document.documentElement.classList.toggle('is-evening', theme === 'evening');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+  try {
+    window.Telegram?.WebApp?.setHeaderColor?.(color);
+    window.Telegram?.WebApp?.setBackgroundColor?.(color);
+  } catch {
+    // Older clients ignore the colours; nothing else depends on them.
   }
 }
 
@@ -6564,6 +6597,22 @@ function GearIcon() {
   );
 }
 
+// The look the button switches to: a moon for «Вечер», a sun for «Стекло».
+function ThemeIcon({ to }) {
+  return (
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {to === 'evening' ? (
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+      ) : (
+        <>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 const SCHEDULE_WEEKDAYS = [[1, 'Пн'], [2, 'Вт'], [3, 'Ср'], [4, 'Чт'], [5, 'Пт'], [6, 'Сб'], [7, 'Вс']];
 // The version every master had before schedules were dated.
 const SCHEDULE_ALWAYS = '2000-01-01';
@@ -6947,6 +6996,7 @@ export default function App() {
   const notify = useCallback((text) => setSuccess({ text: text || '', at: Date.now() }), []);
   const [loginRequired, setLoginRequired] = useState(false);
   const [lang, setLang] = useState(initialLanguage);
+  const [theme, setTheme] = useState(initialTheme);
   // The server's language is taken once, on the first load; after that the
   // person's own switch decides.
   const langSettledRef = useRef(false);
@@ -6965,18 +7015,21 @@ export default function App() {
     });
   }
 
-  // Telegram paints its own header and the area behind the app; matching them
-  // to the page removes the seam at the top of the screen.
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    const next = nextTheme(theme);
+    haptic('light');
+    setTheme(next);
+    rememberTheme(next);
+  }
+
+  // Telegram's own frame. Its header and the area behind the app take the
+  // look's colours in applyTheme, which removes the seam at the top.
   useEffect(() => {
     const telegram = window.Telegram?.WebApp;
-    try {
-      // The top edge of the page as drawn: the salon at dusk under its fade
-      // (theme-color in index.html and the page ground in styles.css).
-      telegram?.setHeaderColor?.('#63676F');
-      telegram?.setBackgroundColor?.('#63676F');
-    } catch {
-      // Older clients ignore the colours; nothing else depends on them.
-    }
     // Opened at full height, and a swipe down while scrolling a list no
     // longer folds the app away (owner's review of 2026-10-26).
     try {
@@ -7256,7 +7309,7 @@ export default function App() {
   const teamTabs = TEAM_TABS.filter(([id]) => availableViews.includes(id));
 
   return (
-    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''} is-glass is-evening${firstEntrance ? ' is-first' : ''}`}>
+    <main className={`app${isMaster ? ' is-master' : ''}${showTabbar ? ' has-tabbar' : ''} is-glass${firstEntrance ? ' is-first' : ''}`}>
       <header className="app-header">
         {view === 'settings' ? (
           <button className="back-button" type="button" onClick={() => openView(previousView)}>
@@ -7270,6 +7323,15 @@ export default function App() {
             <p>{subtitle}</p>
           </div>
           <div className="app-header-actions">
+            <button
+              aria-label={theme === 'evening' ? 'Светлая тема' : 'Вечерняя тема'}
+              aria-pressed={theme === 'evening'}
+              className="theme-button"
+              type="button"
+              onClick={toggleTheme}
+            >
+              <ThemeIcon to={nextTheme(theme)} />
+            </button>
             <button aria-label="Язык · Til" className="lang-button" data-no-translate type="button" onClick={toggleLanguage}>
               {lang === 'uz' ? 'RU' : 'UZ'}
             </button>

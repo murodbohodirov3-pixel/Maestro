@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Maestro Barberia</title>
-    <meta name="theme-color" content="#63676F" />
+    <meta name="theme-color" content="#D4D2CC" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -15,6 +15,19 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/maestro-192.png" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- The look this phone chose last (src/utils/theme.js), set before the
+         first frame so that the splash and the strip under the clock are
+         already the right ones. -->
+    <script>
+      try {
+        if (localStorage.getItem('maestroTheme') === 'evening') {
+          document.documentElement.classList.add('is-evening');
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#63676F');
+        }
+      } catch (error) {
+        // No storage: the light look.
+      }
+    </script>
     <!-- Boot splash, inlined on purpose.
          Everything below paints on the first frame, before the JS bundle is
          fetched or parsed — otherwise the user stares at a white screen for
@@ -29,6 +42,11 @@
          home-screen app paints the strip under its clock with it. */
       html,
       body {
+        background: #d4d2cc;
+      }
+
+      html.is-evening,
+      html.is-evening body {
         background: #63676f;
       }
 
@@ -40,11 +58,19 @@
         inset: 0;
         place-items: center;
         background:
+          linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
+          url("/glass-bg.jpg") center / cover no-repeat,
+          #8a7d6f;
+        transition: opacity 0.25s ease-out;
+      }
+
+      /* «Вечер»: the same salon at dusk, as .is-evening .loading-splash. */
+      html.is-evening #boot-splash {
+        background:
           linear-gradient(180deg, rgba(40, 46, 60, 0.62) 0%, rgba(60, 50, 52, 0.2) 38%, rgba(40, 26, 18, 0.28) 60%, rgba(14, 10, 10, 0.78) 100%),
           radial-gradient(140% 40% at 50% 50%, rgba(255, 170, 96, 0.62), rgba(255, 130, 70, 0.16) 55%, rgba(255, 130, 70, 0) 76%),
           url("/glass-bg.jpg") center / cover no-repeat,
           #241e1a;
-        transition: opacity 0.25s ease-out;
       }
 
       #boot-splash.is-done {

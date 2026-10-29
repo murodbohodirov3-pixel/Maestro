@@ -182,6 +182,8 @@ export const PHRASES = {
   'оценок': 'baho',
   'только что': 'hozirgina',
   'Готово': 'Tayyor',
+  'Вечерняя тема': 'Kechki mavzu',
+  'Светлая тема': 'Yorugʻ mavzu',
   'Был у нас раньше?': 'Avval bizda boʻlganmi?',
   'Создать карточку': 'Mijozni saqlash',
   'Владелец': 'Ega',
