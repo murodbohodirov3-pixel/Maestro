@@ -205,6 +205,11 @@ test('the cleanliness check answers in a shape the api can trust', () => {
   assert.match(DUTY_CHECK_SYSTEM, /its name begins with «Урна»/);
   assert.match(DUTY_CHECK_SYSTEM, /lid open/);
   assert.match(DUTY_CHECK_SYSTEM, /clean unless it is full or overflowing/);
+  // 2026-11-01: the toilet bin passed as the kitchen bin, a full bin passed from afar.
+  assert.match(DUTY_CHECK_SYSTEM, /Урна на кухне: a brown plastic basket/);
+  assert.match(DUTY_CHECK_SYSTEM, /Урна в туалете: a small round black bin/);
+  assert.match(DUTY_CHECK_SYSTEM, /another room's zone is shows_zone false/);
+  assert.match(DUTY_CHECK_SYSTEM, /small in the distance/);
 });
 
 test('a zone added later is owed only by the windows after it', () => {
