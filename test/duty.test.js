@@ -282,7 +282,8 @@ test('a request to take a day over, its buttons and its answers', () => {
 
 test('the duty screens read in Uzbek', () => {
   const uz = (text) => translate(text, 'uz');
-  assert.equal(uz('Фото 2 из 6'), '6 tadan 2 ta rasm');
+  assert.equal(uz('Сдано окон: 2 из 6'), 'Topshirilgan oynalar: 2/6');
+  assert.equal(uz('сейчас · зон 1 из 5'), 'hozir · 1/5 zona');
   assert.equal(uz('Сегодня дежурит Иброхим'), 'Bugun navbatchi — Иброхим');
   assert.equal(uz('Иброхим просит подменить его на дежурстве'), 'Иброхим navbatchilikda oʻrniga chiqishingizni soʻrayapti');
   assert.equal(uz('Четверг, 29 октября'), 'Payshanba, 29 oktabr');

@@ -1012,14 +1012,19 @@ Deno.serve(async (req) => {
       if (appUserResult.data.role !== 'owner' && !isPartner) return json({ error: 'forbidden' }, 403);
       const day = String(payload.day ?? '');
       if (!isValidIsoDate(day) || day < tashkentDate(-31) || day > tashkentDate(14)) return json({ error: 'invalid_duty_day' }, 400);
-      const [windows, attempts, fines] = await Promise.all([
+      // Who was on duty and whose fine it is, by name, and whether the day
+      // was taken over (audit of 2026-11-01, №20).
+      const [windows, attempts, fines, masterNames, swap] = await Promise.all([
         sb.rpc('maestro_duty_windows', { p_day: day }),
         sb.from('duty_attempts')
           .select('id, master_id, zone, status, reason_ru, reason_uz, window_starts_at, taken_at, checked_by, duty_photos(id, storage_path)')
           .eq('day', day).order('taken_at'),
         sb.from('fines').select('id, master_id, amount, duty_window').eq('auto', 'duty').eq('d', day),
+        sb.from('masters').select('id, name'),
+        sb.from('duty_swaps').select('from_master_id, to_master_id').eq('day', day).eq('status', 'accepted')
+          .order('decided_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      const failed = windows.error || attempts.error || fines.error;
+      const failed = windows.error || attempts.error || fines.error || masterNames.error || swap.error;
       if (failed) return dbError(failed);
       type AttemptRow = Record<string, unknown> & { duty_photos: { id: number; storage_path: string }[] | null };
       const rows = (attempts.data ?? []) as AttemptRow[];
@@ -1035,6 +1040,8 @@ Deno.serve(async (req) => {
           photos: (duty_photos ?? []).map((photo) => ({ id: photo.id, url: urlOf.get(photo.storage_path) ?? null })),
         })),
         fines: fines.data ?? [],
+        names: Object.fromEntries((masterNames.data ?? []).map((master: { id: number; name: string }) => [master.id, master.name])),
+        swap: swap.data ?? null,
       });
     }
 

@@ -6,6 +6,7 @@ import {
   needsTelegramLogin,
   startTelegramOAuthLogin,
 } from './lib/legacyApi.js';
+import { dismissBootSplash } from './lib/bootSplash.js';
 import {
   commissionPctForSale,
   grossMasterPayForSales,
@@ -454,6 +455,44 @@ function useNotice() {
 
 // A sheet takes the keyboard and screen-reader focus when it opens (owner's
 // review of 2026-10-26); it stayed on the button behind the dimmed page.
+// While a sheet is open the page under it stays still (audit of 2026-11-01,
+// №21). It is <html> that scrolls here, not <body> (both clip their sides),
+// so the lock is on <html>; a count lets one sheet open over another.
+let scrollLocks = 0;
+
+function useScrollLock() {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (scrollLocks === 0) root.style.overflow = 'hidden';
+    scrollLocks += 1;
+    return () => {
+      scrollLocks -= 1;
+      if (scrollLocks === 0) root.style.overflow = '';
+    };
+  }, []);
+}
+
+// A sheet leaves the way it came, down and out, before it is gone: it used
+// to vanish in a frame (audit of 2026-11-01, №51). Every way of closing it
+// goes through here; with reduced motion it closes at once.
+const SHEET_EXIT_MS = 200;
+
+function useSheetExit(closeNow) {
+  const [leaving, setLeaving] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const close = useCallback((...args) => {
+    if (timer.current) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      closeNow(...args);
+      return;
+    }
+    setLeaving(true);
+    timer.current = setTimeout(() => closeNow(...args), SHEET_EXIT_MS);
+  }, [closeNow]);
+  return [leaving, close];
+}
+
 function useDialogFocus() {
   const ref = useRef(null);
   useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []);
@@ -995,6 +1034,18 @@ function monthDaysLabel(range) {
   return from === to ? `${from} ${month}` : `${from}–${to} ${month}`;
 }
 
+// Figures read side by side are written alike: «1,5 млн · было 345 000» and
+// «сегодня: 2,7 млн · 1 окт: 700 000» mixed two ways in one line (audit of
+// 2026-11-01, №47). Once one of them runs to millions, all are in millions.
+function millionsLike(...values) {
+  const inMillions = values.some((value) => Math.abs(Number(value) || 0) >= 1_000_000);
+  return (value) => {
+    if (!inMillions) return money(value);
+    const number = (Number(value) || 0) / 1_000_000;
+    return `${number.toFixed(Math.abs(number) < 1 && number !== 0 ? 2 : 1).replace('.', ',')} млн`;
+  };
+}
+
 // The screen's one big card: the month's revenue, the months behind it, where
 // the pace will end the month, and — when the owner has set one — the goal.
 // The forecast only counts finished days; see monthForecast.
@@ -1022,11 +1073,12 @@ function RevenueHero({ monthRevenue, compare, compareRange, prior, priorRange, i
           the card add up (owner's review of 2026-10-26). */}
       {priorRange ? (
         <span className="revenue-hero-note">
-          {inProgress ? 'сегодня' : monthDaysLabel(compareRange)}: {compactMoney(compare)} · {monthDaysLabel(priorRange)}: {compactMoney(prior)}
+          {inProgress ? 'сегодня' : monthDaysLabel(compareRange)}: {millionsLike(compare, prior)(compare)} · {monthDaysLabel(priorRange)}: {millionsLike(compare, prior)(prior)}
         </span>
       ) : null}
 
-      <div className="revenue-hero-bars" aria-label="Выручка по месяцам">
+      <span className="revenue-hero-bars-unit">млн сум</span>
+      <div className="revenue-hero-bars" aria-label="Выручка по месяцам, млн сум">
         {months.map((row, index) => {
           const ghost = row.isCurrent && forecast ? forecast.revenue : 0;
           return (
@@ -1261,18 +1313,15 @@ function MonthlyTrend({ series, forecast }) {
 
 // Everything about one master on one screen: this month against the same days
 // of the last, and the months before it.
-function MasterSheet({ data, master, onClose }) {
+function MasterSheet({ data, master, onClose: closeNow }) {
+  const [leaving, onClose] = useSheetExit(closeNow);
   useTelegramBack(onClose);
   const dialogRef = useDialogFocus();
+  useScrollLock();
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKey);
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const monthRange = currentMonthRange();
@@ -1316,7 +1365,7 @@ function MasterSheet({ data, master, onClose }) {
   );
 
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop sheet-backdrop${leaving ? ' is-leaving' : ''}`} onClick={onClose}>
       <div
         aria-label={`Мастер ${master.name}`}
         aria-modal="true"
@@ -1519,7 +1568,9 @@ function OverviewView({ data, reload, setError, setView }) {
       : {}
   );
   // «17,7 млн · было 3 322 500» mixed two ways of writing money in one tile.
-  const profitVersusPriorMonth = versusPriorMonth(profitFor(compareRange), priorMonthRange ? profitFor(priorMonthRange) : 0, compactMoney);
+  const priorProfit = priorMonthRange ? profitFor(priorMonthRange) : 0;
+  const profitFormat = millionsLike(netProfit, profitFor(compareRange), priorProfit);
+  const profitVersusPriorMonth = versusPriorMonth(profitFor(compareRange), priorProfit, profitFormat);
   const forecast = monthForecast(countedSales, TODAY);
   const signals = attentionSignals({ sales: countedSales, masters: data.masters, today: TODAY });
   const series = monthlySeries({
@@ -1582,7 +1633,7 @@ function OverviewView({ data, reload, setError, setView }) {
       />
 
       <div className="tiles overview-kpis">
-        <Tile label="Чистая прибыль" value={compactMoney(netProfit)} danger={netProfit < 0} {...profitVersusPriorMonth} />
+        <Tile label="Чистая прибыль" value={profitFormat(netProfit)} danger={netProfit < 0} {...profitVersusPriorMonth} />
         <Tile
           label="Выручка сегодня"
           value={money(todayRevenue)}
@@ -1941,7 +1992,8 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
 
 // The owner's view of one client: the whole number, how to reach him, and
 // every visit — when, at what time, to which master, for how much.
-function ClientSheet({ clientId, onClose, setError, reload }) {
+function ClientSheet({ clientId, onClose: closeNow, setError, reload }) {
+  const [leaving, onClose] = useSheetExit(closeNow);
   useTelegramBack(onClose);
   const dialogRef = useDialogFocus();
   // The card shown; a merge moves it to the card that stays.
@@ -1953,15 +2005,11 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
   const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
 
+  useScrollLock();
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKey);
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   useEffect(() => {
@@ -2044,7 +2092,7 @@ function ClientSheet({ clientId, onClose, setError, reload }) {
     : client?.telegram_user_id ? `tg://user?id=${client.telegram_user_id}` : null;
 
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop sheet-backdrop${leaving ? ' is-leaving' : ''}`} onClick={onClose}>
       <div aria-label="Клиент" aria-modal="true" className="card master-sheet client-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
@@ -2325,8 +2373,10 @@ function MoveBooking({ data, appointment, reload, setError, onDone, onCancel }) 
   );
 }
 
-function BookingSheet({ data, appointment, reload, setError, onClose, onVisit }) {
+function BookingSheet({ data, appointment, reload, setError, onClose: closeNow, onVisit }) {
+  const [leaving, onClose] = useSheetExit(closeNow);
   useTelegramBack(onClose);
+  useScrollLock();
   const dialogRef = useDialogFocus();
   const isOwner = data.appRole === 'owner';
   const canMove = ['owner', 'admin', 'partner'].includes(data.appRole);
@@ -2344,7 +2394,7 @@ function BookingSheet({ data, appointment, reload, setError, onClose, onVisit })
   }, [onClose]);
 
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop sheet-backdrop${leaving ? ' is-leaving' : ''}`} onClick={onClose}>
       <div aria-label="Запись" aria-modal="true" className="card master-sheet booking-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
@@ -2433,7 +2483,8 @@ function ServicesPicker({ services, value, onChange }) {
   );
 }
 
-function NewBookingSheet({ data, draft, reload, setError, onClose }) {
+function NewBookingSheet({ data, draft, reload, setError, onClose: closeNow }) {
+  const [leaving, onClose] = useSheetExit(closeNow);
   const [masterId, setMasterId] = useState(draft.masterId);
   const [serviceIds, setServiceIds] = useState([]);
   const [times, setTimes] = useState(null);
@@ -2459,15 +2510,11 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
   useTelegramBack(leave);
   const dialogRef = useDialogFocus();
 
+  useScrollLock();
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') leave(); };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKey);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKey);
-    };
+    return () => window.removeEventListener('keydown', onKey);
   });
 
   useEffect(() => {
@@ -2513,7 +2560,7 @@ function NewBookingSheet({ data, draft, reload, setError, onClose }) {
   }
 
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={leave}>
+    <div className={`modal-backdrop sheet-backdrop${leaving ? ' is-leaving' : ''}`} onClick={leave}>
       <div aria-label="Новая запись" aria-modal="true" className="card master-sheet booking-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
@@ -3340,7 +3387,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         <div className="hero">{money(pay)} <small>сум заработано</small></div>
         {/* A visit waiting for the owner counts nowhere yet, so the figure
             did not move after «Добавить» (owner's review of 2026-10-26). */}
-        {pendingPay ? <p className="pending-pay">Ещё {money(pendingPay)} сум ждёт подтверждения</p> : null}
+        {pendingPay ? <p className="pending-pay">{`Ещё ${money(pendingPay)} сум ждёт подтверждения`}</p> : null}
         <div className="tiles">
           {/* The rate is already in the header next to the master's name, and it
               does not change from one period to the next. A tile for it took the
@@ -5562,7 +5609,7 @@ function MyWeek({ data, master }) {
         {row.paid > 0 && row.due === 0 ? <span className="date-badge is-positive">выплачено</span> : null}
       </div>
       <PayoutLines row={row} dueLabel="К выплате в воскресенье" />
-      {weekPending ? <p className="pending-pay">Ещё {money(weekPending)} сум ждёт подтверждения</p> : null}
+      {weekPending ? <p className="pending-pay">{`Ещё ${money(weekPending)} сум ждёт подтверждения`}</p> : null}
     </div>
   );
 }
@@ -5622,7 +5669,7 @@ function DutyWindows({ windows, now, zones = [] }) {
         return (
           <li className={`duty-window is-${status}`} key={window.starts_at}>
             <strong>{dutyWindowLabel(window)}</strong>
-            <span>{status === 'open' && owed ? `сейчас · ${done} из ${owed}` : DUTY_STATUS_TEXT[status]}</span>
+            <span>{status === 'open' && owed ? `сейчас · зон ${done} из ${owed}` : DUTY_STATUS_TEXT[status]}</span>
           </li>
         );
       })}
@@ -5731,11 +5778,13 @@ function DutyTodayCard({ data, onOpen }) {
   const done = windowsDone(windows);
   const fined = windows.filter((window) => window.fined).length;
   const open = openWindow(windows, now);
+  // Windows here, zones on the master's tile: «Фото 1 из 4» read as one photo
+  // of four (audit of 2026-11-01, №19).
   const line = !today
     ? 'Дежурный не назначен'
     : fined
-      ? `Фото ${done} из ${windows.length} · штрафов ${fined}`
-      : `Фото ${done} из ${windows.length}`;
+      ? `Сдано окон: ${done} из ${windows.length} · штрафов ${fined}`
+      : `Сдано окон: ${done} из ${windows.length}`;
   const body = (
     <>
       <span className="duty-card-text">
@@ -5754,8 +5803,10 @@ function DutyTodayCard({ data, onOpen }) {
     : <div className="card wide duty-card">{body}</div>;
 }
 
-function DutySwapSheet({ duty, day, selfId, busy, onAsk, onClose }) {
+function DutySwapSheet({ duty, day, selfId, busy, onAsk, onClose: closeNow }) {
+  const [leaving, onClose] = useSheetExit(closeNow);
   useTelegramBack(onClose);
+  useScrollLock();
   const dialogRef = useDialogFocus();
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
@@ -5764,7 +5815,7 @@ function DutySwapSheet({ duty, day, selfId, busy, onAsk, onClose }) {
   }, [onClose]);
   const candidates = swapCandidates(duty, day, selfId);
   return (
-    <div className="modal-backdrop sheet-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop sheet-backdrop${leaving ? ' is-leaving' : ''}`} onClick={onClose}>
       <div aria-label="Кто подменит" aria-modal="true" className="card master-sheet duty-sheet" ref={dialogRef} role="dialog" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
         <div className="master-sheet-head">
           <div>
@@ -5948,7 +5999,10 @@ function MyDuty({ data, reload, setError }) {
                               <DutyPhotoButton
                                 busy={preparingZone === zone.id}
                                 disabled={busy || Boolean(preparingZone)}
-                                ghost={shots.length > 0 || Boolean(refused)}
+                                // A refused zone is the one a fine waits on: its «Переснять» is
+                                // the strong button, only «Ещё фото» is pale (audit of
+                                // 2026-11-01, №40).
+                                ghost={shots.length > 0}
                                 label={shots.length ? 'Ещё фото' : refused ? 'Переснять' : 'Сфотографировать'}
                                 onPick={(file) => addShot(zone, file)}
                               />
@@ -6054,9 +6108,20 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
   const zoneName = (id) => zones.find((zone) => zone.id === id)?.name_ru || '';
   const windows = result.windows || [];
   if (!windows.length && !attempts.length) return <p className="hint">В этот день дежурного не было.</p>;
+  // Whose day it was, by name, and whose each fine is (audit of 2026-11-01,
+  // №20): on Sunday the roster above already shows the next week.
+  const nameOf = (id) => result.names?.[id] || '';
+  const holderId = windows[0]?.master_id ?? attempts[0]?.master_id;
+  const swapped = result.swap && String(result.swap.to_master_id) === String(holderId) ? result.swap : null;
 
   return (
     <>
+      {holderId != null && nameOf(holderId) ? (
+        <p className="duty-day-holder">
+          {`${day === TODAY ? 'Дежурит' : 'Дежурил'}: ${nameOf(holderId)}`}
+          {swapped ? <span>{`подмена за ${nameOf(swapped.from_master_id)}`}</span> : null}
+        </p>
+      ) : null}
       <div className="duty-day-windows">
         {windows.map((window) => {
           const inWindow = attempts.filter((attempt) => sameMoment(attempt.window_starts_at, window.starts_at));
@@ -6070,11 +6135,23 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
           const complete = owed.length > 0 && owed.every((zone) => counted(zone));
           // Not over yet: nothing is missing.
           const status = windowStatus({ ...window, photo_at: complete ? window.ends_at : null, fined: Boolean(fine) }, now);
+          // A window to come is one line, not five empty tiles that pushed
+          // «Подмены» far down (audit of 2026-11-01, №41).
+          if (status === 'later' && !inWindow.length) {
+            return (
+              <div className="duty-day-window is-later" key={window.starts_at}>
+                <div className="duty-day-window-head">
+                  <strong>{dutyWindowLabel(window)}</strong>
+                  <span>{DUTY_STATUS_TEXT.later}</span>
+                </div>
+              </div>
+            );
+          }
           return (
             <div className={`duty-day-window is-${status}`} key={window.starts_at}>
               <div className="duty-day-window-head">
                 <strong>{dutyWindowLabel(window)}</strong>
-                <span>{fine ? `штраф ${money(fine.amount)}` : DUTY_STATUS_TEXT[status]}</span>
+                <span>{fine ? `штраф ${money(fine.amount)}${nameOf(fine.master_id) ? ` · ${nameOf(fine.master_id)}` : ''}` : DUTY_STATUS_TEXT[status]}</span>
               </div>
               <div className="duty-photos">
                 {owed.map((zone) => {
@@ -6118,6 +6195,7 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
 // refused sending, why.
 function DutyPhotoViewer({ attempt, zoneName = '', onClose }) {
   useTelegramBack(onClose);
+  useScrollLock();
   return (
     <div className="modal-backdrop duty-viewer" onClick={onClose} role="dialog" aria-modal="true" aria-label="Фото дежурного">
       <div className="duty-viewer-strip">
@@ -7114,9 +7192,41 @@ export default function App() {
   const fullLoadedRef = useRef(false);
   const [, setToday] = useState(TODAY);
 
+  // The boot splash keeps turning until there is something to show.
+  useEffect(() => {
+    if (!isLoading || accessDenied || loginRequired) dismissBootSplash();
+  }, [isLoading, accessDenied, loginRequired]);
+
   useEffect(() => {
     applyLanguage(lang);
   }, [lang]);
+
+  // The screen at its tallest, for the glass photo behind everything: it
+  // grows when Telegram opens the app full, never shrinks for the keyboard,
+  // and starts over when the phone turns (audit of 2026-11-01, №22).
+  useEffect(() => {
+    const root = document.documentElement;
+    let width = window.innerWidth;
+    let tallest = 0;
+    // A page drawn in the background can measure 0: the photo then keeps its
+    // full-screen height until there is a real one.
+    const grow = () => {
+      if (window.innerHeight > tallest) {
+        tallest = window.innerHeight;
+        root.style.setProperty('--app-h', `${tallest}px`);
+      }
+    };
+    grow();
+    const onResize = () => {
+      if (window.innerWidth !== width) {
+        width = window.innerWidth;
+        tallest = 0;
+      }
+      grow();
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   function toggleLanguage() {
     const next = lang === 'uz' ? 'ru' : 'uz';

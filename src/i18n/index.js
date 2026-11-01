@@ -130,7 +130,14 @@ export function translate(text, lang) {
   const core = text.trim().replace(/\s+/g, ' ');
   if (!core) return text;
   const done = translateCore(core);
-  return done == null ? text : `${lead}${done}${trail}`;
+  return done == null ? text : `${lead}${keepNumbersWhole(done)}${trail}`;
+}
+
+// The matching above reads a no-break space as a plain one, and «avval
+// 345 000» came out able to break as «avval 345» / «000» (audit of
+// 2026-11-01, №3): the groups of a number are bound again.
+function keepNumbersWhole(text) {
+  return text.replace(/(\d) (?=\d{3}(?!\d))/g, '$1 ');
 }
 
 // ---------------------------------------------------------------- the screen

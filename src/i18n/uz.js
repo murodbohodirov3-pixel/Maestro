@@ -10,7 +10,7 @@
 
 export const PHRASES = {
   // Navigation and headings
-  'Главная': 'Bosh sahifa',
+  'Главная': 'Asosiy',
   'Продажи': 'Sotuvlar',
   'Расходы': 'Xarajatlar',
   'Склад': 'Ombor',
@@ -644,7 +644,7 @@ export const PHRASES = {
   'фото есть': 'rasm bor',
   'сейчас': 'hozir',
   'нет фото': 'rasm yoʻq',
-  'ждём фото': 'rasm kutilmoqda',
+  'ждём фото': 'kutilmoqda',
   'позже': 'keyinroq',
   'штраф': 'jarima',
   'Принять': 'Qabul qilish',
@@ -839,9 +839,15 @@ export const TEMPLATES = {
   '{0} · вход через Telegram': '{0} · Telegram orqali kirish',
   '{0} на {1} сум': '{0} — {1} soʻm',
   'Сравнение {0}': 'Solishtirish {0}',
+  // «Сравнение к 01.10» read «Solishtirish 01.10 bilan solishtirganda».
+  'Сравнение к {0}': '{0} bilan solishtirish',
   // Дежурство (2026-10-26).
-  'Фото {0} из {1}': '{1} tadan {0} ta rasm',
-  'Фото {0} из {1} · штрафов {2}': '{1} tadan {0} ta rasm · {2} ta jarima',
+  'Сдано окон: {0} из {1}': 'Topshirilgan oynalar: {0}/{1}',
+  'Дежурит: {0}': 'Navbatchi: {0}',
+  'Дежурил: {0}': 'Navbatchi edi: {0}',
+  'подмена за {0}': '{0} oʻrniga',
+  'штраф {0} · {1}': 'jarima {0} · {1}',
+  'Сдано окон: {0} из {1} · штрафов {2}': 'Topshirilgan oynalar: {0}/{1} · {2} ta jarima',
   'Ждём фото до {0}': '{0} gacha rasm kutilmoqda',
   '{0} просит подменить его на дежурстве': '{0} navbatchilikda oʻrniga chiqishingizni soʻrayapti',
   'Просьба отправлена: {0}.': 'Soʻrov yuborildi: {0}.',
@@ -862,7 +868,7 @@ export const TEMPLATES = {
   'Не принято · {0} · {1}: {2}': 'Qabul qilinmadi · {0} · {1}: {2}',
   'Переснято · {0} · {1}: {2}': 'Qayta suratga olindi · {0} · {1}: {2}',
   'Фото за {0}': '{0} uchun rasmlar',
-  'сейчас · {0} из {1}': 'hozir · {1} tadan {0}',
+  'сейчас · зон {0} из {1}': 'hozir · {0}/{1} zona',
   '{0} · отправлено в {1}': '{0} · {1} da yuborilgan',
 };
 
@@ -941,4 +947,7 @@ export const WORDS = [
   ['июлю', 'iyulga'], ['августу', 'avgustga'], ['сентябрю', 'sentabrga'], ['октябрю', 'oktabrga'], ['ноябрю', 'noyabrga'], ['декабрю', 'dekabrga'],
   ['янв', 'yan'], ['фев', 'fev'], ['мар', 'mar'], ['апр', 'apr'], ['июн', 'iyun'], ['июл', 'iyul'], ['авг', 'avg'], ['сен', 'sen'],
   ['окт', 'okt'], ['ноя', 'noy'], ['дек', 'dek'], ['сент', 'sen'],
+  // A week's schedule in one line, «Пн–Вс 10:00–23:00» (audit of 2026-11-01, №44).
+  ['Пн', 'Du'], ['Вт', 'Se'], ['Ср', 'Cho'], ['Чт', 'Pa'], ['Пт', 'Ju'], ['Сб', 'Sha'], ['Вс', 'Ya'],
+  ['выходной', 'dam olish'],
 ];

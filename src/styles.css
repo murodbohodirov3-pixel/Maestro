@@ -1,8 +1,68 @@
+/* The app's own fonts, Onest and Unbounded (SIL Open Font License, from
+   Google Fonts), variable, in the three alphabets the screens use: Russian,
+   Uzbek Latin and English (audit of 2026-11-01, №23). */
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/onest-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/onest-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Onest";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/onest-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url("/fonts/unbounded-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url("/fonts/unbounded-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url("/fonts/unbounded-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* «Банк»: the owner's chosen look — a light ground, deep navy for the figures
    that matter, blue for what is active, green and red only for direction.
    `--brass` keeps its old name because every component already reads it; it
    is now the primary navy. */
 :root {
+  /* Bars and strips follow a switch quickly and settle softly: they took
+     0,35–0,6 s on every tap (audit of 2026-11-01, №53). */
+  --bar-ease: cubic-bezier(0.23, 1, 0.32, 1);
   --font-sans: "Onest", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Unbounded", "Onest", -apple-system, BlinkMacSystemFont, sans-serif;
   --text-xs: 11px;
@@ -351,6 +411,15 @@ small {
 .tabbar button.on {
   background: var(--accent);
   color: #FFFFFF;
+}
+
+/* One line under each icon: «Bosh sahifa» on two made the bar taller and the
+   notice above it overlap it (audit of 2026-11-01, №43). */
+.tabbar button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tabbar-badge {
@@ -1305,7 +1374,7 @@ small {
 }
 
 .chart-bar rect {
-  transition: height 0.25s ease, opacity 0.25s ease, y 0.25s ease;
+  transition: height 0.22s var(--bar-ease), opacity 0.22s var(--bar-ease), y 0.22s var(--bar-ease);
 }
 
 .chart-bar:focus .chart-bar-current {
@@ -1685,7 +1754,7 @@ td:first-child {
   min-width: 0;
   flex-grow: 0;
   flex-shrink: 0;
-  transition: flex-basis 0.4s ease;
+  transition: flex-basis 0.24s var(--bar-ease);
 }
 
 .payment-breakdown-cash {
@@ -2593,7 +2662,7 @@ td:first-child {
   height: 100%;
   border-radius: inherit;
   background: var(--brass);
-  transition: width 0.5s ease;
+  transition: width 0.24s var(--bar-ease);
 }
 
 /* Signals — what changed enough to act on. */
@@ -2717,7 +2786,7 @@ td:first-child {
 .master-rank-name strong,
 .master-rank-name small {
   display: block;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .master-rank-name strong {
@@ -2795,7 +2864,7 @@ td:first-child {
   left: 0;
   min-height: 2px;
   border-radius: 6px 6px 3px 3px;
-  transition: height 0.35s ease;
+  transition: height 0.24s var(--bar-ease);
 }
 
 .trend-fill {
@@ -2856,10 +2925,42 @@ td:first-child {
   font-size: 12px;
 }
 
-/* Master card — a sheet over the current screen. */
+/* Master card — a sheet over the current screen. The shade comes in over a
+   fifth of a second, and the sheet rises whole from the bottom edge and goes
+   back the same way (audit of 2026-11-01, №51: the shade flashed on in one
+   frame, the sheet rose 24 px and vanished at once). */
 .sheet-backdrop {
   align-items: end;
   padding: 0;
+  animation: sheet-shade-in 0.2s ease-out;
+}
+
+.sheet-backdrop.is-leaving {
+  animation: sheet-shade-out 0.2s ease-in forwards;
+}
+
+.sheet-backdrop.is-leaving .master-sheet {
+  animation: sheet-fall 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes sheet-shade-in {
+  from { background-color: transparent; }
+}
+
+@keyframes sheet-shade-out {
+  to { background-color: transparent; }
+}
+
+@keyframes sheet-fall {
+  to { transform: translateY(100%); }
+}
+
+/* The card inside the master's sheet does not play the screen's entrance
+   again under the rising sheet (audit of 2026-11-01, №50). */
+.app .sheet-backdrop .master-sheet .revenue-hero,
+.app.is-glass .sheet-backdrop .master-sheet .revenue-hero-bar-column i,
+.app.is-glass .sheet-backdrop .master-sheet .revenue-hero::before {
+  animation: none;
 }
 
 .master-sheet {
@@ -2871,12 +2972,21 @@ td:first-child {
   border-bottom-right-radius: 0;
   border-bottom-left-radius: 0;
   padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
-  animation: sheet-rise 0.24s ease-out;
+  animation: sheet-rise 0.32s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @keyframes sheet-rise {
-  from { transform: translateY(24px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop,
+  .sheet-backdrop.is-leaving,
+  .master-sheet,
+  .sheet-backdrop.is-leaving .master-sheet {
+    animation: none;
+  }
 }
 
 .master-sheet-head {
@@ -3012,7 +3122,7 @@ td:first-child {
   inset: 0 auto 0 0;
   border-radius: inherit;
   background: var(--brass);
-  transition: width 0.5s ease;
+  transition: width 0.24s var(--bar-ease);
 }
 
 .goal-marker {
@@ -3560,6 +3670,17 @@ label {
   color: #FFFFFF;
 }
 
+/* The bars' unit, once (audit of 2026-11-01, №47). */
+.revenue-hero-bars-unit {
+  display: block;
+  margin-bottom: -4px;
+  text-align: right;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
 .revenue-hero-bars {
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
@@ -3693,7 +3814,7 @@ label {
   inset: 0 auto 0 0;
   border-radius: inherit;
   background: #FFFFFF;
-  transition: width 0.6s ease;
+  transition: width 0.24s var(--bar-ease);
 }
 
 .revenue-hero-goal-marker {
@@ -3827,12 +3948,17 @@ label {
 
 .master-rank-name strong {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   font-size: 15px;
 }
 
+/* The name breaks between words only, and the tag never: «Зиёдулл / а» and
+   «ЛИДЕ / Р» on a narrow phone (audit of 2026-11-01, №25). */
 .leader-tag {
+  flex: none;
+  white-space: nowrap;
   padding: 2px 6px;
   border: 1px solid var(--hero);
   border-radius: 6px;
@@ -3859,7 +3985,7 @@ label {
   height: 4px;
   border-radius: 2px;
   background: #9DB2DD;
-  transition: width 0.6s ease;
+  transition: width 0.24s var(--bar-ease);
 }
 
 .master-rank-bar i.is-leader {
@@ -4159,7 +4285,7 @@ label {
   height: 100%;
   border-radius: inherit;
   background: #FFFFFF;
-  transition: width 0.6s ease;
+  transition: width 0.24s var(--bar-ease);
 }
 
 .investor-list {
@@ -6147,6 +6273,7 @@ a:focus-visible {
 .duty-window span {
   color: var(--muted);
   font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .duty-window.is-done {
@@ -6381,13 +6508,38 @@ a:focus-visible {
   object-fit: cover;
 }
 
+.duty-day-holder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.duty-day-holder span {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--brass-soft);
+  color: var(--brass);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:where(.is-evening .app.is-glass) .duty-day-holder span {
+  color: var(--blue-ink);
+}
+
 .duty-photo-empty {
   display: grid;
   aspect-ratio: 3 / 4;
   place-items: center;
+  padding: 4px;
   border: 1px dashed var(--line);
   border-radius: var(--radius-control);
   color: var(--muted);
+  text-align: center;
+  overflow-wrap: break-word;
 }
 
 .duty-photo-empty.is-open {
@@ -6661,8 +6813,8 @@ a:focus-visible {
    The photo is blurred in the file, so the panels need no live blur: only
    the bottom bar, which floats over moving content, blurs what is under it. */
 .app.is-glass {
-  --muted: #44526A;
-  --glass: rgba(255, 255, 255, 0.6);
+  --muted: #35425A;
+  --glass: rgba(255, 255, 255, 0.7);
   --glass-line: rgba(255, 255, 255, 0.72);
   --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 10px 30px rgba(56, 38, 20, 0.12);
   --glass-ease: cubic-bezier(0.23, 1, 0.32, 1);
@@ -6674,7 +6826,10 @@ a:focus-visible {
   content: "";
   position: fixed;
   z-index: -1;
-  inset: 0;
+  /* As tall as the screen at its tallest (--app-h, App), so the keyboard
+     coming up does not rescale the photo (audit of 2026-11-01, №22). */
+  inset: 0 0 auto 0;
+  height: var(--app-h, 100vh);
   background:
     linear-gradient(180deg, rgba(236, 232, 226, 0.45), rgba(236, 232, 226, 0) 28%),
     url("/glass-bg.jpg") center / cover no-repeat,
@@ -6866,11 +7021,13 @@ body {
   }
 }
 
-/* The label turns white as the pill arrives under it, not before. */
+/* The label turns white as the pill arrives under it, not before. The
+   press keeps its soft give (it used to be lost here, audit of 2026-11-01,
+   №52). */
 .app.is-glass .tabbar button {
   z-index: 1;
   color: #3B475C;
-  transition: color 0.2s var(--glass-ease) 0.06s;
+  transition: color 0.2s var(--glass-ease) 0.06s, transform 0.12s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .app.is-glass .tabbar button.on {
@@ -7024,7 +7181,7 @@ body {
    it is a layer over «Стекло», on while <html> has `is-evening`. */
 .is-evening .app.is-glass {
   --ink: #F5F3F0;
-  --muted: rgba(240, 236, 230, 0.62);
+  --muted: rgba(240, 236, 230, 0.8);
   --line: rgba(255, 255, 255, 0.12);
   --line-soft: rgba(255, 255, 255, 0.08);
   --surface: rgba(58, 55, 62, 0.46);
@@ -7066,7 +7223,7 @@ body {
 .is-evening .login-gate {
   background:
     linear-gradient(180deg, rgba(40, 46, 60, 0.62) 0%, rgba(60, 50, 52, 0.2) 38%, rgba(40, 26, 18, 0.28) 60%, rgba(14, 10, 10, 0.78) 100%),
-    radial-gradient(140% 40% at 50% 50%, rgba(255, 170, 96, 0.62), rgba(255, 130, 70, 0.16) 55%, rgba(255, 130, 70, 0) 76%),
+    radial-gradient(140% 40% at 50% 50%, rgba(255, 170, 96, 0.42), rgba(255, 130, 70, 0.12) 55%, rgba(255, 130, 70, 0) 76%),
     url("/glass-bg.jpg") center / cover no-repeat,
     #241E1A;
 }
@@ -7142,11 +7299,12 @@ html.is-evening body {
   color: rgba(240, 236, 230, 0.45);
 }
 
-/* Buttons: blue for the act, glass for the rest. */
+/* Buttons: blue for the act, glass for the rest. A deeper blue than the
+   accent: white on #3D82F2 was 3,7:1. */
 .is-evening .app.is-glass .btn {
-  background: var(--brass);
+  background: #2F6FDB;
   color: #FFFFFF;
-  box-shadow: 0 6px 18px rgba(61, 130, 242, 0.3);
+  box-shadow: 0 6px 18px rgba(47, 111, 219, 0.32);
 }
 
 .is-evening .app.is-glass .btn.ghost {
@@ -7209,28 +7367,6 @@ html.is-evening body {
 .is-evening .app.is-glass .delta-chip.flat {
   background: rgba(255, 255, 255, 0.12);
 }
-
-/* Small figures: a coloured mark at the corner, as the reel's icon chips. */
-.is-evening .app.is-glass .overview-kpis .tile {
-  position: relative;
-}
-
-.is-evening .app.is-glass .overview-kpis .tile::after {
-  content: "";
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--kpi, #4C8DF6);
-  box-shadow: 0 0 10px var(--kpi, #4C8DF6);
-}
-
-.is-evening .app.is-glass .overview-kpis .tile:nth-child(4n+1) { --kpi: #5FD49A; }
-.is-evening .app.is-glass .overview-kpis .tile:nth-child(4n+2) { --kpi: #4C8DF6; }
-.is-evening .app.is-glass .overview-kpis .tile:nth-child(4n+3) { --kpi: #E9A93A; }
-.is-evening .app.is-glass .overview-kpis .tile:nth-child(4n+4) { --kpi: #A78BFA; }
 
 .is-evening .app.is-glass .master-rank-bar,
 .is-evening .app.is-glass .trend-column {
@@ -7331,4 +7467,128 @@ html.is-evening body {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(30, 27, 33, 0.88);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 -12px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* Coloured text over the dark glass (audit of 2026-11-01, №15): the fills'
+   blue and red were the text's too, at 1,6–3:1. Text takes lighter inks of
+   its own; `:where` keeps each rule as light as the one it replaces, so a
+   state with its own colour (a white figure on a blue disc) keeps it. */
+.is-evening .app.is-glass {
+  --blue-ink: #8DB8FF;
+  --red-ink: #FFB3B3;
+}
+
+:where(.is-evening .app.is-glass) .back-button,
+:where(.is-evening .app.is-glass) .offset-history .section-title strong,
+:where(.is-evening .app.is-glass) .approval.pending,
+:where(.is-evening .app.is-glass) .day-off-button.active,
+:where(.is-evening .app.is-glass) .payout-total span,
+:where(.is-evening .app.is-glass) .split-toggle,
+:where(.is-evening .app.is-glass) .master-sort span,
+:where(.is-evening .app.is-glass) .master-top-mark,
+:where(.is-evening .app.is-glass) .debt-eyebrow,
+:where(.is-evening .app.is-glass) .debt-summary-card > strong,
+:where(.is-evening .app.is-glass) .debt-status,
+:where(.is-evening .app.is-glass) .debt-person-balance strong,
+:where(.is-evening .app.is-glass) .master-rank-number,
+:where(.is-evening .app.is-glass) .goal-heading > strong,
+:where(.is-evening .app.is-glass) .goal-set,
+:where(.is-evening .app.is-glass) .goal-edit,
+:where(.is-evening .app.is-glass) .link-button,
+:where(.is-evening .app.is-glass) .fine-open,
+:where(.is-evening .app.is-glass) .master-period-change.is-new,
+:where(.is-evening .app.is-glass) .picker-list .picker-new,
+:where(.is-evening .app.is-glass) .review-rating-value,
+:where(.is-evening .app.is-glass) .service-chip,
+:where(.is-evening .app.is-glass) .duty-window.is-open span,
+:where(.is-evening .app.is-glass) .duty-day.is-today .duty-day-name,
+:where(.is-evening .app.is-glass) .duty-photo-empty.is-open {
+  color: var(--blue-ink);
+}
+
+:where(.is-evening .app.is-glass) .overview-hero.is-negative .overview-hero-value,
+:where(.is-evening .app.is-glass) .overview-hero-delta.negative,
+:where(.is-evening .app.is-glass) .error,
+:where(.is-evening .app.is-glass) .approval.rejected,
+:where(.is-evening .app.is-glass) .attendance-row.missing .attendance-status,
+:where(.is-evening .app.is-glass) .fine-button,
+:where(.is-evening .app.is-glass) .danger,
+:where(.is-evening .app.is-glass) .del,
+:where(.is-evening .app.is-glass) .debt-delete-payment,
+:where(.is-evening .app.is-glass) .rejected-alert-head strong,
+:where(.is-evening .app.is-glass) .row.sale-rejected .sale-amount,
+:where(.is-evening .app.is-glass) .attendance-total-counts .missing,
+:where(.is-evening .app.is-glass) .tile em.negative,
+:where(.is-evening .app.is-glass) .master-period-change.negative,
+:where(.is-evening .app.is-glass) .notice.error,
+:where(.is-evening .app.is-glass) .signal.bad .signal-icon,
+:where(.is-evening .app.is-glass) .fines-total,
+:where(.is-evening .app.is-glass) .schedule-next-actions .btn.schedule-cancel,
+:where(.is-evening .app.is-glass) .review-scores .is-low,
+:where(.is-evening .app.is-glass) .row .review-scores .is-low,
+:where(.is-evening .app.is-glass) .client-missed strong,
+:where(.is-evening .app.is-glass) .client-missed span,
+:where(.is-evening .app.is-glass) .payout-lines b.danger,
+:where(.is-evening .app.is-glass) .payout-due.is-negative strong,
+:where(.is-evening .app.is-glass) .unclosed-card > strong,
+:where(.is-evening .app.is-glass) .unclosed-chips b,
+:where(.is-evening .app.is-glass) .btn.ghost.danger-ghost,
+:where(.is-evening .app.is-glass) .unclosed-chip b,
+:where(.is-evening .app.is-glass) .duty-card-text span.is-negative {
+  color: var(--red-ink);
+}
+
+:where(.is-evening .app.is-glass) .schedule-next span,
+:where(.is-evening .app.is-glass) .stock-row.is-low .stock-qty strong {
+  color: var(--pending-ink);
+}
+
+.is-evening .app-notice.is-error {
+  background: #C93A3A;
+}
+
+.is-evening .app.is-glass .tabbar-badge {
+  color: #1C1408;
+}
+
+/* What lies on the photo itself, outside any card: the dates a period
+   covers, «Сравнение к 01.10», «Назад» (audit of 2026-11-01, №16). A pill of
+   glass under each, as the header has. */
+.app.is-glass .period-range,
+.app.is-glass .overview-compare-note,
+.app.is-glass .back-button {
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  color: #1F2A3C;
+}
+
+.app.is-glass .back-button {
+  min-height: 32px;
+  padding: 4px 12px;
+}
+
+.is-evening .app.is-glass .period-range,
+.is-evening .app.is-glass .overview-compare-note,
+.is-evening .app.is-glass .back-button {
+  background: rgba(24, 22, 28, 0.58);
+  color: var(--ink);
+}
+
+/* On a phone, while a field is typed in the keyboard is up and the floating
+   bar covered the field (audit of 2026-11-01, №22): it steps aside until the
+   field is left. */
+@media (hover: none) and (pointer: coarse) {
+  .tabbar {
+    transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.15s ease-out;
+  }
+
+  .app:has(:is(input:not([type=file]):not([type=checkbox]):not([type=radio]), select, textarea):focus) .tabbar {
+    transform: translateY(calc(100% + 24px));
+    opacity: 0;
+    pointer-events: none;
+  }
 }

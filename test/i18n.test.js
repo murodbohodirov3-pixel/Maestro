@@ -19,7 +19,7 @@ test('buttons and headings are whole phrases', () => {
 test('a text with numbers and names is translated around them', () => {
   assert.equal(
     uz('Приход отмечен. Опоздание 15 мин — штраф 100 000 сум.'),
-    'Kelish belgilandi. Kechikish 15 daq. — jarima 100 000 soʻm.',
+    'Kelish belgilandi. Kechikish 15 daq. — jarima 100 000 soʻm.',
   );
   assert.equal(uz('Этот номер уже есть: Азиз Каримов. Выбран он.'), 'Bu raqam allaqachon bor: Азиз Каримов. U tanlandi.');
   assert.equal(uz('Смена с 14:00, опоздание — после 14:10.'), 'Smena 14:00 dan, kechikish — 14:10 dan keyin.');
@@ -62,4 +62,13 @@ test('a template never half-translates data, a joined text is translated piece b
   assert.equal(uz('12.10.2026: пришёл вовремя'), '12.10.2026: oʻz vaqtida keldi');
   assert.equal(uz('Наличные · новый'), 'Naqd · yangi');
   assert.equal(uz('15.10.2026: не отметился — поставьте время или выходной'), '15.10.2026: belgi qoʻymadi — vaqt yoki dam olish qoʻying');
+});
+
+test('a number keeps its groups together in Uzbek, and the audit phrases are whole Uzbek', () => {
+  // «avval 345» on one line and «000» on the next (audit of 2026-11-01, №3).
+  assert.equal(uz('+333% · было 345 000'), '+333% · avval 345 000');
+  assert.equal(uz('Ещё 60 000 сум ждёт подтверждения'), 'Yana 60 000 soʻm tasdiqlanishini kutmoqda');
+  assert.equal(uz('Пн–Сб 14:00–22:00 · Вс выходной'), 'Du–Sha 14:00–22:00 · Ya dam olish');
+  assert.equal(uz('Сравнение к 01.10'), '01.10 bilan solishtirish');
+  assert.equal(uz('Главная'), 'Asosiy');
 });

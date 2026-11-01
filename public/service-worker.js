@@ -2,7 +2,9 @@
 // under any other name. v10: the boot splash moved into index.html, so the
 // cached '/' entry served to offline clients still had the old loader.
 // v11: the icons are the new round logo under new names (2026-10-28).
-const CACHE_NAME = 'maestro-pwa-v11';
+// v12: the fonts are the app's own files and the Telegram script is deferred
+// (2026-11-01).
+const CACHE_NAME = 'maestro-pwa-v12';
 const APP_SHELL = ['/', '/manifest.json', '/icons/maestro-192.png', '/icons/maestro-512.png'];
 
 self.addEventListener('install', (event) => {
