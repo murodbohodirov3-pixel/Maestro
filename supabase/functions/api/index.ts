@@ -10,11 +10,14 @@ import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest,
 import {
   ADMIN_ROLE,
   adminMayCall,
+  errorCodeFor,
   expenseForPartner,
   maskPhoneForStaff,
   partnerMayCall,
   PARTNER_ROLE,
+  receiptForPartner,
   seesFullPhones,
+  settingsForMaster,
   stockForDesk,
 } from '../_shared/access.js';
 
@@ -65,6 +68,25 @@ function json(obj: unknown, status = 200) {
     status,
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
+}
+
+// The id the app gives a money record (audit of 2026-11-01, №8): the same
+// record sent again after a lost reply clashes on it and is absorbed.
+function requestIdOf(payload: Record<string, unknown>) {
+  const id = String(payload?.client_request_id ?? '');
+  return UUID_PATTERN.test(id) ? id : null;
+}
+
+function isResend(error: { code?: string; message?: string } | null) {
+  return error?.code === '23505' && String(error.message).includes('client_request_id');
+}
+
+// A database error as the app may see it: our own codes pass, anything else
+// is logged here and answered as `server_error` (audit of 2026-11-01, №32).
+function dbError(error: { message?: string } | null | undefined, status = 500) {
+  const code = errorCodeFor(error);
+  if (code === 'server_error') console.error('[maestro-api] database error', error?.message ?? String(error));
+  return json({ error: code }, status);
 }
 
 async function fetchAllRows(
@@ -554,7 +576,7 @@ Deno.serve(async (req) => {
         .select('id, role, master_id, active, lang')
         .eq('telegram_id', user.id)
         .maybeSingle();
-      if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
+      if (appUserResult.error) return dbError(appUserResult.error);
       if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
 
       issuedSessionToken = newSessionToken();
@@ -616,21 +638,21 @@ Deno.serve(async (req) => {
         });
       }
     }
-    if (appUserResult.error) return json({ error: appUserResult.error.message }, 500);
+    if (appUserResult.error) return dbError(appUserResult.error);
     if (!appUserResult.data || !appUserResult.data.active) return json({ error: 'not_in_list' }, 403);
     monitoredRole = String(appUserResult.data.role || 'unknown');
 
     console.log('[maestro-api] authorized action', { action, role: appUserResult.data.role });
 
-    // isAdmin is the read gate for the salon's figures: the owner and a
-    // bookkeeper. The role named 'admin' is the front-desk administrator and is
-    // deliberately not in it (see isFrontDesk below).
-    const isAdmin = ['owner', 'finance'].includes(appUserResult.data.role);
+    // isAdmin is the read gate for the salon's figures: the owner. The
+    // bookkeeper's role that shared it is gone (audit of 2026-11-01, №31). The
+    // role named 'admin' is the front-desk administrator and is deliberately
+    // not in it (see isFrontDesk below).
+    const isAdmin = appUserResult.data.role === 'owner';
     const canManageCalendar = appUserResult.data.role === 'owner';
     const canManageClients = appUserResult.data.role === 'owner';
     // Approving a master's sale and rewriting salon settings are owner
-    // decisions, and a bookkeeper should not inherit them just because he needs
-    // to see the numbers.
+    // decisions.
     const canApproveSales = appUserResult.data.role === 'owner';
     const canEditSettings = appUserResult.data.role === 'owner';
     // A partner reads and never writes; the administrator sells goods and
@@ -649,7 +671,7 @@ Deno.serve(async (req) => {
         .select('name, pct, active')
         .eq('id', appUserResult.data.master_id)
         .maybeSingle();
-      if (masterMatch.error) return json({ error: masterMatch.error.message }, 500);
+      if (masterMatch.error) return dbError(masterMatch.error);
       if (masterMatch.data?.active) {
         myMaster = masterMatch.data.name;
         myMasterId = Number(appUserResult.data.master_id);
@@ -674,7 +696,7 @@ Deno.serve(async (req) => {
       if (/^\d+$/.test(cursor)) query = query.lt('id', cursor);
 
       const { data: rows, error } = await query;
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       const events = (rows ?? []).slice(0, limit);
       const hasMore = (rows ?? []).length > limit;
       return json({
@@ -688,7 +710,7 @@ Deno.serve(async (req) => {
       const lang = String(payload.lang ?? '');
       if (!['ru', 'uz'].includes(lang)) return json({ error: 'invalid_language' }, 400);
       const { error } = await sb.from('app_users').update({ lang }).eq('id', appUserResult.data.id);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true, lang });
     }
 
@@ -722,7 +744,7 @@ Deno.serve(async (req) => {
         // Who is on duty today, as on everyone's screen.
         dutyState(null),
       ]);
-      if (deskMasters.error) return json({ error: deskMasters.error.message }, 500);
+      if (deskMasters.error) return dbError(deskMasters.error);
       return json({
         role: 'frontdesk',
         appRole: appUserResult.data.role,
@@ -800,7 +822,8 @@ Deno.serve(async (req) => {
           master_schedule_rules,
           clients,
           products,
-          product_receipts,
+          // What was paid for the goods stays the owner's, as the expenses' names do.
+          product_receipts: isPartner ? product_receipts.map(receiptForPartner) : product_receipts,
           product_sales,
           product_writeoffs,
           master_advances,
@@ -834,7 +857,7 @@ Deno.serve(async (req) => {
         lang: appUserResult.data.lang || 'ru',
         me: myMaster,
         masters: meOnly,
-        settings,
+        settings: settings.map(settingsForMaster),
         sales,
         fines,
         attendance,
@@ -870,7 +893,7 @@ Deno.serve(async (req) => {
         p_days: clean,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, 400);
       return json(result);
     }
@@ -887,7 +910,7 @@ Deno.serve(async (req) => {
         p_from_master_id: myMasterId,
         p_to_master_id: toMasterId,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, 409);
       inBackground(tellDutySwapRequest(result, toMasterId));
       return json(result);
@@ -901,7 +924,7 @@ Deno.serve(async (req) => {
         p_master_id: myMasterId,
         p_accept: payload.accept === true,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, 409);
       inBackground(tellDutySwapAnswer(result));
       return json(result);
@@ -911,7 +934,7 @@ Deno.serve(async (req) => {
       const swapId = Number(payload.id);
       if (!Number.isInteger(swapId)) return json({ error: 'invalid_duty_swap' }, 400);
       const { data: result, error } = await sb.rpc('maestro_cancel_duty_swap', { p_swap_id: swapId, p_master_id: myMasterId });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, 409);
       return json(result);
     }
@@ -945,7 +968,7 @@ Deno.serve(async (req) => {
       // Refused before anyone looks at it: no check is paid for a zone that
       // could not count anyway.
       const precheck = await sb.rpc('maestro_duty_photo_problem', { p_master_id: myMasterId, p_zone: zone, p_photos: described });
-      if (precheck.error) return json({ error: precheck.error.message }, 500);
+      if (precheck.error) return dbError(precheck.error);
       const problem = (precheck.data ?? [])[0]?.problem_code;
       if (problem) return json({ ok: false, error: problem }, ['duty_photo_done', 'duty_photo_repeat'].includes(problem) ? 409 : 400);
       // The write keeps this window, with three minutes' grace after its
@@ -953,7 +976,7 @@ Deno.serve(async (req) => {
       const windowStart = (precheck.data ?? [])[0]?.window_start ?? null;
 
       const zoneRow = await sb.from('duty_zones').select('name_ru, checklist_ru').eq('id', zone).maybeSingle();
-      if (zoneRow.error) return json({ error: zoneRow.error.message }, 500);
+      if (zoneRow.error) return dbError(zoneRow.error);
       const verdict = await checkDutyPhotos(photos.map((photo) => photo.image), zoneRow.data?.name_ru ?? zone, zoneRow.data?.checklist_ru ?? '');
       const accepted = !verdict.checked || Boolean(verdict.shows_zone && verdict.clean);
       const { data: result, error } = await sb.rpc('maestro_add_duty_attempt', {
@@ -966,7 +989,7 @@ Deno.serve(async (req) => {
         p_checked_by: verdict.checked ? verdict.model : 'unchecked',
         p_window_start: windowStart,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, ['duty_photo_done', 'duty_photo_repeat'].includes(result?.error) ? 409 : 400);
       // The rows first, so two taps cannot both count; the files after them,
       // and the attempt goes again if a file does not land. A refused zone is
@@ -992,17 +1015,17 @@ Deno.serve(async (req) => {
       const [windows, attempts, fines] = await Promise.all([
         sb.rpc('maestro_duty_windows', { p_day: day }),
         sb.from('duty_attempts')
-          .select('id, master_id, zone, status, reason_ru, reason_uz, window_starts_at, taken_at, duty_photos(id, storage_path)')
+          .select('id, master_id, zone, status, reason_ru, reason_uz, window_starts_at, taken_at, checked_by, duty_photos(id, storage_path)')
           .eq('day', day).order('taken_at'),
         sb.from('fines').select('id, master_id, amount, duty_window').eq('auto', 'duty').eq('d', day),
       ]);
       const failed = windows.error || attempts.error || fines.error;
-      if (failed) return json({ error: failed.message }, 500);
+      if (failed) return dbError(failed);
       type AttemptRow = Record<string, unknown> & { duty_photos: { id: number; storage_path: string }[] | null };
       const rows = (attempts.data ?? []) as AttemptRow[];
       const paths = rows.flatMap((attempt) => (attempt.duty_photos ?? []).map((photo) => photo.storage_path));
       const signed = paths.length ? await sb.storage.from('duty-photos').createSignedUrls(paths, 60 * 60) : { data: [], error: null };
-      if (signed.error) return json({ error: signed.error.message }, 500);
+      if (signed.error) return dbError(signed.error);
       const urlOf = new Map((signed.data ?? []).map((item: { path: string | null; signedUrl: string | null }) => [item.path, item.signedUrl]));
       return json({
         day,
@@ -1031,7 +1054,7 @@ Deno.serve(async (req) => {
       let masterId = myMasterId;
       if (isAdmin && payload.master) {
         const picked = await sb.from('masters').select('id').eq('name', String(payload.master)).maybeSingle();
-        if (picked.error) return json({ error: picked.error.message }, 500);
+        if (picked.error) return dbError(picked.error);
         masterId = picked.data ? Number(picked.data.id) : null;
       }
       if (!masterId) return json({ scans: [] });
@@ -1041,7 +1064,7 @@ Deno.serve(async (req) => {
         .eq('master_id', masterId)
         .is('used_at', null)
         .gte('scanned_at', since);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       const scans = await Promise.all(latestScanPerClient(data).map(async (row: { id: number; scanned_at: string; client: ClientRow }) => {
         const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: row.client.id });
         return {
@@ -1054,10 +1077,19 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'searchClients') {
-      const query = String(payload.query ?? '').trim().slice(0, 60);
+      let query = String(payload.query ?? '').trim().slice(0, 60);
       if (query.length < 2) return json({ clients: [] });
+      // Whoever sees numbers masked finds a client by the whole number only:
+      // a part of one let a master learn it digit by digit, watching whether
+      // the client stayed in the list (audit of 2026-11-01, №6).
+      if (!fullPhones && /^[0-9 +()-]+$/.test(query)) {
+        const digits = query.replace(/\D/g, '');
+        const whole = digits.length === 9 ? `998${digits}` : digits;
+        if (whole.length < 11) return json({ clients: [], whole_number: true });
+        query = whole;
+      }
       const { data, error } = await sb.rpc('maestro_search_clients', { p_query: query, p_limit: 10 });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ clients: (data ?? []).map((row: ClientRow) => clientForCaller(row, fullPhones)) });
     }
 
@@ -1078,7 +1110,7 @@ Deno.serve(async (req) => {
         p_known_before: payload.known_before === true,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) {
         if (data?.error === 'client_exists' && data.client_id) {
           // The number is already in the base: offer that card instead.
@@ -1094,7 +1126,7 @@ Deno.serve(async (req) => {
       }
       const created = await sb.from('clients').select(CLIENT_COLUMNS)
         .eq('id', data.client_id).maybeSingle();
-      if (created.error || !created.data) return json({ error: created.error?.message || 'client_not_found' }, 500);
+      if (created.error || !created.data) return created.error ? dbError(created.error) : json({ error: 'client_not_found' }, 500);
       return json({ ok: true, client: clientForCaller({ ...created.data, visit_count: 0 }, fullPhones) });
     }
 
@@ -1110,10 +1142,10 @@ Deno.serve(async (req) => {
         p_last_name: surname.last_name,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) return json(data ?? { error: 'invalid_client' }, data?.error === 'client_not_found' ? 404 : 400);
       const completed = await sb.from('clients').select(CLIENT_COLUMNS).eq('id', clientId).maybeSingle();
-      if (completed.error || !completed.data) return json({ error: completed.error?.message || 'client_not_found' }, 500);
+      if (completed.error || !completed.data) return completed.error ? dbError(completed.error) : json({ error: 'client_not_found' }, 500);
       const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
       return json({ ok: true, client: clientForCaller({ ...completed.data, visit_count: visits.data ?? 0 }, fullPhones) });
     }
@@ -1140,13 +1172,13 @@ Deno.serve(async (req) => {
       let duration = 0;
       if (movingId) {
         const moving = await sb.from('appointments').select('duration_minutes').eq('id', movingId).maybeSingle();
-        if (moving.error) return json({ error: moving.error.message }, 500);
+        if (moving.error) return dbError(moving.error);
         if (!moving.data) return json({ error: 'appointment_not_found' }, 404);
         duration = Number(moving.data.duration_minutes);
       } else {
         const { data: services, error: servicesError } = await sb.from('booking_services')
           .select('id, duration_minutes').in('id', serviceIds).eq('active', true);
-        if (servicesError) return json({ error: servicesError.message }, 500);
+        if (servicesError) return dbError(servicesError);
         if ((services ?? []).length !== serviceIds.length) return json({ error: 'service_not_found' }, 404);
         duration = (services ?? []).reduce((sum: number, service: { duration_minutes: number }) => sum + Number(service.duration_minutes), 0);
       }
@@ -1158,7 +1190,7 @@ Deno.serve(async (req) => {
         p_not_before: new Date().toISOString(),
         p_except_appointment: movingId,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ duration, times: (data ?? []).map((row: { slot_start: string }) => row.slot_start) });
     }
 
@@ -1169,7 +1201,7 @@ Deno.serve(async (req) => {
       // The client of a booking has a surname too (owner's decision of 2026-10-21).
       if (UUID_PATTERN.test(String(payload.client_id ?? ''))) {
         const booked = await sb.from('clients').select('last_name').eq('id', String(payload.client_id)).maybeSingle();
-        if (booked.error) return json({ error: booked.error.message }, 500);
+        if (booked.error) return dbError(booked.error);
         if (booked.data && !booked.data.last_name) return json({ error: 'client_surname_required' }, 409);
       }
       const { data, error } = await sb.rpc('maestro_book_appointment', {
@@ -1180,7 +1212,7 @@ Deno.serve(async (req) => {
         p_notes: payload.notes ? String(payload.notes).slice(0, 300) : null,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) return json(data ?? { error: 'invalid_booking' }, data?.error === 'slot_unavailable' ? 409 : 400);
       if (data.appointment_id) inBackground(tellMasterAboutBooking(String(data.appointment_id)));
       return json(data);
@@ -1201,7 +1233,7 @@ Deno.serve(async (req) => {
         p_starts_at: startsAt,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) {
         const code = data?.error;
         return json(data ?? { error: 'invalid_booking' }, code === 'appointment_not_found' ? 404 : ['slot_unavailable', 'appointment_closed'].includes(code) ? 409 : 400);
@@ -1234,7 +1266,7 @@ Deno.serve(async (req) => {
         p_phone: payload.phone ? String(payload.phone) : null,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) return json(data ?? { error: 'invalid_client' }, data?.error === 'client_exists' ? 409 : data?.error === 'client_not_found' ? 404 : 400);
       return json(data);
     }
@@ -1249,7 +1281,7 @@ Deno.serve(async (req) => {
         p_into: into,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) return json(data ?? { error: 'invalid_merge' }, data?.error === 'client_not_found' ? 404 : 400);
       return json(data);
     }
@@ -1269,8 +1301,8 @@ Deno.serve(async (req) => {
         .limit(300);
       if (!isOwnerCaller) query = query.eq('master_id', myMasterId!);
       const [rows, ratings] = await Promise.all([query, sb.rpc('maestro_master_ratings')]);
-      if (rows.error) return json({ error: rows.error.message }, 500);
-      if (ratings.error) return json({ error: ratings.error.message }, 500);
+      if (rows.error) return dbError(rows.error);
+      if (ratings.error) return dbError(ratings.error);
       const rejected = (sale: { status?: string | null; comment?: string | null }) =>
         String(sale.status ?? '').trim() === 'rejected' || sale.comment === 'owner_approval_rejected';
       const reviews = (rows.data ?? [])
@@ -1303,7 +1335,7 @@ Deno.serve(async (req) => {
         p_status: String(payload.status ?? ''),
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data?.ok) return json({ error: data?.error === 'not_found' ? 'review_not_found' : 'invalid_review_status' }, 400);
       return json(data);
     }
@@ -1313,7 +1345,7 @@ Deno.serve(async (req) => {
     if (action === 'siteStats') {
       if (!isAdmin && !isPartner) return json({ error: 'forbidden' }, 403);
       const { data, error } = await sb.rpc('maestro_site_stats', { p_days: 30 });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ days: data ?? [] });
     }
 
@@ -1322,7 +1354,7 @@ Deno.serve(async (req) => {
       const clientId = String(payload.client_id ?? '');
       if (!UUID_PATTERN.test(clientId)) return json({ error: 'invalid_client' }, 400);
       const { data, error } = await sb.rpc('maestro_client_card', { p_client_id: clientId });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!data) return json({ error: 'client_not_found' }, 404);
       return json(data);
     }
@@ -1333,7 +1365,10 @@ Deno.serve(async (req) => {
       const cash = Math.max(0, Math.round(Number(payload.cash) || 0));
       const card = Math.max(0, Math.round(Number(payload.card) || 0));
       const qr = Math.max(0, Math.round(Number(payload.qr) || 0));
-      const d = String(payload.d ?? '');
+      // A master records the client who is in his chair: the day is the
+      // server's, never an app's left open since yesterday (audit of
+      // 2026-11-01, №7). The owner may enter another day.
+      const d = isAdmin ? String(payload.d ?? '') : tashkentDate();
       if (!master || !isValidIsoDate(d) || cash + card + qr <= 0) {
         return json({ error: 'invalid_sale' }, 400);
       }
@@ -1349,7 +1384,7 @@ Deno.serve(async (req) => {
       const masterRecord = isAdmin
         ? await sb.from('masters').select('id, pct, active').eq('name', master).maybeSingle()
         : { data: { id: myMasterId, pct: myMasterPct, active: true }, error: null };
-      if (masterRecord.error) return json({ error: masterRecord.error.message }, 500);
+      if (masterRecord.error) return dbError(masterRecord.error);
       if (!masterRecord.data?.active || !Number.isFinite(Number(masterRecord.data.pct))) {
         return json({ error: 'master_not_active' }, 409);
       }
@@ -1373,12 +1408,12 @@ Deno.serve(async (req) => {
           .select(CLIENT_COLUMNS)
           .eq('id', clientId)
           .maybeSingle();
-        if (clientRecord.error) return json({ error: clientRecord.error.message }, 500);
+        if (clientRecord.error) return dbError(clientRecord.error);
         if (!clientRecord.data) return json({ error: 'client_not_found' }, 404);
         if (clientRecord.data.lifecycle_status === 'blocked') return json({ error: 'client_blocked' }, 409);
         if (!clientRecord.data.last_name) return json({ error: 'client_surname_required' }, 409);
         const visits = await sb.rpc('maestro_client_visit_count', { p_client_id: clientId });
-        if (visits.error) return json({ error: visits.error.message }, 500);
+        if (visits.error) return dbError(visits.error);
         // New or returning is the base's to say, never the master's: «Был у
         // нас раньше?» is answered only when a card is made (owner's decision
         // of 2026-10-16), so a regular picked from the base cannot be passed
@@ -1402,7 +1437,7 @@ Deno.serve(async (req) => {
           p_master_id: masterRecord.data.id,
           p_client_id: clientId,
         });
-        if (check.error) return json({ error: check.error.message }, 500);
+        if (check.error) return dbError(check.error);
         if (!check.data?.ok) return json({ error: check.data?.error || 'appointment_closed' }, 409);
       }
 
@@ -1412,7 +1447,7 @@ Deno.serve(async (req) => {
       // a booking is always let through.
       if (!isAdmin && appointmentId === null) {
         const unclosed = await sb.rpc('maestro_unclosed_bookings', { p_master_id: masterRecord.data.id });
-        if (unclosed.error) return json({ error: unclosed.error.message }, 500);
+        if (unclosed.error) return dbError(unclosed.error);
         if ((unclosed.data ?? []).length) {
           return json({ error: 'bookings_to_close', bookings: unclosed.data }, 409);
         }
@@ -1459,7 +1494,13 @@ Deno.serve(async (req) => {
           ({ error } = await sb.from('sales').insert(row));
         }
       }
-      if (error) return json({ error: error.message }, 500);
+      // The insert closes the visit's booking too, in the same write
+      // (sales_close_booking, audit of 2026-11-01, №9); a booking closed
+      // meanwhile refuses the visit along with its closing.
+      if (error && ['appointment_closed', 'appointment_not_found'].includes(String(error.message))) {
+        return json({ error: 'appointment_closed' }, 409);
+      }
+      if (error) return dbError(error);
 
       // His scan at the mirror has done its work: it leaves every master's list.
       if (clientId) {
@@ -1468,20 +1509,6 @@ Deno.serve(async (req) => {
           .eq('client_id', clientId)
           .is('used_at', null);
         if (used.error) console.error('[maestro-api] scan not cleared', used.error.message);
-      }
-
-      if (appointmentId !== null) {
-        const closed = await sb.rpc('maestro_complete_appointment_for_visit', {
-          p_appointment_id: appointmentId,
-          p_client_id: clientId,
-          p_actor_user_id: appUserResult.data.id,
-        });
-        if (closed.error || !closed.data?.ok) {
-          console.error('[maestro-api] visit written but booking not closed', {
-            appointmentId,
-            error: closed.error?.message || closed.data?.error,
-          });
-        }
       }
 
       // A guest, and a visit without a number, reach the owner at once, so he
@@ -1512,7 +1539,7 @@ Deno.serve(async (req) => {
         .select('id, comment')
         .eq('id', payload.id)
         .maybeSingle();
-      if (existing.error) return json({ error: existing.error.message }, 500);
+      if (existing.error) return dbError(existing.error);
       if (!existing.data || !decidable.includes(existing.data.comment)) {
         return json({ error: 'sale_does_not_require_owner_approval' }, 409);
       }
@@ -1533,7 +1560,7 @@ Deno.serve(async (req) => {
         .in('comment', decidable);
       if (error) {
         console.error('[maestro-api] sale approval failed', { saleId: payload.id, error: error.message });
-        return json({ error: error.message }, 500);
+        return dbError(error);
       }
       console.log('[maestro-api] sale approval saved', { saleId: payload.id, status: payload.status });
       return json({ ok: true });
@@ -1550,18 +1577,18 @@ Deno.serve(async (req) => {
 
       if (isAdmin) {
         const existing = await sb.from('sales').select('id,d').eq('id', payload.id).maybeSingle();
-        if (existing.error) return json({ error: existing.error.message }, 500);
+        if (existing.error) return dbError(existing.error);
         if (!existing.data) return json({ error: 'sale_not_found' }, 404);
         if (existing.data.d < tashkentDate(-2)) {
           return json({ error: 'sale_delete_window_expired' }, 403);
         }
         const { error } = await sb.from('sales').delete().eq('id', payload.id);
-        if (error) return json({ error: error.message }, 500);
+        if (error) return dbError(error);
         return json({ ok: true });
       }
       const { error } = await sb.from('sales').delete().eq('id', payload.id)
         .eq('master', myMaster).eq('status', 'pending').eq('comment', 'owner_approval_required');
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -1580,7 +1607,7 @@ Deno.serve(async (req) => {
       const { error } = await sb
         .from('attendance')
         .upsert({ master, d, arrived }, { onConflict: 'master,d' });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       // A late arrival is fined on the spot (owner's decision of 2026-10-16);
       // the owner correcting it to on time takes that fine back. The arrival
       // stands either way, so a failure here is logged rather than returned.
@@ -1608,7 +1635,7 @@ Deno.serve(async (req) => {
         return json({ error: 'attendance_edit_window_expired' }, 403);
       }
       const { error } = await sb.from('attendance').delete().eq('master', master).eq('d', d);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       // The owner removing a wrong arrival removes the fine it brought. A
       // master clearing his own check-in keeps it: that is no way out of one.
       if (isAdmin) {
@@ -1633,13 +1660,17 @@ Deno.serve(async (req) => {
       if (!Number.isInteger(masterId) || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.work_date || ''))) {
         return json({ error: 'invalid_day_off_request' }, 400);
       }
+      // The partner sets days off from today on: a day off for last Tuesday
+      // took back that day's «нет отметки» fine, and taking a fine back is the
+      // owner's (audit of 2026-11-01, №26).
+      if (isPartner && String(payload.work_date) < tashkentDate()) return json({ error: 'day_off_past' }, 403);
       const { data: result, error } = await sb.rpc('maestro_set_master_day_off', {
         p_master_id: masterId,
         p_work_date: payload.work_date,
         p_enabled: payload.enabled === true,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, result?.error === 'appointments_exist' ? 409 : 400);
       // A day off set after 18:00 takes back that day's «нет отметки» fine.
       if (payload.enabled === true) {
@@ -1686,14 +1717,14 @@ Deno.serve(async (req) => {
 
       // A duty day already begun keeps its windows (audit of 2026-11-01).
       const fixedDuty = await sb.rpc('maestro_fix_duty_windows');
-      if (fixedDuty.error) return json({ error: fixedDuty.error.message }, 500);
+      if (fixedDuty.error) return dbError(fixedDuty.error);
       const { data: result, error } = await sb.rpc('maestro_set_master_schedule', {
         p_master_id: masterId,
         p_effective_from: effectiveFrom,
         p_days: workDays,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, result?.error === 'master_not_active' ? 409 : 400);
       return json(result);
     }
@@ -1705,12 +1736,12 @@ Deno.serve(async (req) => {
         return json({ error: 'invalid_schedule' }, 400);
       }
       const fixedDuty = await sb.rpc('maestro_fix_duty_windows');
-      if (fixedDuty.error) return json({ error: fixedDuty.error.message }, 500);
+      if (fixedDuty.error) return dbError(fixedDuty.error);
       const { data: result, error } = await sb.rpc('maestro_delete_master_schedule', {
         p_master_id: masterId,
         p_effective_from: effectiveFrom,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) return json(result, result?.error === 'schedule_not_found' ? 404 : 409);
       return json(result);
     }
@@ -1727,7 +1758,7 @@ Deno.serve(async (req) => {
     }
     const isOwner = appUserResult.data.role === 'owner';
     const stockResult = (result: Record<string, unknown> | null, error: { message: string } | null) => {
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) {
         const code = String(result?.error || 'stock_action_failed');
         const status = code === 'forbidden'
@@ -1774,6 +1805,7 @@ Deno.serve(async (req) => {
         p_usd_rate: Number.isFinite(usdRate) && usdRate > 0 ? usdRate : null,
         p_note: payload.note ? String(payload.note).trim().slice(0, 300) : null,
         p_actor_user_id: appUserResult.data.id,
+        p_client_request_id: requestIdOf(payload),
       });
       return stockResult(result, error);
     }
@@ -1857,59 +1889,6 @@ Deno.serve(async (req) => {
       return stockResult(result, error);
     }
 
-    if (action === 'addAppointment') {
-      const appointmentMasterId = canManageCalendar
-        ? Number(payload.master_id)
-        : myMasterId;
-      if (!appointmentMasterId) return json({ error: 'forbidden' }, 403);
-      const { data: result, error } = await sb.rpc('maestro_create_appointment', {
-        p_master_id: appointmentMasterId,
-        p_service_id: String(payload.service_id || ''),
-        p_starts_at: payload.starts_at,
-        p_client_name: String(payload.client_name || ''),
-        p_client_phone: payload.client_phone ? String(payload.client_phone) : null,
-        p_notes: payload.notes ? String(payload.notes) : null,
-        p_status: canManageCalendar && payload.status === 'pending' ? 'pending' : 'confirmed',
-        p_source: 'admin',
-        p_actor_user_id: appUserResult.data.id,
-      });
-      if (error) return json({ error: error.message }, 500);
-      if (!result?.ok) {
-        const conflict = ['slot_already_booked', 'master_day_off', 'client_blocked'].includes(result?.error);
-        return json(result, conflict ? 409 : 400);
-      }
-      return json(result);
-    }
-
-    if (action === 'setAppointmentStatus') {
-      if (!canManageCalendar) {
-        if (!myMasterId) return json({ error: 'forbidden' }, 403);
-        const existingAppointment = await sb
-          .from('appointments')
-          .select('id,master_id')
-          .eq('id', payload.id)
-          .maybeSingle();
-        if (existingAppointment.error) return json({ error: existingAppointment.error.message }, 500);
-        if (!existingAppointment.data) return json({ error: 'appointment_not_found' }, 404);
-        if (Number(existingAppointment.data.master_id) !== myMasterId) {
-          return json({ error: 'forbidden' }, 403);
-        }
-      }
-      const { data: result, error } = await sb.rpc('maestro_set_appointment_status', {
-        p_appointment_id: payload.id,
-        p_status: payload.status,
-        p_actor_user_id: appUserResult.data.id,
-      });
-      if (error) return json({ error: error.message }, 500);
-      if (!result?.ok) {
-        if (result?.error === 'forbidden') return json(result, 403);
-        if (result?.error === 'appointment_not_found') return json(result, 404);
-        if (['invalid_status_transition', 'outcome_already_recorded'].includes(result?.error)) return json(result, 409);
-        return json(result, 400);
-      }
-      return json(result);
-    }
-
     if (action === 'setAppointmentOutcome') {
       // «Пришёл» is not a button of its own: the booking closes when the
       // master records the visit (addSale with appointment_id), so a client
@@ -1925,7 +1904,7 @@ Deno.serve(async (req) => {
         p_reason_note: payload.reason_note ? String(payload.reason_note) : null,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) {
         if (result?.error === 'forbidden') return json(result, 403);
         if (result?.error === 'appointment_not_found') return json(result, 404);
@@ -1951,7 +1930,7 @@ Deno.serve(async (req) => {
         p_reason: payload.reason ? String(payload.reason) : null,
         p_actor_user_id: appUserResult.data.id,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) {
         if (result?.error === 'forbidden') return json(result, 403);
         if (result?.error === 'client_not_found') return json(result, 404);
@@ -1972,7 +1951,7 @@ Deno.serve(async (req) => {
       // disputed fine had no record of what it was for.
       const reason = payload.reason ? String(payload.reason).trim().slice(0, 200) : null;
       const { error } = await sb.from('fines').insert({ master: payload.master, d, amount, reason });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2001,7 +1980,7 @@ Deno.serve(async (req) => {
         return json({ error: 'invalid_advance' }, 400);
       }
       const master = await sb.from('masters').select('id, name').eq('id', masterId).maybeSingle();
-      if (master.error) return json({ error: master.error.message }, 500);
+      if (master.error) return dbError(master.error);
       if (!master.data) return json({ error: 'master_not_found' }, 404);
       const note = payload.note ? String(payload.note).trim().slice(0, 200) || null : null;
       const { error } = await sb.from('master_advances').insert({
@@ -2011,8 +1990,10 @@ Deno.serve(async (req) => {
         given_on: tashkentDate(),
         note,
         created_by_user_id: appUserResult.data.id,
+        client_request_id: requestIdOf(payload),
       });
-      if (error) return json({ error: error.message }, 500);
+      if (isResend(error)) return json({ ok: true, deduplicated: true });
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2028,13 +2009,13 @@ Deno.serve(async (req) => {
       // A week not yet begun has nothing to pay.
       if (weekStart > tashkentDate()) return json({ error: 'invalid_payout' }, 400);
       const master = await sb.from('masters').select('id, name').eq('id', masterId).maybeSingle();
-      if (master.error) return json({ error: master.error.message }, 500);
+      if (master.error) return dbError(master.error);
       if (!master.data) return json({ error: 'master_not_found' }, 404);
       const weekEnd = new Date(`${weekStart}T12:00:00Z`);
       weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
       const advances = await sb.from('master_advances').select('amount')
         .eq('master_id', masterId).gte('given_on', weekStart).lte('given_on', weekEnd.toISOString().slice(0, 10));
-      if (advances.error) return json({ error: advances.error.message }, 500);
+      if (advances.error) return dbError(advances.error);
       const { error } = await sb.from('master_payouts').insert({
         master_id: masterId,
         master: master.data.name,
@@ -2044,8 +2025,10 @@ Deno.serve(async (req) => {
         fines: whole(payload.fines),
         advances: (advances.data ?? []).reduce((sum: number, row: { amount: number }) => sum + Number(row.amount), 0),
         paid_by_user_id: appUserResult.data.id,
+        client_request_id: requestIdOf(payload),
       });
-      if (error) return json({ error: error.message }, 500);
+      if (isResend(error)) return json({ ok: true, deduplicated: true });
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2056,7 +2039,7 @@ Deno.serve(async (req) => {
         action === 'delAdvance' ? 'maestro_delete_advance' : 'maestro_delete_payout',
         { p_id: id, p_actor_user_id: appUserResult.data.id },
       );
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       if (!result?.ok) {
         const code = String(result?.error || 'invalid_request');
         return json(result, code.endsWith('_not_found') ? 404 : 409);
@@ -2101,7 +2084,7 @@ Deno.serve(async (req) => {
       }
       if (!Object.keys(patch).length) return json({ error: 'no_settings_to_update' }, 400);
       const { error } = await sb.from('settings').update(patch).eq('id', 1);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2124,8 +2107,10 @@ Deno.serve(async (req) => {
         usd_rate: payload.usd_rate || null,
         minus_from: payload.minus_from || null,
         note: payload.note || null,
+        client_request_id: requestIdOf(payload),
       });
-      if (error) return json({ error: error.message }, 500);
+      if (isResend(error)) return json({ ok: true, deduplicated: true });
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2155,8 +2140,10 @@ Deno.serve(async (req) => {
         usd_rate: usdRate,
         minus_from: owner,
         note: payload.note ? String(payload.note).trim().slice(0, 500) : null,
+        client_request_id: requestIdOf(payload),
       });
-      if (error) return json({ error: error.message }, 500);
+      if (isResend(error)) return json({ ok: true, deduplicated: true });
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2188,7 +2175,7 @@ Deno.serve(async (req) => {
         start_date: payload.start_date || null,
         note: payload.note || null,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2204,7 +2191,7 @@ Deno.serve(async (req) => {
         amount,
         note: payload.note || null,
       });
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2235,7 +2222,7 @@ Deno.serve(async (req) => {
       const { error } = await sb.from('debts')
         .update({ is_closed: payload.is_closed })
         .eq('id', payload.id);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return dbError(error);
       return json({ ok: true });
     }
 
@@ -2249,6 +2236,6 @@ Deno.serve(async (req) => {
       role_class: monitoredRole,
       request_id: requestId,
     });
-    return json({ error: String(error) }, 500);
+    return json({ error: 'server_error' }, 500);
   }
 });

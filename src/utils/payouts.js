@@ -21,21 +21,42 @@ export function weekOf(date) {
 
 const inWeek = (date, week) => Boolean(date) && date >= week.from && date <= week.to;
 
+// The first week whose remainder opens the next one (owner's «да» of
+// 2026-11-01, audit №11): a debt for an advance, a fine written after the
+// payout, a fine bigger than the week's earnings or a sum not handed over
+// used to stay in its own week and be forgotten. Weeks before it carry nothing.
+export const CARRY_FROM = '2026-10-26';
+
 // One master's week. `sales` are the counted ones; earned is his commission
 // on them, due is what is left to hand over: earned less fines, less advances,
-// less what was already paid for the week. A negative due means he took more
-// in advances than the week brought.
+// less what was already paid for the week, with what the week before left
+// (`carried`: owed to him if positive, his debt if negative). A negative due
+// is his debt, and goes on to the next week.
 export function masterWeek({ master, sales = [], fines = [], advances = [], payouts = [], week }) {
   const mine = (row) => belongsToMaster(row, master);
-  const earned = Math.round(grossMasterPayForSales(sales.filter((sale) => mine(sale) && inWeek(rowDate(sale), week)), master));
-  const fineTotal = totalFines(fines.filter((fine) => mine(fine) && inWeek(rowDate(fine), week)));
-  const weekAdvances = advances
-    .filter((advance) => mine(advance) && inWeek(advance.given_on, week))
+  const own = {
+    sales: sales.filter(mine),
+    fines: fines.filter(mine),
+    advances: advances.filter(mine),
+    payouts: payouts.filter(mine),
+  };
+  let carried = 0;
+  for (let from = CARRY_FROM; from < week.from; from = shiftDate(from, 7)) {
+    carried = weekOfOwnRows(master, own, weekOf(from), carried).due;
+  }
+  return weekOfOwnRows(master, own, week, carried);
+}
+
+function weekOfOwnRows(master, own, week, carried) {
+  const earned = Math.round(grossMasterPayForSales(own.sales.filter((sale) => inWeek(rowDate(sale), week)), master));
+  const fineTotal = totalFines(own.fines.filter((fine) => inWeek(rowDate(fine), week)));
+  const weekAdvances = own.advances
+    .filter((advance) => inWeek(advance.given_on, week))
     .sort((left, right) => String(left.given_on).localeCompare(String(right.given_on)));
   const advanceTotal = weekAdvances.reduce((sum, advance) => sum + (Number(advance.amount) || 0), 0);
-  const weekPayouts = payouts.filter((payout) => mine(payout) && payout.week_start === week.from);
+  const weekPayouts = own.payouts.filter((payout) => payout.week_start === week.from);
   const paid = weekPayouts.reduce((sum, payout) => sum + (Number(payout.amount) || 0), 0);
-  const net = Math.max(0, earned - fineTotal);
+  const net = earned - fineTotal;
   return {
     master,
     earned,
@@ -45,14 +66,15 @@ export function masterWeek({ master, sales = [], fines = [], advances = [], payo
     advanceRows: weekAdvances,
     paid,
     payoutRows: weekPayouts,
-    due: net - advanceTotal - paid,
+    carried,
+    due: net - advanceTotal - paid + carried,
   };
 }
 
 // Every master the week concerns: the active ones, and anyone who left but has
-// visits, fines, advances or a payout in it.
+// visits, fines, advances, a payout or a remainder in it.
 export function weekPayouts({ masters = [], sales = [], fines = [], advances = [], payouts = [], week }) {
   return masters
     .map((master) => masterWeek({ master, sales, fines, advances, payouts, week }))
-    .filter((row) => row.master.active !== false || row.earned || row.fines || row.advances || row.paid);
+    .filter((row) => row.master.active !== false || row.earned || row.fines || row.advances || row.paid || row.carried);
 }

@@ -5,7 +5,6 @@
 import { localDate, rowDate } from './loadWindow.js';
 import {
   grossMasterPayForSales,
-  masterNetPay,
   operatingExpenses,
   rentOffsetIncome,
   saleClientsCount,
@@ -58,11 +57,16 @@ export function mastersForPeriod(masters, sales, fines = []) {
   ));
 }
 
+// What the period's work costs the salon in masters: commissions less fines,
+// every fine in full. A fine bigger than the week it falls in is withheld in
+// the weeks after (masterWeek carries it), so it counts in its own period and
+// the profit agrees with what is paid out (owner's «да» of 2026-11-01, audit
+// №11); it used to stop at zero here and at each week in the payouts.
 export function masterPayoutForPeriod(masters, sales, fines = []) {
   return mastersForPeriod(masters, sales, fines).reduce((sum, master) => {
     const rows = sales.filter((sale) => belongsToMaster(sale, master));
     const fineTotal = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
-    return sum + masterNetPay(grossMasterPayForSales(rows, master), fineTotal);
+    return sum + grossMasterPayForSales(rows, master) - fineTotal;
   }, 0);
 }
 
@@ -182,26 +186,13 @@ export function overviewWeeklyMetrics(data, range, sales, fines) {
     const expenses = totalExpenses(operatingExpenses(weekExpenses));
     const nonCashIncome = rentOffsetIncome(weekExpenses);
 
-    return { ...week, revenue, grossMasterPay, recognizedFines: 0, expenses, nonCashIncome };
-  });
+    // Every fine counts in its own week: one bigger than the master's pay is
+    // withheld in the weeks after (owner's «да» of 2026-11-01, audit №11).
+    const recognizedFines = totalFines(fines.filter((fine) => (
+      inRange(rowDate(fine), week.from, week.to) && reportMasters.some((master) => belongsToMaster(fine, master))
+    )));
 
-  // A fine reduces a master's monthly payout only down to zero. Distributing the
-  // recognized part by its actual week keeps the weekly rows equal to the month total.
-  reportMasters.forEach((master) => {
-    const masterSales = sales.filter((sale) => belongsToMaster(sale, master));
-    const grossMasterPay = grossMasterPayForSales(masterSales, master);
-    const masterFines = fines.filter((fine) => belongsToMaster(fine, master));
-    const fineTotal = totalFines(masterFines);
-    let remainingRecognizedFines = Math.min(grossMasterPay, fineTotal);
-
-    buckets.forEach((bucket) => {
-      if (remainingRecognizedFines <= 0) return;
-      const bucketFines = totalFines(masterFines
-        .filter((fine) => inRange(rowDate(fine), bucket.from, bucket.to)));
-      const recognized = Math.min(bucketFines, remainingRecognizedFines);
-      bucket.recognizedFines += recognized;
-      remainingRecognizedFines -= recognized;
-    });
+    return { ...week, revenue, grossMasterPay, recognizedFines, expenses, nonCashIncome };
   });
 
   return buckets.map((bucket) => {
@@ -215,14 +206,13 @@ export function overviewWeeklyMetrics(data, range, sales, fines) {
   });
 }
 
-// Only the part of a fine that a payout could absorb ever reaches the salon.
-// The tile used to show the amount issued, which never reconciled with cash.
+// The fines that reach the salon. Only the part a payout could absorb used to
+// count; since the weeks carry what they leave (owner's «да» of 2026-11-01,
+// audit №11), every fine is withheld in the end.
 export function recognizedFinesTotal(masters, sales, fines) {
-  return mastersForPeriod(masters, sales, fines).reduce((sum, master) => {
-    const gross = grossMasterPayForSales(sales.filter((sale) => belongsToMaster(sale, master)), master);
-    const fineTotal = totalFines(fines.filter((fine) => belongsToMaster(fine, master)));
-    return sum + Math.min(gross, fineTotal);
-  }, 0);
+  return mastersForPeriod(masters, sales, fines).reduce((sum, master) => (
+    sum + totalFines(fines.filter((fine) => belongsToMaster(fine, master)))
+  ), 0);
 }
 
 export function timeToMinutes(value) {

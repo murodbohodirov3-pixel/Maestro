@@ -54,10 +54,14 @@ export function tokenHash(token: string) {
   return sha256Hex(`booking-token:${token}`);
 }
 
-// Only a salted hash of the caller's address is ever stored.
+// Only a salted hash of the caller's address is ever stored. The address is
+// the one Cloudflare saw (audit of 2026-11-01, №14): the first entry of
+// x-forwarded-for is whatever the sender wrote there.
 export function callerHash(request: Request) {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  const address = forwarded || request.headers.get('cf-connecting-ip') || 'unknown';
+  const address = request.headers.get('cf-connecting-ip')?.trim()
+    || request.headers.get('x-real-ip')?.trim()
+    || request.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim()
+    || 'unknown';
   return sha256Hex(`${Deno.env.get('BOOKING_IP_SALT') || 'maestro'}:${address}`);
 }
 

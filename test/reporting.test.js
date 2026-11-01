@@ -69,10 +69,10 @@ test('payout uses the per-sale snapshot, not the current profile rate', () => {
   assert.equal(masterPayoutForPeriod(MASTERS, sales, []), 900_000);
 });
 
-test('a fine reduces the payout but never past zero', () => {
+test('a fine reduces the payout in full, past zero too (withheld in the weeks after)', () => {
   const sales = [{ master_id: 3, cash: 1_000_000, commission_pct: 40 }];
   assert.equal(masterPayoutForPeriod(MASTERS, sales, [{ master_id: 3, amount: 100_000 }]), 300_000);
-  assert.equal(masterPayoutForPeriod(MASTERS, sales, [{ master_id: 3, amount: 900_000 }]), 0);
+  assert.equal(masterPayoutForPeriod(MASTERS, sales, [{ master_id: 3, amount: 900_000 }]), -500_000);
 });
 
 test('a partial month is compared against the same number of elapsed days', () => {
@@ -156,10 +156,10 @@ test('weekly rows still add up to the month total after fines are distributed', 
   assert.equal(Math.round(weeklySum), Math.round(revenue - payout));
 });
 
-test('only the absorbable part of a fine is recognized', () => {
+test('every fine is recognized, the part bigger than the pay too', () => {
   const sales = [{ master_id: 3, cash: 1_000_000, commission_pct: 40 }];
   assert.equal(recognizedFinesTotal(MASTERS, sales, [{ master_id: 3, amount: 100_000 }]), 100_000);
-  assert.equal(recognizedFinesTotal(MASTERS, sales, [{ master_id: 3, amount: 900_000 }]), 400_000);
+  assert.equal(recognizedFinesTotal(MASTERS, sales, [{ master_id: 3, amount: 900_000 }]), 900_000);
 });
 
 test('weekday index is Monday-based and immune to the local timezone', () => {

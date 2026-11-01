@@ -121,3 +121,41 @@ export function expenseForPartner(expense) {
   }
   return visible;
 }
+
+// Nor what was paid for the goods (audit of 2026-11-01, №29): a delivery
+// reaches him as the product, the day and how many came, without the price,
+// who paid, the note or the expense it made.
+const PARTNER_RECEIPT_FIELDS = ['id', 'product_id', 'receipt_date', 'qty', 'created_at'];
+
+export function receiptForPartner(receipt) {
+  const visible = {};
+  for (const field of PARTNER_RECEIPT_FIELDS) {
+    if (receipt?.[field] !== undefined) visible[field] = receipt[field];
+  }
+  return visible;
+}
+
+// A master's app needs of the salon's settings only what his own day is
+// judged by: where the salon is for «Я пришёл», when lateness counts and what
+// the fines are, since when a booking must be closed. The revenue goal and
+// the rest are the owner's (audit of 2026-11-01, №30).
+const MASTER_SETTINGS_FIELDS = [
+  'id', 'shift_start', 'late_grace_minutes', 'late_rule_since', 'late_fine_amount', 'no_mark_fine_amount',
+  'booking_control_since', 'salon_lat', 'salon_lng', 'salon_radius',
+];
+
+export function settingsForMaster(settings) {
+  const visible = {};
+  for (const field of MASTER_SETTINGS_FIELDS) {
+    if (settings?.[field] !== undefined) visible[field] = settings[field];
+  }
+  return visible;
+}
+
+// A database error reaches the app as its code when it is one of ours
+// (`appointment_closed`, `forbidden`), otherwise as a plain `server_error`:
+// its own text told how the base is built (audit of 2026-11-01, №32).
+export function errorCodeFor(error) {
+  const text = String(error?.message ?? error ?? '');
+  return /^[a-z][a-z0-9_]{2,60}$/.test(text) ? text : 'server_error';
+}

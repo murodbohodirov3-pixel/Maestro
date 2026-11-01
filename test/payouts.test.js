@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { masterWeek, weekOf, weekPayouts, weekStartOf } from '../src/utils/payouts.js';
+import { CARRY_FROM, masterWeek, weekOf, weekPayouts, weekStartOf } from '../src/utils/payouts.js';
 
 const JAVLON = { id: 3, name: 'Жавлон', pct: 40, active: true };
 const SALIM = { id: 24, name: 'Салим', pct: 40, active: true };
@@ -55,4 +55,33 @@ test('a master who left is listed only for a week he has something in', () => {
   assert.deepEqual(rows.map((row) => row.master.name), ['Жавлон']);
   const withAdvance = weekPayouts({ masters: [JAVLON, gone], week: WEEK, advances: [{ master_id: 22, master: 'Нуриддин', given_on: '2026-10-12', amount: 1 }] });
   assert.deepEqual(withAdvance.map((row) => row.master.name), ['Жавлон', 'Нуриддин']);
+});
+
+test('what a week leaves opens the next one, from the week of 26 October on', () => {
+  assert.equal(CARRY_FROM, '2026-10-26');
+  const lastWeek = weekOf('2026-10-26');
+  const nextWeek = weekOf('2026-11-02');
+  const advances = [{ master: 'Салим', master_id: 24, given_on: '2026-10-27', amount: 1_000_000 }];
+  // The week brought 400 000 against an advance of 1 000 000: 600 000 owed.
+  const sales = [sale(SALIM, '2026-10-28', 1_000_000), sale(SALIM, '2026-11-03', 2_000_000)];
+  assert.equal(masterWeek({ master: SALIM, week: lastWeek, sales, advances }).due, -600_000);
+  const next = masterWeek({ master: SALIM, week: nextWeek, sales, advances });
+  assert.equal(next.carried, -600_000, 'the debt comes along');
+  assert.equal(next.due, 800_000 - 600_000);
+  // A fine written after the payout is withheld the week after.
+  const paid = [{ master: 'Салим', master_id: 24, week_start: '2026-10-26', amount: 400_000 }];
+  const fines = [{ master: 'Салим', master_id: 24, d: '2026-11-01', amount: 50_000 }];
+  const afterFine = masterWeek({ master: SALIM, week: nextWeek, sales: [sale(SALIM, '2026-10-28', 1_000_000)], fines, payouts: paid });
+  assert.equal(afterFine.carried, -50_000);
+  // A sum not handed over is still owed the week after, once.
+  const unpaid = masterWeek({ master: SALIM, week: weekOf('2026-11-09'), sales: [sale(SALIM, '2026-10-28', 1_000_000)] });
+  assert.equal(unpaid.carried, 400_000);
+  assert.equal(unpaid.due, 400_000);
+});
+
+test('weeks before 26 October carry nothing', () => {
+  const advances = [{ master: 'Салим', master_id: 24, given_on: '2026-10-20', amount: 1_000_000 }];
+  const row = masterWeek({ master: SALIM, week: weekOf('2026-10-26'), advances });
+  assert.equal(row.carried, 0);
+  assert.equal(row.due, 0);
 });

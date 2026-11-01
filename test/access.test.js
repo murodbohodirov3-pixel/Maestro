@@ -4,11 +4,14 @@ import { readFileSync } from 'node:fs';
 import {
   ADMIN_ROLE,
   adminMayCall,
+  errorCodeFor,
   expenseForPartner,
   maskPhoneForStaff,
   partnerMayCall,
   seesFullPhones,
   PARTNER_ROLE,
+  receiptForPartner,
+  settingsForMaster,
   stockForDesk,
 } from '../supabase/functions/_shared/access.js';
 import {
@@ -91,7 +94,9 @@ test('the administrator guard runs before any action, next to the partner one', 
   assert.ok(guard < apiSource.indexOf("if (action === 'listAuditEvents')"));
   assert.ok(guard < apiSource.indexOf("if (action === 'load' && isFrontDesk)"));
   // The role named admin no longer reads the salon's figures or decides.
-  assert.match(apiSource, /const isAdmin = \['owner', 'finance'\]\.includes/);
+  // Nor does a bookkeeper: that role is gone (audit of 2026-11-01, №31).
+  assert.match(apiSource, /const isAdmin = appUserResult\.data\.role === 'owner';/);
+  assert.doesNotMatch(apiSource, /'finance'/);
   assert.match(apiSource, /const canApproveSales = appUserResult\.data\.role === 'owner';/);
 });
 
@@ -137,4 +142,37 @@ test('masters see a client number as its operator code and last two digits', () 
 test('numbers are whole for those who call clients, masked for masters', () => {
   for (const role of ['owner', 'admin', 'partner']) assert.equal(seesFullPhones(role), true, role);
   for (const role of ['master', 'finance', '', undefined, null]) assert.equal(seesFullPhones(role), false, String(role));
+});
+
+test('the partner gets deliveries without what was paid for them', () => {
+  const receipt = { id: 7, product_id: 2, receipt_date: '2026-11-01', qty: 10, unit_cost: 45_000, total_cost: 450_000,
+    paid_by: 'jamshid', expense_id: 99, note: 'опт', created_by_user_id: 1, created_at: '2026-11-01T10:00:00Z' };
+  assert.deepEqual(receiptForPartner(receipt), { id: 7, product_id: 2, receipt_date: '2026-11-01', qty: 10, created_at: '2026-11-01T10:00:00Z' });
+});
+
+test("a master's settings are what his own day is judged by, not the revenue goal", () => {
+  const settings = settingsForMaster({ id: 1, shift_start: '10:00', late_grace_minutes: 10, salon_lat: 41.3, salon_lng: 69.2,
+    salon_radius: 100, monthly_revenue_goal: 400_000_000, duty_fine_amount: 50_000, salon_phone: '+998' });
+  assert.equal(settings.monthly_revenue_goal, undefined);
+  assert.equal(settings.salon_phone, undefined);
+  assert.equal(settings.salon_radius, 100);
+  assert.equal(settings.late_grace_minutes, 10);
+});
+
+test("a database error reaches the app as its code, or as server_error", () => {
+  assert.equal(errorCodeFor({ message: 'appointment_closed' }), 'appointment_closed');
+  assert.equal(errorCodeFor({ message: 'duplicate key value violates unique constraint "sales_pkey"' }), 'server_error');
+  assert.equal(errorCodeFor({ message: 'column "x" of relation "sales" does not exist' }), 'server_error');
+  assert.equal(errorCodeFor(null), 'server_error');
+});
+
+test('the old actions that let a master book himself are gone from the api', () => {
+  assert.doesNotMatch(apiSource, /action === 'addAppointment'/);
+  assert.doesNotMatch(apiSource, /action === 'setAppointmentStatus'/);
+  assert.doesNotMatch(apiSource, /error: [a-zA-Z.?]+\.message \}, 500\)/, 'no database text reaches the app');
+});
+
+test('a partner sets days off from today on, and a master finds a client by the whole number', () => {
+  assert.match(apiSource, /if \(isPartner && String\(payload\.work_date\) < tashkentDate\(\)\) return json\(\{ error: 'day_off_past' \}, 403\);/);
+  assert.match(apiSource, /if \(whole\.length < 11\) return json\(\{ clients: \[\], whole_number: true \}\);/);
 });

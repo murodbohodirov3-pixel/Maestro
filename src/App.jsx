@@ -121,7 +121,17 @@ import {
   summarizeSales,
 } from './utils/insights.js';
 
-const TODAY = localDate();
+// Today in the app. It used to be fixed when the app opened, so an app left
+// open over midnight kept yesterday (audit of 2026-11-01, №7); the app now
+// moves it on when it notices the date has changed, and draws itself again.
+let TODAY = localDate();
+
+function moveTodayOn() {
+  const now = localDate();
+  if (now === TODAY) return false;
+  TODAY = now;
+  return true;
+}
 
 
 function money(value) {
@@ -376,6 +386,8 @@ const ACTION_ERROR_TEXT = {
   duty_day_out_of_range: 'Прошедшие дни дежурств не меняются.',
   invalid_duty_day: 'Фото дежурных хранятся 30 дней.',
   invalid_duty_zone: 'Такой зоны нет — обновите экран.',
+  day_off_past: 'Выходной можно поставить с сегодняшнего дня.',
+  server_error: 'Сбой на сервере. Попробуйте ещё раз.',
 };
 
 function actionErrorText(error) {
@@ -534,6 +546,25 @@ function newRequestId() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// The id a form sends with its record, so that the server absorbs a resend of
+// one that already landed (audit of 2026-11-01, №8). The same form sent again
+// after a lost reply keeps its id; a changed form is a new record and gets a
+// new one, or a corrected amount would be taken for the first (№34). After a
+// save the next record starts afresh, even with the same figures.
+function useSubmissionId() {
+  const lastRef = useRef(null);
+  return useMemo(() => ({
+    idFor(payload) {
+      const content = JSON.stringify(payload);
+      if (lastRef.current?.content !== content) lastRef.current = { content, id: newRequestId() };
+      return lastRef.current.id;
+    },
+    saved() {
+      lastRef.current = null;
+    },
+  }), []);
+}
+
 // The period lived in each view's own state, so stepping from Продажи to
 // Расходы to check one figure silently threw the chosen month away. The money
 // screens share one selection; attendance and a master's own day keep theirs,
@@ -646,10 +677,22 @@ function getRange(period, customFrom, customTo, rows = [], key = 'd') {
 // A day that is still running cannot have fallen behind a finished one: at
 // noon "−100%" is only the morning. Until it overtakes, it states the target
 // in a neutral tone instead of a red loss.
+// A growth from nothing is not «+100%», and from below zero «+1 200%» means
+// nothing (audit of 2026-11-01, №17): a zero base reads «новое», a base below
+// zero gives no percent at all, only what it was.
+function growthPercent(current, previous) {
+  return (Number(previous) || 0) > 0 ? percentageDifference(current, previous) : null;
+}
+
+function isNewFigure(current, previous) {
+  return !(Number(previous) || 0) && (Number(current) || 0) > 0;
+}
+
 function comparisonToPrevious(current, previous, comparisonRange, formatValue = money, { inProgress = false } = {}) {
-  const percent = percentageDifference(current, previous);
+  const percent = growthPercent(current, previous);
   const hint = comparisonLabel(comparisonRange, TODAY);
-  if (inProgress && (Number(current) || 0) <= (Number(previous) || 0)) {
+  if (percent == null && isNewFigure(current, previous)) return { secondary: 'новое', secondaryTone: '', hint };
+  if (percent == null || (inProgress && (Number(current) || 0) <= (Number(previous) || 0))) {
     return { secondary: `было ${formatValue(previous)}`, secondaryTone: '', hint };
   }
   return {
@@ -830,9 +873,10 @@ function PaymentBreakdownBar({ cash, card, qr, previous }) {
 
 function MasterMetricComparison({ current, previous, format = money, inProgress = false, isNew = false }) {
   if (isNew) return <small className="master-period-change is-new">новый мастер</small>;
-  const percent = percentageDifference(current, previous);
+  const percent = growthPercent(current, previous);
   const tone = percent > 0 ? 'positive' : percent < 0 ? 'negative' : '';
-  if (inProgress && (Number(current) || 0) <= (Number(previous) || 0)) {
+  if (percent == null && isNewFigure(current, previous)) return <small className="master-period-change">новое</small>;
+  if (percent == null || (inProgress && (Number(current) || 0) <= (Number(previous) || 0))) {
     return <small className="master-period-change"><span>было {format(previous)}</span></small>;
   }
   return (
@@ -935,6 +979,7 @@ function CountUp({ value, format = money }) {
 function DeltaChip({ current, previous, inProgress, invert = false }) {
   if (!previous && !current) return null;
   if (!previous) return <span className="delta-chip flat">новое</span>;
+  if (previous < 0) return null;
   const change = percentageDifference(current, previous);
   if (inProgress && current <= previous) return null;
   const better = invert ? change < 0 : change > 0;
@@ -1197,7 +1242,10 @@ function MonthlyTrend({ series, forecast }) {
           ) : selectedValue != null && previousValue != null ? (
             <small className={selectedValue > previousValue ? 'positive' : selectedValue < previousValue ? 'negative' : ''}>
               {(() => {
-                const change = percentageDifference(selectedValue, previousValue);
+                const change = growthPercent(selectedValue, previousValue);
+                if (change == null) {
+                  return isNewFigure(selectedValue, previousValue) ? 'новое' : `было ${metric.full(previousValue)}`;
+                }
                 return `${change > 0 ? '+' : ''}${change}% ${comparisonLabel(previousRow, TODAY)}`;
               })()}
             </small>
@@ -1600,18 +1648,21 @@ function saleStatusClass(sale) {
   return '';
 }
 
-// Finding the client of a visit: a few letters of the name or the last digits
-// of the number, most recent visitors first, or a new card. The server masks
-// numbers for masters (maskPhoneForStaff in _shared/access.js).
+// Finding the client of a visit: a few letters of the name or the number,
+// most recent visitors first, or a new card. The server masks numbers for
+// masters (maskPhoneForStaff in _shared/access.js), and finds them a client
+// by the whole number only (audit of 2026-11-01, №6).
 function useClientSearch(query, setError) {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [askWhole, setAskWhole] = useState(false);
   const latest = useRef(0);
 
   useEffect(() => {
     const text = query.trim();
     if (text.length < 2) {
       setResults([]);
+      setAskWhole(false);
       setSearching(false);
       return undefined;
     }
@@ -1621,7 +1672,10 @@ function useClientSearch(query, setError) {
     const timer = setTimeout(async () => {
       try {
         const result = await callLegacyApi('searchClients', { query: text });
-        if (latest.current === ticket) setResults(result.clients || []);
+        if (latest.current === ticket) {
+          setResults(result.clients || []);
+          setAskWhole(result.whole_number === true);
+        }
       } catch (error) {
         if (latest.current === ticket) setError(actionErrorText(error));
       } finally {
@@ -1631,7 +1685,7 @@ function useClientSearch(query, setError) {
     return () => clearTimeout(timer);
   }, [query, setError]);
 
-  return { results, searching };
+  return { results, searching, askWhole };
 }
 
 function clientVisitsLine(client) {
@@ -1705,7 +1759,7 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
   }, [watchScans, scanMaster]);
   const [draft, setDraft] = useState({ first_name: '', last_name: '', phone: '', known_before: null, guest: false });
   const [saving, setSaving] = useState(false);
-  const { results, searching } = useClientSearch(query, setError);
+  const { results, searching, askWhole } = useClientSearch(query, setError);
   const phoneDigits = draft.phone.replace(/\D/g, '');
   const wholeNumber = creating && !draft.guest && phoneDigits.length >= 9 ? phoneDigits.slice(-9) : '';
   const { results: sameNumber } = useClientSearch(wholeNumber, setError);
@@ -1862,7 +1916,7 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
         type="search"
         enterKeyHint="search"
         autoComplete="off"
-        placeholder="Клиент: имя или последние цифры номера"
+        placeholder="Клиент: имя или номер"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -1877,7 +1931,7 @@ function ClientPicker({ client, onChange, setError, allowGuest = false, scanTitl
               {found.blocked ? <small>заблокирован</small> : null}
             </button>
           ))}
-          {!searching && !results.length ? <p className="hint">Не найден</p> : null}
+          {!searching && !results.length ? <p className="hint">{askWhole ? 'Наберите номер целиком' : 'Не найден'}</p> : null}
         </div>
       ) : null}
       <button className="btn ghost client-new-button" type="button" onClick={startNew}>+ Новый клиент</button>
@@ -2865,7 +2919,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
   const formRef = useRef(null);
   const { period, setPeriod, customFrom, setCustomFrom, customTo, setCustomTo } = usePeriodSelection('master', 'day');
   const setMessage = useNotice();
-  const [requestId, setRequestId] = useState(newRequestId);
+  const submission = useSubmissionId();
   const { run, busy } = useAction(setError, setMessage);
 
   const canPickMaster = data.role === 'admin';
@@ -2988,10 +3042,10 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
         ? { guest: true, known_before: visitClient.known_before }
         : { client_id: visitClient.id }),
       appointment_id: visitBooking ? visitBooking.id : undefined,
-      // Held across retries of this same sale, so a reply lost on a bad
-      // connection cannot turn one haircut into two rows.
-      client_request_id: requestId,
     };
+    // Held across retries of this same sale, so a reply lost on a bad
+    // connection cannot turn one haircut into two rows.
+    payload.client_request_id = submission.idFor(payload);
 
     const ok = await run(
       () => callLegacyApi('addSale', payload),
@@ -3002,7 +3056,7 @@ function MasterView({ data, reload, setError, visitDraft, onDraftUsed }) {
     haptic('success');
     reload();
 
-    setRequestId(newRequestId());
+    submission.saved();
     setPayType(null);
     setAmount('');
     setSplit(false);
@@ -4139,6 +4193,8 @@ function FinanceView({ data, reload, setError }) {
   const [offsetsOpen, setOffsetsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const { run, busy } = useAction(setError, setMessage);
+  const expenseSubmission = useSubmissionId();
+  const offsetSubmission = useSubmissionId();
   // A read-only account sees how much was spent, never on what; the server
   // does not send the names either.
   const readOnly = isReadOnly(data);
@@ -4170,7 +4226,7 @@ function FinanceView({ data, reload, setError }) {
     event.preventDefault();
     const amount = Number(form.amount_uzs);
     if (!form.name.trim() || !amount) return setError('Введите название и сумму расхода.');
-    const ok = await run(() => callLegacyApi('addExpense', {
+    const expense = {
       date: form.date || TODAY,
       section: form.section,
       name: form.name.trim(),
@@ -4178,8 +4234,13 @@ function FinanceView({ data, reload, setError }) {
       amount_uzs: amount,
       usd_rate: Number(form.usd_rate) || null,
       minus_from: form.section === 'ishxona' ? form.minus_from || null : null,
+    };
+    const ok = await run(() => callLegacyApi('addExpense', {
+      ...expense,
+      client_request_id: expenseSubmission.idFor(expense),
     }).then(reload), `Расход ${money(amount)} сум сохранён.`);
     if (!ok) return;
+    expenseSubmission.saved();
     if (form.usd_rate) localStorage.setItem('usdRate', form.usd_rate);
     setForm((current) => ({ ...current, name: '', qty: '', amount_uzs: '' }));
   }
@@ -4189,14 +4250,23 @@ function FinanceView({ data, reload, setError }) {
     const amountUsd = Number(offsetForm.amount_usd);
     const usdRate = Number(offsetForm.usd_rate);
     if (!amountUsd || !usdRate) return setError('Введите сумму аренды в USD и курс USD.');
-    const ok = await run(() => callLegacyApi('addRentOffset', {
+    const offset = {
       date: offsetForm.date || TODAY,
       owner: offsetForm.owner,
       amount_usd: amountUsd,
       usd_rate: usdRate,
       note: offsetForm.note.trim() || null,
+    };
+    const ok = await run(() => callLegacyApi('addRentOffset', {
+      ...offset,
+      client_request_id: offsetSubmission.idFor(offset),
     }).then(reload), `Взаимозачёт $${money(amountUsd)} сохранён. Касса не изменилась.`);
-    if (ok) localStorage.setItem('usdRate', offsetForm.usd_rate);
+    if (!ok) return;
+    offsetSubmission.saved();
+    localStorage.setItem('usdRate', offsetForm.usd_rate);
+    // A second «Сохранить» wrote another ~6 млн (audit of 2026-11-01, №8):
+    // the sum and the note go once saved, the rate and the owner stay.
+    setOffsetForm((current) => ({ ...current, amount_usd: '', note: '' }));
   }
 
   async function deleteExpense(expense) {
@@ -4582,7 +4652,8 @@ function StockView({ data, reload, setError }) {
 
   const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null };
   const [saleForm, setSaleForm] = useState(emptySale);
-  const [saleRequestId, setSaleRequestId] = useState(newRequestId);
+  const saleSubmission = useSubmissionId();
+  const receiptSubmission = useSubmissionId();
   const [receiptForm, setReceiptForm] = useState({
     product_id: '', product_name: '', category: 'care', qty: '', unit_cost: '', paid_by: 'ishxona',
   });
@@ -4610,6 +4681,9 @@ function StockView({ data, reload, setError }) {
   const range = getRange(period, customFrom, customTo, data.productSales, 'sale_date');
   const summary = productSalesSummary(data.productSales, range);
   const stockValue = levels.reduce((sum, row) => sum + row.value, 0);
+  // The partner gets the deliveries without what was paid for them (audit of
+  // 2026-11-01, №29): no price a piece, no stock value, no payer.
+  const pricesHidden = isReadOnly(data);
 
   const movements = [
     ...data.productReceipts.map((row) => ({ kind: 'receipt', row, date: row.receipt_date })),
@@ -4639,21 +4713,21 @@ function StockView({ data, reload, setError }) {
     if (saleQty > saleLevel.qty) return setError(`На складе только ${saleLevel.qty} шт. «${saleLevel.product.name}».`);
     if (!saleAmount) return setError('Введите сумму.');
     if (!saleForm.payment_method) return setError('Выберите способ оплаты.');
+    const sale = {
+      product_id: saleLevel.product.id,
+      qty: saleQty,
+      amount: saleAmount,
+      payment_method: saleForm.payment_method,
+    };
     const ok = await run(
-      () => callLegacyApi('addProductSale', {
-        product_id: saleLevel.product.id,
-        qty: saleQty,
-        amount: saleAmount,
-        payment_method: saleForm.payment_method,
-        client_request_id: saleRequestId,
-      }),
+      () => callLegacyApi('addProductSale', { ...sale, client_request_id: saleSubmission.idFor(sale) }),
       isOwner ? 'Продажа сохранена.' : 'Отправлено на подтверждение.',
     );
     if (!ok) return;
     // Saved is saved: the list catches up behind the message.
     reload();
     haptic('success');
-    setSaleRequestId(newRequestId());
+    saleSubmission.saved();
     setSaleForm(emptySale);
   }
 
@@ -4667,19 +4741,21 @@ function StockView({ data, reload, setError }) {
     if (!receiptIsNew && !receiptForm.product_id) return setError('Выберите товар.');
     if (!Number.isInteger(receiptQty) || receiptQty < 1) return setError('Количество — целое число от 1.');
     if (!receiptUnitCost) return setError('Введите цену за штуку.');
+    const receipt = {
+      product_id: receiptIsNew ? null : Number(receiptForm.product_id),
+      product_name: receiptIsNew ? receiptForm.product_name.trim() : null,
+      category: receiptForm.category,
+      qty: receiptQty,
+      unit_cost: receiptUnitCost,
+      paid_by: receiptForm.paid_by,
+      usd_rate: Number(storedUsdRate()) || null,
+    };
     const ok = await run(
-      () => callLegacyApi('addProductReceipt', {
-        product_id: receiptIsNew ? null : Number(receiptForm.product_id),
-        product_name: receiptIsNew ? receiptForm.product_name.trim() : null,
-        category: receiptForm.category,
-        qty: receiptQty,
-        unit_cost: receiptUnitCost,
-        paid_by: receiptForm.paid_by,
-        usd_rate: Number(storedUsdRate()) || null,
-      }),
+      () => callLegacyApi('addProductReceipt', { ...receipt, client_request_id: receiptSubmission.idFor(receipt) }),
       'Приход сохранён.',
     );
     if (!ok) return;
+    receiptSubmission.saved();
     reload();
     haptic('success');
     setReceiptForm((current) => ({ ...current, product_id: '', product_name: '', qty: '', unit_cost: '' }));
@@ -4750,7 +4826,7 @@ function StockView({ data, reload, setError }) {
           <span>Сумма<strong>{compactMoney(summary.amount)}</strong></span>
           <span>Закупка<strong>{compactMoney(summary.cost)}</strong></span>
         </div>
-        <span className="revenue-hero-note">Товар на складе: {compactMoney(stockValue)} сум</span>
+        {pricesHidden ? null : <span className="revenue-hero-note">Товар на складе: {compactMoney(stockValue)} сум</span>}
       </div>
 
 
@@ -4878,12 +4954,12 @@ function StockView({ data, reload, setError }) {
             <div className={`row stock-row${row.qty <= 0 ? ' is-empty' : row.qty <= 2 ? ' is-low' : ''}`} key={row.product.id}>
               <div>
                 <strong>{row.product.name}</strong>
-                <span>{PRODUCT_CATEGORY_LABELS[row.product.category] || 'Товар'} · {money(Math.round(row.unitCost))} за шт.</span>
+                <span>{PRODUCT_CATEGORY_LABELS[row.product.category] || 'Товар'}{pricesHidden ? '' : ` · ${money(Math.round(row.unitCost))} за шт.`}</span>
               </div>
               <div className="stock-qty">
                 <strong>{row.qty} шт.</strong>
                 {row.qty > 0 ? (
-                  <span>{money(Math.round(row.value))}</span>
+                  pricesHidden ? null : <span>{money(Math.round(row.value))}</span>
                 ) : isOwner && canWrite && row.qty === 0 ? (
                   <button className="link-button" type="button" disabled={busy} onClick={() => hideProduct(row.product)}>Скрыть</button>
                 ) : (
@@ -4910,8 +4986,10 @@ function StockView({ data, reload, setError }) {
             let status = null;
             if (item.kind === 'receipt') {
               title = 'Приход';
-              details = `${money(row.unit_cost)} за шт. · ${RECEIPT_PAYER_LABELS[row.paid_by] || row.paid_by}`;
-              amount = money(row.total_cost);
+              details = pricesHidden
+                ? `${row.qty} шт.`
+                : `${money(row.unit_cost)} за шт. · ${RECEIPT_PAYER_LABELS[row.paid_by] || row.paid_by}`;
+              amount = pricesHidden ? '—' : money(row.total_cost);
             } else if (item.kind === 'sale') {
               title = 'Продажа';
               details = `${PAYMENT_LABELS[row.payment_method] || '—'}${row.status === 'rejected' ? '' : ` · маржа ${signedMoney(productSaleMargin(row))}`}`;
@@ -4951,7 +5029,7 @@ function DeskStockView({ data, reload, setError }) {
   const { run, busy } = useAction(setError, setMessage);
   const emptySale = { product_id: '', qty: '1', amount: '', payment_method: null, amountTyped: false };
   const [saleForm, setSaleForm] = useState(emptySale);
-  const [saleRequestId, setSaleRequestId] = useState(newRequestId);
+  const saleSubmission = useSubmissionId();
 
   const products = data.products;
   const qtyOf = (product) => Number(product?.stock_qty) || 0;
@@ -4989,20 +5067,20 @@ function DeskStockView({ data, reload, setError }) {
     if (saleQty > qtyOf(selected)) return setError(`На складе только ${qtyOf(selected)} шт. «${selected.name}».`);
     if (!saleAmount) return setError('Введите сумму.');
     if (!saleForm.payment_method) return setError('Выберите способ оплаты.');
+    const sale = {
+      product_id: selected.id,
+      qty: saleQty,
+      amount: saleAmount,
+      payment_method: saleForm.payment_method,
+    };
     const ok = await run(
-      () => callLegacyApi('addProductSale', {
-        product_id: selected.id,
-        qty: saleQty,
-        amount: saleAmount,
-        payment_method: saleForm.payment_method,
-        client_request_id: saleRequestId,
-      }),
+      () => callLegacyApi('addProductSale', { ...sale, client_request_id: saleSubmission.idFor(sale) }),
       'Отправлено на подтверждение.',
     );
     if (!ok) return;
     reload();
     haptic('success');
-    setSaleRequestId(newRequestId());
+    saleSubmission.saved();
     setSaleForm(emptySale);
   }
 
@@ -5288,26 +5366,26 @@ function MasterReviewsView({ setError }) {
 }
 
 // A week's lines that add up to what is due (owner's review of 2026-10-26).
-// A fine is withheld only from what the week earned (masterWeek); the rest of
-// it used to vanish without a word while the red total blamed the advance.
+// What the week before left opens it, and a debt goes on to the next week
+// (owner's «да» of 2026-11-01, audit №11): a fine bigger than the week's
+// earnings is no longer let go, it is withheld later.
 function PayoutLines({ row, dueLabel = 'К выплате' }) {
-  const withheld = Math.min(row.fines, Math.max(0, row.earned));
-  const notWithheld = row.fines - withheld;
   return (
     <>
       <div className="payout-lines">
-        <span>Заработал<b>{money(row.earned)}</b></span>
-        {withheld ? <span>Штрафы<b className="danger">−{money(withheld)}</b></span> : null}
-        {notWithheld ? (
-          <span className="payout-note">
-            {`Штраф ${money(notWithheld)} не удержан: ${row.earned > 0 ? 'заработка не хватило' : 'заработка не было'}`}
+        {row.carried ? (
+          <span>
+            {row.carried < 0 ? 'Долг с прошлой недели' : 'С прошлой недели'}
+            <b className={row.carried < 0 ? 'danger' : ''}>{row.carried < 0 ? '−' : '+'}{money(Math.abs(row.carried))}</b>
           </span>
         ) : null}
+        <span>Заработал<b>{money(row.earned)}</b></span>
+        {row.fines ? <span>Штрафы<b className="danger">−{money(row.fines)}</b></span> : null}
         {row.advances ? <span>Авансы<b>−{money(row.advances)}</b></span> : null}
         {row.paid ? <span>Выплачено<b>−{money(row.paid)}</b></span> : null}
       </div>
       <div className={`payout-due${row.due < 0 ? ' is-negative' : ''}`}>
-        <span>{row.due < 0 ? (row.advances ? 'Долг по авансу' : 'Выплачено больше') : dueLabel}</span>
+        <span>{row.due < 0 ? 'Перейдёт долгом' : dueLabel}</span>
         <strong>{money(Math.abs(row.due))}</strong>
       </div>
     </>
@@ -5323,6 +5401,8 @@ function PayoutsView({ data, reload, setError }) {
   const [advanceNote, setAdvanceNote] = useState('');
   const setMessage = useNotice();
   const { run, busy } = useAction(setError, setMessage);
+  const advanceSubmission = useSubmissionId();
+  const payoutSubmission = useSubmissionId();
   const week = weekOf(weekStart);
   const rows = weekPayouts({
     masters: data.masters,
@@ -5350,12 +5430,17 @@ function PayoutsView({ data, reload, setError }) {
   async function giveAdvance(row) {
     const amount = Number(advanceAmount);
     if (!amount || amount <= 0) return setError('Введите сумму аванса.');
-    const ok = await run(() => callLegacyApi('addAdvance', {
+    const advance = {
       master_id: row.master.id,
       amount,
       note: advanceNote.trim() || null,
+    };
+    const ok = await run(() => callLegacyApi('addAdvance', {
+      ...advance,
+      client_request_id: advanceSubmission.idFor(advance),
     }), `Аванс ${money(amount)} сум: ${row.master.name}.`);
     if (!ok) return;
+    advanceSubmission.saved();
     haptic('success');
     setAdvanceFor(null);
     reload();
@@ -5363,14 +5448,19 @@ function PayoutsView({ data, reload, setError }) {
 
   async function markPaid(row) {
     if (!await confirmAction(`${row.master.name}: выплачено ${money(row.due)} сум за ${weekLabel(week)}?`)) return;
-    const ok = await run(() => callLegacyApi('markPayout', {
+    const payout = {
       master_id: row.master.id,
       week_start: week.from,
       amount: row.due,
       earned: row.earned,
       fines: row.fines,
+    };
+    const ok = await run(() => callLegacyApi('markPayout', {
+      ...payout,
+      client_request_id: payoutSubmission.idFor(payout),
     }), `Выплачено: ${row.master.name}, ${money(row.due)} сум.`);
     if (!ok) return;
+    payoutSubmission.saved();
     haptic('success');
     reload();
   }
@@ -5996,6 +6086,9 @@ function DutyDayPhotos({ day, zones = [], refreshKey, setError }) {
                         <button className="duty-photo-thumb" type="button" onClick={() => setOpened(attempt)}>
                           <img alt={`${zone.name_ru}, ${dutyWindowLabel(window)}`} loading="lazy" src={cover.url} />
                           {attempt.photos.length > 1 ? <b className="duty-photo-count">{attempt.photos.length}</b> : null}
+                          {/* Taken without the check's look (it was out of reach): worth
+                              a look of one's own (audit of 2026-11-01, №12). */}
+                          {attempt.checked_by === 'unchecked' ? <b className="duty-photo-unchecked">не проверено</b> : null}
                         </button>
                       ) : (
                         <span className={`duty-photo-empty is-${status}`}>
@@ -6242,11 +6335,23 @@ function RevenueChart({ sales, previousSales = [], from, to, previousFrom, previ
   }
 
   // A month of bars is wider than the phone, and the view started at the left
-  // edge — so today, the day the owner opens this for, was off screen.
+  // edge — so today, the day the owner opens this for, was off screen. It then
+  // went to the end of the month, where a running month has only empty days
+  // to come and today was off screen again until the 18th (audit of
+  // 2026-11-01, №18): it now brings today to the right edge, or the last day
+  // of a past period.
+  const todayIndex = days.indexOf(TODAY);
   useEffect(() => {
     const node = scrollRef.current;
-    if (node) node.scrollLeft = node.scrollWidth;
-  }, [from, to, days.length]);
+    if (!node) return;
+    if (todayIndex < 0) {
+      node.scrollLeft = node.scrollWidth;
+      return;
+    }
+    const step = Math.max(14, Math.min(38, Math.floor(480 / Math.max(1, days.length)))) + 6;
+    const todayEnd = 10 + (todayIndex + 1) * step;
+    node.scrollLeft = Math.max(0, todayEnd - node.clientWidth + 16);
+  }, [from, to, days.length, todayIndex]);
 
   const totals = Object.fromEntries(days.map((day) => [day, { revenue: 0, clients: 0 }]));
   sales.forEach((sale) => {
@@ -7003,6 +7108,11 @@ export default function App() {
   // The server's language is taken once, on the first load; after that the
   // person's own switch decides.
   const langSettledRef = useRef(false);
+  // Until one full load has come through, every load asks for everything: a
+  // first load lost to a bad network left only the poll's last two months on
+  // screen, looking complete (audit of 2026-11-01, №10).
+  const fullLoadedRef = useRef(false);
+  const [, setToday] = useState(TODAY);
 
   useEffect(() => {
     applyLanguage(lang);
@@ -7082,7 +7192,8 @@ export default function App() {
     return load({ preserveView: true, since: pollWindowStart(), ...options });
   }
 
-  async function loadOnce({ preserveView = true, since = null } = {}) {
+  async function loadOnce({ preserveView = true, since: asked = null } = {}) {
+    const since = fullLoadedRef.current ? asked : null;
     // A load no longer clears the screen's error: the 15s poll used to wipe
     // «Сначала закройте запись» before the master had read it. An action's
     // error stays until the next action, a new screen or ×.
@@ -7118,6 +7229,7 @@ export default function App() {
       // deployment ignores `since` and answers with everything, which merges
       // correctly either way but must not discard rows it did return.
       const appliedSince = result?.windowSince === since ? since : null;
+      if (!appliedSince) fullLoadedRef.current = true;
       setData((previous) => (
         appliedSince ? mergeWindowedData(previous, normalized, appliedSince) : normalized
       ));
@@ -7162,6 +7274,8 @@ export default function App() {
     let intervalId;
 
     const refresh = ({ full = false } = {}) => {
+      // Past midnight the screens move to the new day.
+      if (moveTodayOn()) setToday(TODAY);
       if (!document.hidden && !loadInFlightRef.current) {
         load({ preserveView: true, since: full ? null : pollWindowStart() });
       }
