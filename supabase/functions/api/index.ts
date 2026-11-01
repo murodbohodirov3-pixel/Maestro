@@ -6,7 +6,8 @@ import { captureEdgeException } from '../_shared/sentry.ts';
 import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
 import { checkClientName, checkLastName } from '../_shared/clientName.js';
 import { latestScanPerClient, MIRROR_SCAN_HOURS } from '../_shared/mirror.js';
-import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest, jpegFrameSize } from '../_shared/duty.js';
+import { decode as decodeJpeg } from 'https://esm.sh/jpeg-js@0.4.4';
+import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest, jpegFrameSize, pictureHash } from '../_shared/duty.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -496,6 +497,19 @@ async function checkDutyPhotos(images: string[], zone: string, checklist: string
   }
 }
 
+// The photo's fingerprint is the server's own, drawn from the picture it was
+// sent: the phone's could say anything (audit of 2026-11-01, №12). Should the
+// picture not decode here, the phone's is taken, and the log says so.
+function serverPhash(bytes: Uint8Array): string | null {
+  try {
+    const image = decodeJpeg(bytes, { useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 96 });
+    return pictureHash(image.data, image.width, image.height);
+  } catch (error) {
+    console.error('[maestro-api] duty photo not decoded', String(error));
+    return null;
+  }
+}
+
 // A JPEG from the app, as base64; anything else is refused.
 function dutyPhotoBytes(image: unknown) {
   const text = String(image ?? '');
@@ -762,8 +776,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'load') {
-      const masters = (await sb.from('masters').select('*').order('id')).data ?? [];
-      const settings = (await sb.from('settings').select('*').eq('id', 1)).data ?? [];
+      const [mastersResult, settingsResult] = await Promise.all([
+        sb.from('masters').select('*').order('id'),
+        sb.from('settings').select('*').eq('id', 1),
+      ]);
+      const masters = mastersResult.data ?? [];
+      const settings = settingsResult.data ?? [];
 
       // Optional lower bound for the tables that accumulate a row per sale, per
       // shift, per expense — the only ones whose size tracks how long the salon
@@ -948,8 +966,10 @@ Deno.serve(async (req) => {
       const photos: { image: string; bytes: Uint8Array; phash: string; sha256: string; shot_at: string | null; storage_path: string }[] = [];
       for (const item of sent) {
         const bytes = dutyPhotoBytes(item?.image);
-        const phash = String(item?.phash ?? '').toLowerCase();
-        if (!bytes || !/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
+        if (!bytes) return json({ error: 'invalid_duty_photo' }, 400);
+        const sentPhash = String(item?.phash ?? '').toLowerCase();
+        const phash = serverPhash(bytes) ?? sentPhash;
+        if (!/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
         // The app always sends when the picture was made; without it the
         // «older than a quarter of an hour» test could not run.
         const shot = Number(item?.shot_at);

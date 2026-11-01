@@ -40,6 +40,7 @@ import {
   dutyWindowNotice,
   jpegFrameSize,
   parseDutyTap,
+  pictureHash,
 } from '../supabase/functions/_shared/duty.js';
 import { translate } from '../src/i18n/index.js';
 
@@ -290,4 +291,31 @@ test('the duty screens read in Uzbek', () => {
   assert.equal(uz('Жавлон · выходной'), 'Жавлон · dam olish');
   assert.equal(uz('Иброхим → Жавлон · четверг, 29 октября · ждёт ответа'), 'Иброхим → Жавлон · payshanba, 29 oktabr · javob kutilmoqda');
   assert.equal(uz('Дежурство: нет фото'), 'Navbatchilik: rasm yoʻq');
+});
+
+test('the server fingerprints a photo from its pixels, drawn down as the app does', () => {
+  // A picture of 340 × 320: left half dark, right half light, a gradient down.
+  const width = 340;
+  const height = 320;
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const value = (x < width / 2 ? 40 : 200) + Math.round((y / height) * 30);
+      rgba.set([value, value, value, 255], (y * width + x) * 4);
+    }
+  }
+  const hash = pictureHash(rgba, width, height);
+  assert.match(hash, /^[0-9a-f]{64}$/);
+  assert.equal(pictureHash(rgba, width, height), hash, 'the same pixels, the same fingerprint');
+  // Lightened a little all over: still the same picture.
+  const lighter = rgba.map((value, index) => (index % 4 === 3 ? value : Math.min(255, value + 6)));
+  assert.ok(hashDistance(hash, pictureHash(lighter, width, height)) <= 24);
+  // Mirrored: another picture.
+  const mirrored = new Uint8ClampedArray(rgba.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      mirrored.set(rgba.subarray((y * width + x) * 4, (y * width + x) * 4 + 4), (y * width + (width - 1 - x)) * 4);
+    }
+  }
+  assert.ok(hashDistance(hash, pictureHash(mirrored, width, height)) > 24);
 });

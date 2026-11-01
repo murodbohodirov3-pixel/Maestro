@@ -1,6 +1,5 @@
 // Дежурный по чистоте (owner's decisions of 2026-10-26): what the screens
-// work out from the server's duty state (maestro_duty_state), and the
-// fingerprint of a photo that lets the server refuse the same picture twice.
+// work out from the server's duty state (maestro_duty_state).
 
 export function addDaysIso(day, days) {
   const parsed = new Date(`${day}T12:00:00Z`);
@@ -131,45 +130,6 @@ export function rosterChanges(duty, draft) {
     .map(([day, masterId]) => ({ day, master_id: masterId ? Number(masterId) : null }));
 }
 
-// The picture's fingerprint: a difference hash on a 17×16 grey copy, one bit
-// for each pair of neighbours in a row, 256 bits as 64 hex digits. The same
-// file gives the same hash, a copy saved again a few bits off; the server
-// refuses within 6 bits, strict enough that a new shot of the same corner
-// is not mistaken for an old one.
-export const HASH_WIDTH = 17;
-export const HASH_HEIGHT = 16;
-
-export function greyFromRgba(rgba, width = HASH_WIDTH, height = HASH_HEIGHT) {
-  const grey = new Array(width * height);
-  for (let index = 0; index < width * height; index += 1) {
-    const offset = index * 4;
-    grey[index] = 0.299 * rgba[offset] + 0.587 * rgba[offset + 1] + 0.114 * rgba[offset + 2];
-  }
-  return grey;
-}
-
-export function differenceHash(grey, width = HASH_WIDTH, height = HASH_HEIGHT) {
-  let bits = '';
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width - 1; x += 1) {
-      bits += grey[y * width + x] < grey[y * width + x + 1] ? '1' : '0';
-    }
-  }
-  let hex = '';
-  for (let index = 0; index < bits.length; index += 4) {
-    hex += parseInt(bits.slice(index, index + 4), 2).toString(16);
-  }
-  return hex;
-}
-
-export function hashDistance(left, right) {
-  let distance = 0;
-  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
-    let diff = parseInt(left[index], 16) ^ parseInt(right[index], 16);
-    while (diff) {
-      distance += diff & 1;
-      diff >>= 1;
-    }
-  }
-  return distance;
-}
+// The picture's fingerprint lives with the server's code, which computes it
+// from the photo it receives (supabase/functions/_shared/duty.js).
+export { differenceHash, greyFromRgba, HASH_HEIGHT, HASH_WIDTH, hashDistance } from '../../supabase/functions/_shared/duty.js';

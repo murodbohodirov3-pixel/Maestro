@@ -328,3 +328,86 @@ export function dutyVerdict(text) {
     reason_uz: passed ? '' : tidy(raw.reason_uz) || fallback[1],
   };
 }
+
+// The picture's fingerprint: a difference hash on a 17×16 grey copy, one bit
+// for each pair of neighbours in a row, 256 bits as 64 hex digits. The same
+// file gives the same hash, a copy saved again up to about 15 bits off; the
+// server refuses within 24 (maestro_duty_photo_problem), and two different
+// real shots of the same corner never came closer than 50.
+export const HASH_WIDTH = 17;
+export const HASH_HEIGHT = 16;
+
+export function greyFromRgba(rgba, width = HASH_WIDTH, height = HASH_HEIGHT) {
+  const grey = new Array(width * height);
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4;
+    grey[index] = 0.299 * rgba[offset] + 0.587 * rgba[offset + 1] + 0.114 * rgba[offset + 2];
+  }
+  return grey;
+}
+
+export function differenceHash(grey, width = HASH_WIDTH, height = HASH_HEIGHT) {
+  let bits = '';
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width - 1; x += 1) {
+      bits += grey[y * width + x] < grey[y * width + x + 1] ? '1' : '0';
+    }
+  }
+  let hex = '';
+  for (let index = 0; index < bits.length; index += 4) {
+    hex += parseInt(bits.slice(index, index + 4), 2).toString(16);
+  }
+  return hex;
+}
+
+export function hashDistance(left, right) {
+  let distance = 0;
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    let diff = parseInt(left[index], 16) ^ parseInt(right[index], 16);
+    while (diff) {
+      distance += diff & 1;
+      diff >>= 1;
+    }
+  }
+  return distance;
+}
+
+// The fingerprint of a photo from its pixels (RGBA, width × height), drawn
+// down as the app draws it: to 68 × 64, then to 17 × 16, each step averaging
+// the pixels it covers. The server computes it from the photo it receives
+// instead of taking the phone's word for it (audit of 2026-11-01, №12).
+export function pictureHash(rgba, width, height) {
+  const middle = shrink(rgba, width, height, HASH_WIDTH * 4, HASH_HEIGHT * 4);
+  const small = shrink(middle, HASH_WIDTH * 4, HASH_HEIGHT * 4, HASH_WIDTH, HASH_HEIGHT);
+  return differenceHash(greyFromRgba(small));
+}
+
+function shrink(rgba, width, height, toWidth, toHeight) {
+  const out = new Uint8ClampedArray(toWidth * toHeight * 4);
+  for (let y = 0; y < toHeight; y += 1) {
+    const top = Math.floor((y * height) / toHeight);
+    const bottom = Math.max(top + 1, Math.floor(((y + 1) * height) / toHeight));
+    for (let x = 0; x < toWidth; x += 1) {
+      const left = Math.floor((x * width) / toWidth);
+      const right = Math.max(left + 1, Math.floor(((x + 1) * width) / toWidth));
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      for (let row = top; row < bottom; row += 1) {
+        for (let column = left; column < right; column += 1) {
+          const offset = (row * width + column) * 4;
+          red += rgba[offset];
+          green += rgba[offset + 1];
+          blue += rgba[offset + 2];
+        }
+      }
+      const count = (bottom - top) * (right - left);
+      const at = (y * toWidth + x) * 4;
+      out[at] = red / count;
+      out[at + 1] = green / count;
+      out[at + 2] = blue / count;
+      out[at + 3] = 255;
+    }
+  }
+  return out;
+}

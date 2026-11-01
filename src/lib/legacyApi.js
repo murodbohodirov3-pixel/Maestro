@@ -4,6 +4,13 @@ const TG_OAUTH_STATE_KEY = 'telegramOAuthState';
 const TG_OAUTH_VERIFIER_KEY = 'telegramOAuthVerifier';
 const TELEGRAM_OAUTH_CLIENT_ID = '8865126796';
 
+// The api runs next to the database, in Singapore, not at the edge nearest
+// the phone: from Tashkent that was Frankfurt, and each of the 6–8 database
+// calls of a load crossed to Singapore and back, ~1,5 s a load (audit of
+// 2026-11-01, №54). The database stays where it is. A query parameter, not
+// the x-region header, so the browser sends no extra preflight header.
+const API_REGION = 'ap-southeast-1';
+
 function getApiUrl() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
@@ -11,7 +18,7 @@ function getApiUrl() {
     throw new Error('VITE_SUPABASE_URL не настроен.');
   }
 
-  return `${supabaseUrl}/functions/v1/api`;
+  return `${supabaseUrl}/functions/v1/api?forceFunctionRegion=${API_REGION}`;
 }
 
 export function getTelegramInitData() {
