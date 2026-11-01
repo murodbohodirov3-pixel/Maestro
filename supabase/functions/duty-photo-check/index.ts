@@ -63,6 +63,21 @@ Deno.serve(async (request) => {
     if (!verdict) return reply({ ok: true, checked: false, reason: 'unparsed' });
     return reply({ ok: true, checked: true, ...verdict, model: response.model });
   } catch (error) {
+    // A picture the model cannot open is a refusal, not a pass: otherwise any
+    // broken file would count unchecked (audit of 2026-11-01). Other failures
+    // stay unchecked and never cost the master a fine.
+    if (error instanceof Anthropic.BadRequestError && /image/i.test(error.message)) {
+      console.warn('[duty-photo-check] image refused', error.message);
+      return reply({
+        ok: true,
+        checked: true,
+        shows_zone: false,
+        clean: false,
+        reason_ru: 'Фото не открылось — сфотографируйте снова.',
+        reason_uz: 'Rasm ochilmadi — qayta suratga oling.',
+        model: 'image-unreadable',
+      });
+    }
     if (error instanceof Anthropic.RateLimitError) console.warn('[duty-photo-check] rate limited');
     else if (error instanceof Anthropic.APIError) console.error('[duty-photo-check] api error', error.status, error.message);
     else console.error('[duty-photo-check] failed', error instanceof Error ? error.message : String(error));

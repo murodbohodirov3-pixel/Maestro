@@ -103,6 +103,7 @@ import {
   rosterChanges,
   rosterOn,
   swapCandidates,
+  swapStillOpen,
   weekDays,
   windowsDone,
   windowStatus,
@@ -6062,7 +6063,9 @@ function DutyView({ data, reload, setError }) {
   const todayPhotos = (duty.windows || [])
     .map((window) => `${(window.zones_done || []).length}.${Object.keys(window.zones_rejected || {}).length}`)
     .join(',');
-  const swaps = (duty.swaps || []).filter((swap) => swap.status === 'pending' || swap.status === 'accepted');
+  // A request no longer open (unanswered for an hour, or its day begun) is
+  // not «ждёт ответа» any more (audit of 2026-11-01).
+  const swaps = (duty.swaps || []).filter((swap) => swap.status === 'accepted' || swapStillOpen(duty, swap));
 
   async function save() {
     const ok = await run(() => callLegacyApi('setDutyRoster', { days: changes }), 'График дежурств сохранён.');

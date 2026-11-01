@@ -6,7 +6,7 @@ import { captureEdgeException } from '../_shared/sentry.ts';
 import { masterBookingNotice, masterText } from '../_shared/bookingCore.js';
 import { checkClientName, checkLastName } from '../_shared/clientName.js';
 import { latestScanPerClient, MIRROR_SCAN_HOURS } from '../_shared/mirror.js';
-import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest } from '../_shared/duty.js';
+import { dutySwapAnswer, dutySwapKeyboard, dutySwapOwnerNotice, dutySwapRequest, jpegFrameSize } from '../_shared/duty.js';
 import {
   ADMIN_ROLE,
   adminMayCall,
@@ -484,7 +484,10 @@ function dutyPhotoBytes(image: unknown) {
   } catch {
     return null;
   }
-  if (bytes.length < 1000 || bytes.length > 2_097_152 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  if (bytes.length < 1000 || bytes.length > 2_097_152) return null;
+  // A real picture, not bytes that only start like one (audit of 2026-11-01).
+  const frame = jpegFrameSize(bytes);
+  if (!frame || frame.width < 200 || frame.height < 200) return null;
   return bytes;
 }
 
@@ -924,13 +927,16 @@ Deno.serve(async (req) => {
         const bytes = dutyPhotoBytes(item?.image);
         const phash = String(item?.phash ?? '').toLowerCase();
         if (!bytes || !/^[0-9a-f]{64}$/.test(phash)) return json({ error: 'invalid_duty_photo' }, 400);
+        // The app always sends when the picture was made; without it the
+        // «older than a quarter of an hour» test could not run.
         const shot = Number(item?.shot_at);
+        if (!Number.isFinite(shot) || shot <= 1_500_000_000_000 || shot >= 4_000_000_000_000) return json({ error: 'invalid_duty_photo' }, 400);
         photos.push({
           image: String(item.image),
           bytes,
           phash,
           sha256: toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer))),
-          shot_at: Number.isFinite(shot) && shot > 1_500_000_000_000 && shot < 4_000_000_000_000 ? new Date(shot).toISOString() : null,
+          shot_at: new Date(shot).toISOString(),
           storage_path: `${tashkentDate()}/${myMasterId}-${zone}-${crypto.randomUUID()}.jpg`,
         });
       }
@@ -942,6 +948,9 @@ Deno.serve(async (req) => {
       if (precheck.error) return json({ error: precheck.error.message }, 500);
       const problem = (precheck.data ?? [])[0]?.problem_code;
       if (problem) return json({ ok: false, error: problem }, ['duty_photo_done', 'duty_photo_repeat'].includes(problem) ? 409 : 400);
+      // The write keeps this window, with three minutes' grace after its
+      // photo hour while the check answers (audit of 2026-11-01).
+      const windowStart = (precheck.data ?? [])[0]?.window_start ?? null;
 
       const zoneRow = await sb.from('duty_zones').select('name_ru, checklist_ru').eq('id', zone).maybeSingle();
       if (zoneRow.error) return json({ error: zoneRow.error.message }, 500);
@@ -955,6 +964,7 @@ Deno.serve(async (req) => {
         p_reason_ru: accepted ? null : verdict.reason_ru,
         p_reason_uz: accepted ? null : verdict.reason_uz,
         p_checked_by: verdict.checked ? verdict.model : 'unchecked',
+        p_window_start: windowStart,
       });
       if (error) return json({ error: error.message }, 500);
       if (!result?.ok) return json(result, ['duty_photo_done', 'duty_photo_repeat'].includes(result?.error) ? 409 : 400);
@@ -1674,6 +1684,9 @@ Deno.serve(async (req) => {
       }
       if (!workDays.length) return json({ error: 'schedule_needs_work_day' }, 400);
 
+      // A duty day already begun keeps its windows (audit of 2026-11-01).
+      const fixedDuty = await sb.rpc('maestro_fix_duty_windows');
+      if (fixedDuty.error) return json({ error: fixedDuty.error.message }, 500);
       const { data: result, error } = await sb.rpc('maestro_set_master_schedule', {
         p_master_id: masterId,
         p_effective_from: effectiveFrom,
@@ -1691,6 +1704,8 @@ Deno.serve(async (req) => {
       if (!Number.isInteger(masterId) || !isValidIsoDate(effectiveFrom)) {
         return json({ error: 'invalid_schedule' }, 400);
       }
+      const fixedDuty = await sb.rpc('maestro_fix_duty_windows');
+      if (fixedDuty.error) return json({ error: fixedDuty.error.message }, 500);
       const { data: result, error } = await sb.rpc('maestro_delete_master_schedule', {
         p_master_id: masterId,
         p_effective_from: effectiveFrom,

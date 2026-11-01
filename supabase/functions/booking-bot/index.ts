@@ -61,6 +61,7 @@ import {
   dutyFineNotice,
   dutyRosterReminder,
   dutySwapAnswer,
+  dutySwapClosedNotice,
   dutySwapOwnerNotice,
   dutyText,
   dutyWindowNotice,
@@ -481,12 +482,14 @@ async function sendDutyNotices() {
     const lang = notice.lang;
     const payload = notice.payload ?? {};
     const text = notice.kind === 'eve'
-      ? dutyEveNotice({ lang, day: payload.day, startsAt: payload.starts_at, endsAt: payload.ends_at, intervalMinutes, amount: payload.amount, trial: payload.trial === true, zones: payload.zones ?? [], hours: payload.hours ?? [] })
+      ? dutyEveNotice({ lang, day: payload.day, startsAt: payload.starts_at, endsAt: payload.ends_at, intervalMinutes, amount: payload.amount, trial: payload.trial === true, zones: payload.zones ?? [], hours: payload.hours ?? [], today: payload.today === true })
       : notice.kind === 'window'
         ? dutyWindowNotice({ lang, startsAt: payload.starts_at, endsAt: payload.ends_at, amount: payload.amount, trial: payload.trial === true, missing: payload.missing ?? [] })
         : notice.kind === 'fine'
           ? dutyFineNotice({ lang, startsAt: payload.starts_at, endsAt: payload.ends_at, amount: payload.amount, missing: payload.missing ?? [] })
-          : dutyRosterReminder({ from: payload.from, missing: payload.missing });
+          : notice.kind === 'swap'
+            ? dutySwapClosedNotice({ lang, toName: payload.to_name, day: payload.day })
+            : dutyRosterReminder({ from: payload.from, missing: payload.missing });
     const result = await send('staff', notice.chat_id, text, {
       reply_markup: { inline_keyboard: [[{ text: dutyText(lang).openButton, web_app: { url: APP_URL } }]] },
     });

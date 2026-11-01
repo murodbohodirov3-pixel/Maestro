@@ -70,6 +70,7 @@ function every(minutes, lang) {
 const TEXT = {
   ru: {
     eveHead: '🧹 <b>Завтра вы дежурный</b>',
+    eveHeadToday: '🧹 <b>Сегодня вы дежурный</b>',
     eveBody: (hours, amount, zones) => `Фото в приложении: ${zones}. Когда: ${hours}. Нет фото — штраф ${amount} сум.`,
     eveBodyTrial: (hours, zones) => `Фото в приложении: ${zones}. Когда: ${hours}.`,
     eveEvery: (from, to, interval) => `с ${from} до ${to} ${interval}`,
@@ -88,6 +89,7 @@ const TEXT = {
     openButton: 'Открыть приложение',
     accepted: (name, day) => `✅ ${name} подменит вас на дежурстве: ${day}.`,
     declined: (name, day) => `❌ ${name} отказался подменить вас: ${day}. Попросите другого мастера — иначе дежурство остаётся за вами.`,
+    expired: (name, day) => `⌛ ${name} не ответил вовремя — просьба подменить вас (${day}) закрыта. Попросите другого мастера — иначе дежурство остаётся за вами.`,
     replies: {
       accepted: (day) => `Принято: ${day} дежурите вы.`,
       declined: 'Вы отказались.',
@@ -98,6 +100,7 @@ const TEXT = {
   },
   uz: {
     eveHead: '🧹 <b>Ertaga siz navbatchisiz</b>',
+    eveHeadToday: '🧹 <b>Bugun siz navbatchisiz</b>',
     eveBody: (hours, amount, zones) => `Ilovada rasm: ${zones}. Qachon: ${hours}. Rasm boʻlmasa — ${amount} soʻm jarima.`,
     eveBodyTrial: (hours, zones) => `Ilovada rasm: ${zones}. Qachon: ${hours}.`,
     eveEvery: (from, to, interval) => `${from} dan ${to} gacha ${interval}`,
@@ -116,6 +119,7 @@ const TEXT = {
     openButton: 'Ilovani ochish',
     accepted: (name, day) => `✅ ${name} navbatchilikda oʻrningizga chiqadi: ${day}.`,
     declined: (name, day) => `❌ ${name} oʻrningizga chiqishni rad etdi: ${day}. Boshqa barberdan soʻrang — aks holda navbatchilik sizda qoladi.`,
+    expired: (name, day) => `⌛ ${name} oʻz vaqtida javob bermadi — ${day} oʻrningizga chiqish soʻrovi yopildi. Boshqa barberdan soʻrang — aks holda navbatchilik sizda qoladi.`,
     replies: {
       accepted: (day) => `Qabul qilindi: ${day} navbatchi — siz.`,
       declined: 'Siz rad etdingiz.',
@@ -149,12 +153,12 @@ export function dutyHoursList(hours = []) {
 // The evening before, to tomorrow's duty master: the zones and the photo
 // hours. In the trial week before the fines start, the fine is not mentioned
 // and the trial is.
-export function dutyEveNotice({ lang = 'ru', day, startsAt, endsAt, intervalMinutes = 120, amount, trial = false, zones = [], hours = [] }) {
+export function dutyEveNotice({ lang = 'ru', day, startsAt, endsAt, intervalMinutes = 120, amount, trial = false, zones = [], hours = [], today = false }) {
   const text = dutyText(lang);
   const list = dutyZoneList(zones, lang);
   const when = dutyHoursList(hours) || text.eveEvery(dutyClock(startsAt), dutyClock(endsAt), every(intervalMinutes, lang));
   return [
-    text.eveHead,
+    today ? text.eveHeadToday : text.eveHead,
     capital(dutyDayLabel(day, lang)),
     trial ? text.eveBodyTrial(when, list) : text.eveBody(when, money(amount), list),
     trial ? text.trial : null,
@@ -211,6 +215,12 @@ export function dutySwapAnswer({ lang = 'ru', toName, day, accepted }) {
   return accepted ? text.accepted(escapeHtml(toName), label) : text.declined(escapeHtml(toName), label);
 }
 
+// To the master who asked, when nobody answered within the hour (owner's
+// decision of 2026-11-01) or the day began first.
+export function dutySwapClosedNotice({ lang = 'ru', toName, day }) {
+  return dutyText(lang).expired(escapeHtml(toName), dutyDayLabel(day, lang));
+}
+
 // The owner hears of a day that changed hands; he takes no part in it.
 export function dutySwapOwnerNotice({ fromName, toName, day }) {
   return `🔁 Подмена на дежурстве, ${dutyDayLabel(day, 'ru')}: ${escapeHtml(fromName)} → ${escapeHtml(toName)}.`;
@@ -226,6 +236,30 @@ export function dutyRosterReminder({ from, missing }) {
     `На неделе с ${parsed.getUTCDate()} ${MONTHS.ru[parsed.getUTCMonth()]} без дежурного: ${count} ${days}.`,
     'Команда → Дежурство.',
   ].join('\n');
+}
+
+// A JPEG's frame size, or null when the bytes only look like one (audit of
+// 2026-11-01): a file the check cannot open would otherwise pass unchecked.
+export function jpegFrameSize(bytes) {
+  if (!bytes || bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let at = 2;
+  while (at + 9 < bytes.length) {
+    if (bytes[at] !== 0xff) return null;
+    const marker = bytes[at + 1];
+    if (marker === 0xff) { at += 1; continue; }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { at += 2; continue; }
+    if (marker === 0xd9 || marker === 0xda) return null;
+    const length = (bytes[at + 2] << 8) | bytes[at + 3];
+    if (length < 2) return null;
+    // A start of frame: SOF0–SOF15 but DHT, JPG and DAC.
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      const height = (bytes[at + 5] << 8) | bytes[at + 6];
+      const width = (bytes[at + 7] << 8) | bytes[at + 8];
+      return width > 0 && height > 0 ? { width, height } : null;
+    }
+    at += 2 + length;
+  }
+  return null;
 }
 
 // ------------------------------------------------- the cleanliness check

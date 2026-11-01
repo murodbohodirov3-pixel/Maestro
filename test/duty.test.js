@@ -34,9 +34,11 @@ import {
   dutyFineNotice,
   dutyRosterReminder,
   dutySwapAnswer,
+  dutySwapClosedNotice,
   dutySwapKeyboard,
   dutySwapRequest,
   dutyWindowNotice,
+  jpegFrameSize,
   parseDutyTap,
 } from '../supabase/functions/_shared/duty.js';
 import { translate } from '../src/i18n/index.js';
@@ -106,6 +108,33 @@ test('a request is open until the day begins, and only while the day is still th
   assert.equal(swapStillOpen(duty, pending, at('2026-10-29T05:00:00Z')), false);
   assert.equal(swapStillOpen(duty, duty.swaps[2], at('2026-10-28T10:00:00Z')), false, 'the day is not the asker\'s');
   assert.equal(swapStillOpen(duty, duty.swaps[1], at('2026-10-28T10:00:00Z')), false, 'answered');
+  // Unanswered for an hour, it closes (owner's decision of 2026-11-01).
+  const asked = { ...pending, created_at: '2026-10-28T10:00:00Z' };
+  assert.equal(swapStillOpen(duty, asked, at('2026-10-28T10:59:00Z')), true);
+  assert.equal(swapStillOpen(duty, asked, at('2026-10-28T11:00:00Z')), false);
+});
+
+test('a picture is a JPEG with a frame, not bytes that only start like one', () => {
+  // SOI, an APP0 of 4 bytes, then SOF0 of 960×1280.
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00,
+    0xff, 0xc0, 0x00, 0x11, 0x08, 0x05, 0x00, 0x03, 0xc0, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+  assert.deepEqual(jpegFrameSize(jpeg), { width: 960, height: 1280 });
+  const junk = new Uint8Array(2000);
+  junk.set([0xff, 0xd8, 0x41, 0x42]);
+  assert.equal(jpegFrameSize(junk), null, 'garbage after the start marker');
+  assert.equal(jpegFrameSize(new Uint8Array([0xff, 0xd8, 0xff, 0xda, 0x00, 0x08, 0, 0, 0, 0, 0, 0])), null, 'a scan before any frame');
+  assert.equal(jpegFrameSize(new Uint8Array([0x89, 0x50, 0x4e, 0x47])), null, 'not a JPEG at all');
+});
+
+test('a master made the duty today hears «Сегодня», and the asker hears a request closed unanswered', () => {
+  const today = dutyEveNotice({ lang: 'ru', day: '2026-11-02', startsAt: '2026-11-02T05:00:00Z', endsAt: '2026-11-02T17:00:00Z', amount: 50000, today: true });
+  assert.match(today, /Сегодня вы дежурный/);
+  assert.doesNotMatch(dutyEveNotice({ lang: 'ru', day: '2026-11-02', startsAt: '2026-11-02T05:00:00Z', endsAt: '2026-11-02T17:00:00Z', amount: 50000 }), /Сегодня/);
+  assert.match(dutyEveNotice({ lang: 'uz', day: '2026-11-02', startsAt: '2026-11-02T05:00:00Z', endsAt: '2026-11-02T17:00:00Z', amount: 50000, today: true }), /Bugun siz navbatchisiz/);
+  const closed = dutySwapClosedNotice({ lang: 'ru', toName: 'Жавлон <b>', day: '2026-11-02' });
+  assert.match(closed, /Жавлон &lt;b&gt; не ответил вовремя/);
+  assert.match(closed, /иначе дежурство остаётся за вами/);
+  assert.match(dutySwapClosedNotice({ lang: 'uz', toName: 'Javlon', day: '2026-11-02' }), /javob bermadi/);
 });
 
 test('a master sees his days, what he was asked, what he asked and the answers', () => {

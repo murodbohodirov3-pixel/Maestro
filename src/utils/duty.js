@@ -85,9 +85,13 @@ export function swapCandidates(duty, day, selfId) {
     .sort((left, right) => Number(right.works) - Number(left.works) || String(left.name).localeCompare(String(right.name), 'ru'));
 }
 
-// A request is open until the day's duty begins.
+const SWAP_ANSWER_MS = 60 * 60 * 1000;
+
+// A request is open until the day's duty begins, and an hour at most.
 export function swapStillOpen(duty, swap, nowMs = Date.now()) {
   if (swap?.status !== 'pending') return false;
+  // Unanswered for an hour, it closes by itself (owner's decision of 2026-11-01).
+  if (swap.created_at && nowMs >= new Date(swap.created_at).getTime() + SWAP_ANSWER_MS) return false;
   const row = rosterOn(duty, swap.day);
   if (!row || String(row.master_id) !== String(swap.from_master_id)) return false;
   return !row.starts_at || nowMs < new Date(row.starts_at).getTime();
